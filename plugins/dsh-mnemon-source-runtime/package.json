@@ -67,7 +67,7 @@
     "react-dom": "^18.2.0",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0",
+    "vitest": "^5.0.1",
     "lightningcss": "^1.33.0",
     "clsx": "^2.1.1",
     "@shikijs/langs": "^4.3.1",
