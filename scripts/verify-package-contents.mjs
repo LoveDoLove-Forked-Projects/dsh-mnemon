@@ -50,7 +50,10 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // maintenance executable. Its measured growth is ~24 KB over the null-name
 // repair baseline; retain ~2.2 KB for the separately verified Host grant fix.
 // No Source implementation enters the Starter.
-const maximumUnpackedBytes = 1_318_000
+// Bounded idle review adds Host checkpoint/receipt handling, budgets and the
+// bilingual settings/status UI: measured 1,335,573 bytes (+19,717), with no
+// Source implementation included. Retain less than 3 KB of headroom.
+const maximumUnpackedBytes = 1_338_000
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)
