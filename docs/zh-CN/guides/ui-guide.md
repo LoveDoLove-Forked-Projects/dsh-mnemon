@@ -244,3 +244,7 @@ Mnemon 自己的自定义目录、备份与迁移留在 Mnemon 专属折叠区�
 - 工作台默认从 Sidebar 打开，Builtin 将同一界面放入所属会话；本回合记忆和存入记忆仍作为对话内快捷入口。
 
 下一步：[能力地图](./capabilities.md) · [快速开始](./getting-started.md) · [Provider 指南](./memory-providers.md) · [配置参考](../reference/configuration.md)
+
+## 空闲审查控制
+
+设置中的**空闲审查**支持独立开关、有界 spawn 或完整上下文 fork，以及间隔、次数、检查点大小和输出预算。变更遵循现有 Host 设置授权；只读客户端不能保存。记忆系统会显示 Agent Teams 兼容性暂停或失败后的部分写入回执，刷新状态即可读取当前状态。历史保留与重启限制见[配置说明](../reference/configuration.md)。

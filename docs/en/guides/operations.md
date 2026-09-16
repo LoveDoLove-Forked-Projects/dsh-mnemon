@@ -268,7 +268,7 @@ Report vulnerabilities privately through [SECURITY.md](../../../SECURITY.md), no
 | Custom directory rejected | Use an absolute path, `~`, or `~/...` |
 | `memoryBodyId is required...` | Active count is not exactly one; select a target explicitly |
 | `memory space is not active for reading` | Activate it in Overview; inactive writes are allowed, reads are not |
-| Provider error | Semantic work needs full isolation capabilities; background review additionally needs `fork + inheritsParentContext` |
+| Provider error | Review needs guarded local child publication; use bounded `spawn` or opt-in `fork`. Active Agent Teams tools pause automatic review; inspect partial-write receipts before retrying |
 | Runtime replace exceeds capacity | Shorten it or organize first; automatic maintenance handles add overflow only |
 | Document source path rejected | Keep it inside the session workspace and outside managed Documents |
 | CLI timeout | Increase `timeoutMs`; large Stores may need more than 10 seconds for status or graph |

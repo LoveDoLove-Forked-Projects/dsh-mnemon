@@ -15,6 +15,7 @@ import { resultToolCacheModel } from './fixtures/result-tool-cache-model.mjs'
 import { legacySessionReplayModel } from './fixtures/legacy-session-replay-model.mjs'
 import { reviewEvidenceModel, scopedOverviewPlugin } from './fixtures/review-evidence-model.mjs'
 import { openVikingWriteModel } from './fixtures/openviking-write-model.mjs'
+import { idleReviewModel } from './fixtures/idle-review-model.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const flags = new Set(process.argv.slice(2))
@@ -32,6 +33,7 @@ for (const flag of flags) {
   if (flag === '--legacy-session-replay') continue
   if (flag === '--review-evidence') continue
   if (flag === '--openviking-write') continue
+  if (flag === '--idle-review') continue
   if (flag.startsWith('--electron=')) {
     const value = flag.slice('--electron='.length)
     if (value === '') throw new Error('--electron requires an Electron executable')
@@ -78,6 +80,7 @@ const protectionModel = flags.has('--document-protection') ? documentProtectionM
 const reviewModel = flags.has('--review-evidence') ? reviewEvidenceModel(event => console.log('Review evidence: ' + JSON.stringify(event))) : undefined
 const scriptedModel = flags.has('--runtime-routing') ? runtimeRoutingModel(event => console.log('Runtime routing: ' + JSON.stringify(event)))
   : flags.has('--openviking-write') ? openVikingWriteModel(event => console.log('OpenViking write: ' + JSON.stringify(event)))
+  : flags.has('--idle-review') ? idleReviewModel(event => console.log('Idle review: ' + JSON.stringify(event)))
   : flags.has('--runtime-write-scope') ? runtimeWriteScopeModel(event => console.log('Runtime write scope: ' + JSON.stringify(event)))
   : flags.has('--result-tool-cache') ? resultToolCacheModel(event => console.log('Result tool cache: ' + JSON.stringify(event)))
   : flags.has('--legacy-session-replay') ? legacySessionReplayModel(event => console.log('Legacy replay: ' + JSON.stringify(event)))
@@ -102,6 +105,11 @@ const model = createServer(async (request, response) => {
     console.error(error)
     response.writeHead(500, { 'content-type': 'application/json' })
     response.end(JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error) } }))
+    return
+  }
+  if (typeof reply === 'object' && reply.error !== undefined) {
+    response.writeHead(400, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: { message: reply.error } }))
     return
   }
   response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
@@ -205,6 +213,7 @@ try {
   await writeFile(join(dshHome, 'profiles/web/cordis.patch.yml'), disabled.map(id => `- id: ${id}\n  disabled: true\n`).join('') + browsePicker
     + (protectionModel === undefined && reviewModel === undefined && !reviewFailure ? '' : '- id: mnemon\n  config:\n    idleReviewMs: 5000\n')
     + (runtimeArchive ? '- id: mnemon\n  config:\n    persistenceStrategy:\n      mode: manual\n    runtimeMemory:\n      memoryLimitBytes: 300\n' : '')
+    + (flags.has('--idle-review') ? '- id: mnemon\n  config:\n    idleReviewMs: 5000\n    idleReview:\n      minIntervalMs: 5000\n      maxPerSession: 1\n' : '')
     + (flags.has('--runtime-routing') ? '- id: mnemon\n  config:\n    runtimeMemory:\n      memoryLimitBytes: 1600\n' : '')
     + (flags.has('--runtime-write-scope') ? '- id: mnemon\n  config:\n    persistenceStrategy:\n      mode: manual\n      providerId: mnemon-native\n    runtimeMemory:\n      memoryLimitBytes: 512\n' : '')
     + (reviewModel === undefined ? '' : '- insert:\n    - id: review-evidence-fixture\n      name: ' + JSON.stringify(reviewFixture) + '\n')

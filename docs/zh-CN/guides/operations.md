@@ -268,7 +268,7 @@ HTTP 403 可能来自 Host/Origin 不匹配，或旧远程 Client 仍调用独�
 | 自定义目录被拒绝 | 使用绝对路径、`~` 或 `~/...` |
 | `memoryBodyId is required...` | active 数量不是恰好 1；显式选择目标 |
 | `memory space is not active for reading` | 在概览激活目标；写入 inactive 可以，读取不行 |
-| Provider 错误 | 普通语义任务需要完整隔离能力；后台审查另需 `fork + inheritsParentContext` |
+| Provider 错误 | 审查需要受 guard 保护的本地子 Agent；默认有界 `spawn`，可选择 `fork`。Agent Teams 工具在役时暂停自动审查；重试前核对部分写入回执 |
 | Runtime replace 超容量 | 缩短 replacement 或先显式整理；自动维护只处理 add 溢出 |
 | Document source path 被拒绝 | 路径必须在会话工作区内，且不能引用受管 Documents 目录 |
 | CLI timeout | 增大 `timeoutMs`；大 Store 的状态与图谱可能超过 10 秒 |

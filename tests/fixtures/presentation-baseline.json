@@ -92,22 +92,22 @@
   },
   "openVikingExactWrite": {
     "en": {
-      "keys": 980,
-      "sha256": "365372336a9c82749d2807d68804c876dce2186213141369b957e541403ff82d"
+      "keys": 996,
+      "sha256": "af185843e973fcde5d8297c76f86a1daa08b41c2d3bfeb231095f48b0d795b9c"
     },
     "zh": {
-      "keys": 980,
-      "sha256": "7a05cfab9288ba1746a530ee63183299d8e7dcc7afed3a55f9a58483437ff13f"
+      "keys": 996,
+      "sha256": "d020f9abd56abd0ac65b1bb5cee00ba5da0302b4001f4fd366e74977620a1686"
     }
   },
   "idleReviewWarning": {
     "en": {
-      "keys": 980,
-      "sha256": "f08ccf3c1de45c07c4f2564d4b1904d272240d2288fa5a6f608417022a325224"
+      "keys": 996,
+      "sha256": "05f6cecd6b482c61b4968e4ed7e3cffd92fcb20912ee9aae38584715cb8af68a"
     },
     "zh": {
-      "keys": 980,
-      "sha256": "12817b8c6f44c3bfd5ed5f0a0b5cb09e36cc06f490e551bfe0049edf33d72e9e"
+      "keys": 996,
+      "sha256": "817d0a4e6c4283fb3ce8230a24c0d8611ef07125eabd40acb9954548d26ab0e6"
     }
   }
 }

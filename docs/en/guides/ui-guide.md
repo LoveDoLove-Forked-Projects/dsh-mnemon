@@ -236,3 +236,7 @@ Remote Provider workspaces, users, banks, projects, containers, and URIs are ind
 - The workbench defaults to Sidebar; Builtin puts the same UI in the owning conversation. Turn memory and Save to memory remain conversation shortcuts.
 
 Next: [Capability map](./capabilities.md) · [Getting Started](./getting-started.md) · [Provider guide](./memory-providers.md) · [Configuration](../reference/configuration.md)
+
+## Idle review controls
+
+Settings includes **Idle review**: enable it independently, choose bounded spawn or full-context fork, and set the interval, attempt cap, checkpoint size and output budget. Changes respect the existing Host settings grant; read-only clients cannot save them. The Memory System shows an Agent Teams compatibility pause or partial-write receipts after failure. Refresh status to read current state. See [configuration](../reference/configuration.md#provider-requirements) for retention and restart limits.
