@@ -76,12 +76,12 @@
   "changeScope": "Runtime process launch option only; no protocol, storage or DSH-source change",
   "files": {
     "README.md": {
-      "bytes": 7660,
-      "sha256": "7d8034bb85a16658393bbd308330bc2302a20d80d4456649e14c2dd199fee1c7"
+      "bytes": 8106,
+      "sha256": "c9d6449afd4ebc29d7271ffc8a6ca1e6150807f6955f07903bc1d448f7a277d3"
     },
     "README.zh-CN.md": {
-      "bytes": 7346,
-      "sha256": "272affeea9cd73e44c255589ac9967e1ace22372157df24f0e75ca412ed121cf"
+      "bytes": 7764,
+      "sha256": "0e7996eb6fbda19e6ac7c29044c3e261e9ab4120e68f90a31d5d22c215e98151"
     },
     "after-cli-version.png": {
       "bytes": 97421,

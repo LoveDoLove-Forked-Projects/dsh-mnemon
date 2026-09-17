@@ -21,7 +21,15 @@
 
 未人为延长 Git 执行时间。修复前截图捕获的是 Terminal 尚未绘制完成的打开帧。截图复验临时最小化了一个既有 runner 控制台，完成后恢复。截图时设置了焦点，因此图片不能独立证明抢焦点；零窗口结论来自修复后整个阶段的持续枚举，而非单张截图。
 
-[固定版本的工作流与验证脚本](https://github.com/omdsh-dev/dsh-mnemon/tree/b81ccd541e93644d3ae2106a8163acdce654534c/scripts/issue-259-windows)保存在独立验证分支。在 Windows 检出该版本后执行 `./scripts/issue-259-windows/run.ps1` 即可复验。归档同时保留可复用的观测器、worker、runner 和工作流。两次实验都根据下载的源码字节校验了 Git blob：基线 `eca1a05ed7fc1b382ed31ccdcbadfbc800afba64`，修复后 `340e4817a695d4807142e12d09bd70e792cec847`。
+[固定版本的工作流与验证脚本](https://github.com/omdsh-dev/dsh-mnemon/tree/b81ccd541e93644d3ae2106a8163acdce654534c/scripts/issue-259-windows)保存在独立验证分支。工作流提供 PowerShell 7、Node 22.19.0、Git、完整 Git 历史及 `RUNNER_TEMP`。手动运行还需要交互式 Windows 桌面，以及脚本使用的 Framework64 .NET C# 编译器。检出该版本并保留基线历史，在 checkout 根目录打开 PowerShell 7，指定全新的临时目录后运行：
+
+```powershell
+$env:RUNNER_TEMP = Join-Path $env:TEMP ("mnemon-259-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $env:RUNNER_TEMP | Out-Null
+./scripts/issue-259-windows/run.ps1
+```
+
+归档同时保留可复用的观测器、worker、runner 和工作流。两次实验都根据下载的源码字节校验了 Git blob：基线 `eca1a05ed7fc1b382ed31ccdcbadfbc800afba64`，修复后 `340e4817a695d4807142e12d09bd70e792cec847`。
 
 [可下载证据归档](./windows-evidence.tar.gz)随 PR 保留两次成功实验，不依赖 Actions 的保留期限。SHA-256 为 `f976d55ec68f6b18322e2c9e7b391f3a9d4ab4c965f15db9da6a60ff3a996dea`；[44 个文件的清单](./windows-archive-manifest.json)逐项列出归档成员。内容为合成观测数据、源码、截图与验证脚本，不包含完整 Actions 日志或早期未成功的验证环境尝试。
 

@@ -21,7 +21,15 @@ Each trial makes 100 normal branch queries plus four Git calls for a padded path
 
 Git was not delayed to obtain the screenshot. The baseline frame precedes completed Terminal painting. The screenshot run temporarily minimized one preexisting runner console and restored it afterward. Capture sets focus, so these images do not independently prove focus theft. The zero-window result comes from continuous observation of the entire fixed phase, rather than one screenshot.
 
-The [pinned workflow and harness](https://github.com/omdsh-dev/dsh-mnemon/tree/b81ccd541e93644d3ae2106a8163acdce654534c/scripts/issue-259-windows) are on a validation-only branch. On Windows, check out that revision and run `./scripts/issue-259-windows/run.ps1`. The archive also contains the reusable observer, worker, runner and workflow. Both runs verified the downloaded source bytes against Git blobs `eca1a05ed7fc1b382ed31ccdcbadfbc800afba64` (baseline) and `340e4817a695d4807142e12d09bd70e792cec847` (fixed).
+The [pinned workflow and harness](https://github.com/omdsh-dev/dsh-mnemon/tree/b81ccd541e93644d3ae2106a8163acdce654534c/scripts/issue-259-windows) are on a validation-only branch. The workflow provides PowerShell 7, Node 22.19.0, Git, full Git history and `RUNNER_TEMP`. A manual run also needs an interactive Windows desktop and the Framework64 .NET C# compiler used by the script. Check out that revision with its baseline history, open PowerShell 7 at the checkout root, and provide a fresh temporary directory:
+
+```powershell
+$env:RUNNER_TEMP = Join-Path $env:TEMP ("mnemon-259-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $env:RUNNER_TEMP | Out-Null
+./scripts/issue-259-windows/run.ps1
+```
+
+The archive also contains the reusable observer, worker, runner and workflow. Both runs verified the downloaded source bytes against Git blobs `eca1a05ed7fc1b382ed31ccdcbadfbc800afba64` (baseline) and `340e4817a695d4807142e12d09bd70e792cec847` (fixed).
 
 The [downloadable evidence archive](./windows-evidence.tar.gz) preserves both successful runs beyond Actions retention. Its SHA-256 is `f976d55ec68f6b18322e2c9e7b391f3a9d4ab4c965f15db9da6a60ff3a996dea`; the [44-file manifest](./windows-archive-manifest.json) identifies every member. It contains synthetic observations, source blobs, screenshots and harness files; full Actions logs and unsuccessful harness setup attempts are excluded.
 
