@@ -1,5 +1,7 @@
 # Issue 261 published-package compatibility harness
 
+[English](HARNESS.md) | [简体中文](HARNESS.zh-CN.md)
+
 This directory contains external verification scripts. They never alter a DSH package or alias a package to a source checkout. Supply built Mnemon source only to the pack command; the installed test consumers resolve all 17 Mnemon packages from a test-owned loopback registry with checked SHA-512 integrity. The Root bundle composes all 16 companions and enables scoped, light-context, and auto-capture strategy extensions.
 
 Requirements: Node and npm, tar, Git, and the actual Mnemon Native CLI. Node v25.1.0 and Native v0.2.8 were used for the recorded run. Run these commands from this harness directory. Set `MNEMON_SOURCE` to a built Mnemon checkout, `NATIVE_CLI` to the Native executable, and `VERIFICATION_ROOT` to an empty external directory. Keep each run root unique for initial installs.
@@ -59,4 +61,4 @@ The original alpha browser missing-ID failure was independently reproduced. Prio
 - The bounded model fixture implements the named add/status sequence, title text, and skipped child maintenance. It is not a general language-model simulator or a Native memory-space backend-write test.
 - The harness executes official npm package install scripts and inherits the caller's environment. It is not an OS sandbox. Its DeepSeek key is explicitly fake and its model endpoint binds to loopback. The reusable copy sets the supported `DSH_TELEMETRY_MODE=DISABLED` for both public cohorts.
 
-`bundle-audit.json` records SHA-256 hashes of every copied source file and its committed counterpart. The two executable changes from the exported bundle add the baseline platform guard and explicit telemetry mode; documentation and the sanitized summary explain portability and excluded runtime files. The recorded artifact/result hashes remain unchanged.
+`bundle-audit.json` records SHA-256 hashes of every copied source file and its committed counterpart. The two executable changes from the exported bundle add the baseline platform guard and explicit telemetry mode; documentation and the sanitized summary explain portability and excluded runtime files. The recorded artifact/result hashes remain unchanged. Repository-authored translations are recorded separately without an export-source hash.
