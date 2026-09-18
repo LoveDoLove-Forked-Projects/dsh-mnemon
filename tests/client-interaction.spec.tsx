@@ -50,6 +50,7 @@ function makeCtx(initialValue: unknown, coreValue: Record<string, unknown> = {},
     get: vi.fn(() => undefined),
     on: vi.fn(() => () => {}),
     sessions: { list: { getSnapshot: () => ({ current: 'session-a', byId: {} }) } },
+    uiSession: { adapter: { current: { getSnapshot: () => ({ key: 'session-a' }), subscribe: () => () => {} } } },
     slots: {
       inject: (slot: string, factory: () => unknown) => {
         injects.push(slot)
@@ -199,7 +200,10 @@ describe('interaction surfaces binding', () => {
     tab.textContent = 'tab.label'
     const clicked = vi.fn()
     tab.addEventListener('click', clicked)
-    document.body.append(tab)
+    const conversation = document.createElement('div')
+    conversation.dataset.slot = 'main.conversation'
+    conversation.append(tab)
+    document.body.append(conversation)
 
     apply(ctx)
     await waitFor(() => expect(injects).toContain('shell.overlay'))
@@ -220,7 +224,10 @@ describe('interaction surfaces binding', () => {
     tab.textContent = label
     const clicked = vi.fn()
     tab.addEventListener('click', clicked)
-    document.body.append(tab)
+    const conversation = document.createElement('div')
+    conversation.dataset.slot = 'main.conversation'
+    conversation.append(tab)
+    document.body.append(conversation)
     apply(ctx)
     await waitFor(() => expect(injects).toContain('conversation.view'))
     expect(activeRegistrations().filter(id => id === 'mnemon')).toHaveLength(2)

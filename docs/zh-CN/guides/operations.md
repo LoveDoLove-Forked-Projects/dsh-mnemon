@@ -183,6 +183,8 @@ HTTP 403 可能来自 Host/Origin 不匹配，或旧远程 Client 仍调用独�
 
 ### 远程管理与 DSH 0.1.1-rc.2 回滚
 
+下列 DSH `0.1.1-rc.2` 流程属于历史记录。当前 Mnemon Client 需要 DSH `0.1.5-rc.1` 或[兼容性矩阵](../reference/compatibility.md)中经过验证的更新版本。回滚时，将旧版 DSH 与之前针对它验证过的 Mnemon 版本配套使用，并恢复对应的升级前会话备份。
+
 对于 v0.5.5 已认证网关客户端，`remoteAccess: trusted-host` 授予管理操作；默认远程读取与小范围激活不需要该授权。旧 DSH rc.2 通过逐方法 authority 层执行同一份本地配置，设置、备份与宽泛 mutation 默认仅限 loopback。仅为预期的已认证用户配置远程管理权限。
 
 1. 打开 `~/.dsh/profiles/web/cordis.patch.yml`；如果设置了 `DSH_HOME`，则路径为 `$DSH_HOME/profiles/web/cordis.patch.yml`。如果已经有顶层 `- id: mnemon`，请直接修改该项，不要添加重复项。如果初始化文件仍以 `[]` 结尾，请用下面的完整配置行替换它；否则把该行追加到现有顶层 YAML 列表：

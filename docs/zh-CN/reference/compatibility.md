@@ -8,14 +8,16 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 |---|---|---|
 | DSH 开发基线 | `0.1.5-rc.1` | 正式发布的契约、WebUI 与隔离 Headless 激活 |
 | DSH 回合尾兼容 | `0.1.5-rc.2`、`0.1.6-alpha.2` | 正式发布的 chain/list 注册契约、实时开关与重载生命周期、已完成回合的活动 |
-| 上一条 DSH 版本线 | `0.1.2-rc.1` | 当前插件在隔离 Headless 中激活并重启；其合成会话经副本修复后由 0.1.5 公开加载器完成迁移 |
+| 历史 DSH Headless 证据 | `0.1.2-rc.1` | 较早 revision 在隔离 Headless 中激活并重启；合成会话经副本修复后由 0.1.5 公开加载器完成迁移 |
 | 历史 DSH 证据 | `0.1.1-rc.2` | 早期 Sidebar/Builtin 记录保留各自 revision；本次未重跑 |
 | Node.js | `22.19`、`24` | 分别用于源码 CI 与打包制品 CI；开发要求 `^22.19.0 || >=24.0.0` |
 | Node.js 20 | 仅公开包入口导入 | 不代表 DSH Host 能在 Node 20 运行 |
 | Mnemon Native CLI | `0.2.8` | 显式启用的真实 CLI 与临时数据测试；CLI 需要另外安装 |
 | 三方 Provider | 适配契约与夹具 | 不代表真实云账号一致性或上游服务可用性已验证 |
 
-开发锁文件仍使用 `0.1.5-rc.1`。“本回合记忆”以稳定 ID 注册到 alpha 的 list 插槽，同时保留 RC 的 chain selector；组件也会在读取或展示活动前检查回合是否已完成。Root 的两个 DSH peer 范围接受 `0.1.6-alpha.2`；此兼容修复无需迁移配置或已存数据。
+开发锁文件仍使用 `0.1.5-rc.1`。“本回合记忆”以稳定 ID 注册到 alpha 的 list 插槽，同时保留 RC 的 chain selector；组件也会在读取或展示活动前检查回合是否已完成。Sidebar 与设置页跟随 DSH 公开的默认／主会话 binding；Builtin 和 Better Sidebar 保留显式所属会话。
+
+当前 Client 依赖公开的 UI Session 服务。Root 的两个 DSH peer 范围均为 `^0.1.5-rc.1 || ^0.1.6-alpha.2`；官方插件的 peer 与版本均未改动。较旧的 Headless 和 WebUI 记录仅保留为历史证据。回滚旧版 DSH 时，应同时使用之前针对该宿主验证过的 Mnemon 版本。此兼容修复无需迁移配置或已存数据。
 
 参见[DSH 0.1.5 验证](../../pr-assets/issue-223-dsh-015/README.zh-CN.md)、[宿主兼容证据](../../pr-assets/dsh-rc1-compat/README.md)、[升级证据](../../pr-assets/main-rebase-20260904/README.md)与[当前开发检查](../development/README.md)。机制测试通过不是 LLM 质量评测通过；特定 OS 与真实 CLI 检查在没有对应环境时可能跳过。
 

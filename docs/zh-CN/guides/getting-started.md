@@ -124,7 +124,7 @@ dsh plugin --profile web add "link:/absolute/path/to/dsh-mnemon"
 dsh --profile web
 ```
 
-如果需要通过云端域名访问 Web profile，不要直接发布 3080 端口。DSH 0.1.5-rc.1 通过 Host 启动时输出的一次性 URL 建立浏览器会话，并用它认证全部 Mnemon RPC 与 stream。请按[云端 WebUI](./operations.md#cloud-hosted-webui)同时配置 HTTPS 反向代理或访问网关与可信 authority，再打开该启动 URL；同一节也保留了回滚到 DSH 0.1.1-rc.2 时所需的另一套 `remoteAccess` 步骤。
+如果需要通过云端域名访问 Web profile，不要直接发布 3080 端口。DSH 0.1.5-rc.1 通过 Host 启动时输出的一次性 URL 建立浏览器会话，并用它认证全部 Mnemon RPC 与 stream。请按[云端 WebUI](./operations.md#cloud-hosted-webui)同时配置 HTTPS 反向代理或访问网关与可信 authority，再打开该启动 URL；同一节保留了 DSH 0.1.1-rc.2 的历史 `remoteAccess` 步骤，回滚时须配套使用之前针对该宿主验证过的 Mnemon 版本。
 
 升级与卸载：
 

@@ -216,6 +216,8 @@ Save to memory sits in the native action strip for finalized replies. The first 
 
 Both conversation controls are on by default and can be changed independently under **Settings → Memory System → Conversation interface**. Saving applies live.
 
+In Builtin mode, automatic shortcuts require one unambiguous Memory System tab in the main conversation. If split panes expose multiple eligible conversation tabs, the shortcut stays pending; open Memory System in the intended conversation manually. Each Builtin view retains its owning session.
+
 ## Workspace mode: inspection and execution are distinct
 
 | Concept | Selected by | Affects |
