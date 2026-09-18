@@ -6,13 +6,16 @@ The Starter pins a tested combination of official plugins. The table records ver
 
 | Component | Baseline | What is verified |
 |---|---|---|
-| DSH | `0.1.5-rc.1` | Published contracts, WebUI and isolated Headless activation |
+| DSH development baseline | `0.1.5-rc.1` | Published contracts, WebUI and isolated Headless activation |
+| DSH turn-tail compatibility | `0.1.5-rc.2`, `0.1.6-alpha.2` | Published chain/list registration contracts, live toggle and reload lifecycle, completed-turn activity |
 | Previous DSH line | `0.1.2-rc.1` | Current plugin: isolated Headless activation and restart; its synthetic Session logs migrate through the 0.1.5 public loader after copy repair |
 | Historical DSH evidence | `0.1.1-rc.2` | Prior Sidebar/Builtin reports retain their own revisions; not rerun for this change |
 | Node.js | `22.19` and `24` | Source CI and packed-artifact CI respectively; development requires `^22.19.0 || >=24.0.0` |
 | Node.js 20 | Public package imports only | Does not establish that the DSH Host runs on Node 20 |
 | Mnemon Native CLI | `0.2.8` | Opt-in tests against a real CLI and disposable data; install the CLI separately |
 | Third-party Providers | Adapter contracts and fixtures | Does not establish live cloud-account conformance or upstream availability |
+
+The development lockfile remains on `0.1.5-rc.1`. Turn memory registers with a stable ID for the alpha list slot and retains the RC chain selector. The component also checks that the turn is complete before reading or showing activity. The two root DSH peer ranges accept `0.1.6-alpha.2`; this compatibility fix requires no configuration or stored-data migration.
 
 See [DSH 0.1.5 verification](../../pr-assets/issue-223-dsh-015/README.md), [Host compatibility evidence](../../pr-assets/dsh-rc1-compat/README.md), [upgrade evidence](../../pr-assets/main-rebase-20260904/README.md), and [current development checks](../development/README.md). A passing mechanism test is not an LLM quality benchmark. OS-specific and real-CLI checks may be skipped unless their environment is explicitly available.
 
