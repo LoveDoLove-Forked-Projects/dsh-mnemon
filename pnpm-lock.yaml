@@ -42,7 +42,7 @@ importers:
         specifier: 0.5.8
         version: link:plugins/dsh-mnemon-source-memory-spaces
       dsh-mnemon-source-runtime:
-        specifier: 0.5.7
+        specifier: 0.5.8
         version: link:plugins/dsh-mnemon-source-runtime
       dsh-mnemon-strategy-auto-capture:
         specifier: 0.5.4
@@ -703,7 +703,7 @@ importers:
         specifier: ^2.1.1
         version: 2.1.1
       dsh-mnemon:
-        specifier: ^0.5.10
+        specifier: ^0.5.11
         version: link:../..
       jsdom:
         specifier: ^26.0.0
