@@ -124,7 +124,7 @@ Then start or restart the profile:
 dsh --profile web
 ```
 
-If the Web profile is reached through a cloud hostname, do not publish port 3080 directly. DSH 0.1.5-rc.1 authenticates every Mnemon RPC and stream through a browser session established from the one-time URL printed at Host startup. Configure the HTTPS reverse proxy or access gateway and trusted authority together, then open that launch URL, by following [Cloud-hosted WebUI](./operations.md#cloud-hosted-webui). The same section preserves the different `remoteAccess` procedure required when rolling back to DSH 0.1.1-rc.2.
+If the Web profile is reached through a cloud hostname, do not publish port 3080 directly. DSH 0.1.5-rc.1 authenticates every Mnemon RPC and stream through a browser session established from the one-time URL printed at Host startup. Configure the HTTPS reverse proxy or access gateway and trusted authority together, then open that launch URL, by following [Cloud-hosted WebUI](./operations.md#cloud-hosted-webui). The same section preserves the historical `remoteAccess` procedure for DSH 0.1.1-rc.2; that rollback requires the Mnemon release previously verified with that host.
 
 Upgrade and uninstall:
 

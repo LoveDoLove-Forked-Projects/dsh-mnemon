@@ -51,7 +51,7 @@ The opt-in SQLite incompatibility first called out for DSH rc.8 remains in DSH 0
 
 ## DSH 0.1.5 compatibility and legacy Session recovery
 
-DSH `0.1.5-rc.1` is the npm `latest` release verified by this checkout. Restart the Web Profile after upgrading Mnemon: the Starter patch gives the owning `connection` entry both `webRuntime` and `webServer`. This restores all seven Mnemon RPC channels when **Memory System** or its Settings page previously returned HTTP 405. Custom profiles that install the Host without the Starter must apply the same dependency declaration to their connection entry, preserving any additional dependencies in their own composition. No DSH package source is changed; browser authentication and Mnemon grants still apply.
+DSH `0.1.5-rc.1` is the pinned development baseline; see the [compatibility matrix](../reference/compatibility.md) for additional verified versions. Restart the Web Profile after upgrading Mnemon: the Starter patch gives the owning `connection` entry both `webRuntime` and `webServer`. This restores all seven Mnemon RPC channels when **Memory System** or its Settings page previously returned HTTP 405. Custom profiles that install the Host without the Starter must apply the same dependency declaration to their connection entry, preserving any additional dependencies in their own composition. No DSH package source is changed; browser authentication and Mnemon grants still apply.
 
 The separate error `source summary requires notice form; source v0 artifact remains unchanged` comes from older Mnemon messages in DSH Session logs. New recall/instruction messages omit that invalid summary. Updating the plugin does not rewrite an existing Session. To repair one affected log:
 
@@ -183,6 +183,8 @@ This disables the Core/Host, all three bundled Sources, the default Strategy, an
 
 ### Remote management and DSH 0.1.1-rc.2 rollback
 
+The DSH `0.1.1-rc.2` procedure below is historical. Current Mnemon Client code requires DSH `0.1.5-rc.1` or the verified newer cohorts in the [compatibility matrix](../reference/compatibility.md). When rolling back, pair the older DSH with its previously verified Mnemon release and restore the corresponding pre-upgrade Session backup.
+
 For v0.5.5 authenticated Gateway clients, `remoteAccess: trusted-host` grants management operations; default remote reads and narrow activation do not need it. The previous DSH rc.2 line enforces the same local configuration through legacy method-authority tiers, with settings, backups and broad mutations loopback-only by default. Configure management only for the intended authenticated users.
 
 1. Open `~/.dsh/profiles/web/cordis.patch.yml`, or `$DSH_HOME/profiles/web/cordis.patch.yml` when `DSH_HOME` is set. Edit an existing top-level `- id: mnemon` entry instead of adding a duplicate. If the initialized file still ends in `[]`, replace that marker with the complete row below; otherwise append the row to the existing top-level YAML list:
@@ -275,6 +277,7 @@ Report vulnerabilities privately through [SECURITY.md](../../../SECURITY.md), no
 | CLI timeout | Increase `timeoutMs`; large Stores may need more than 10 seconds for status or graph |
 | Lock timeout | Check other writers; never delete a lock owned by a live process |
 | Memory System goes blank with a `refreshSnapshot` or settings-store error | Upgrade dsh-mnemon to v0.4.1 and restart the owning DSH profile; settings callbacks preserve their host store receiver |
+| DSH alpha reports `list slot "conversation.chat.turnTail" requires options.id` | Install a dsh-mnemon release containing the DSH `0.1.6-alpha.2` turn-tail fix, restart the owning Web profile, and reload the page. The fix retains the turn-memory toggle and requires no data repair |
 | ZIP export reports `date not in range 1980-2099` | Upgrade dsh-mnemon to v0.4.1; fixed local ZIP date fields work in timezones behind UTC and keep identical exports byte-stable across timezones |
 | ZIP export reports WAL busy | Wait for Memory Space writes to settle; do not bypass the uncheckpointed-WAL guard |
 | ZIP import checksum/schema failure | The backup is damaged or incompatible; preserve the current root and never unzip over it manually |
