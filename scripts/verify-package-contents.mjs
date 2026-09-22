@@ -57,7 +57,7 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // bring the measured package to 1,338,363 bytes (+2,624). Keep less than 1 KB
 // of headroom; Source implementations still ship only in their own packages.
 // Config-backed settings, retained-backup recovery, composition replay and
-// icon compatibility bring the measured package to 1,370,243 bytes. Keep
+// icon/Session compatibility bring the measured package to 1,370,207 bytes. Keep
 // less than 2 KB of headroom; Source/framework implementations stay external.
 const maximumUnpackedBytes = 1_372_000
 

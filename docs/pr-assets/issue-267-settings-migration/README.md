@@ -26,6 +26,8 @@ DSH `0.1.7-alpha.1` replaces dynamic Settings registrations with forms derived f
 - [Plugin management](../../../src/host/plugin-management.ts) reapplies selected Entry state after whole-profile reconciliation, validates the resulting composition, and compensates failed transactions.
 - [Client icon aliases](../../../src/client/ui-icons.ts) support both the old size-suffixed exports and alpha7's weight-suffixed exports. The settings footer now describes DSH-managed live saving in both languages without hardcoding the removed settings file.
 
+- [Session messages](../../../src/host/lifecycle.ts) use the producer-owned `dsh-mnemon` source kind required by alpha7's V4 codec. Reading and deduplication still recognize both historical wrappers and the official `plugin:dsh-mnemon` migration. A real WebUI turn exposed this additional compatibility failure after activation was repaired.
+
 ## Retained settings and existing profile choices
 
 Recovery reads `settings.yaml.imported` without modifying its bytes and writes only through `ConfigEditor.edit`. Its [pure planner](../../../src/host/legacy-settings-import.ts) maps the canonical root's retained sections as follows:
@@ -54,4 +56,30 @@ Focused regressions cover [schema/reference behavior](../../../tests/live-config
 
 The artifact harness uses isolated test data and a deterministic model endpoint bound to `127.0.0.1`; it requires no external model API key and calls no external model provider. Bootstrap URLs, `server.json`, raw `web.log` and model request logs remain outside the repository. Public evidence must exclude credentials and private data.
 
-<!-- Append measured final build/package checks, fixed WebUI screenshots and restart results here after verification completes. No final success result or aggregate test count is recorded yet. -->
+## Measured settings and migration results
+
+Commit `407eac75ee46e677f694e6c318ca9380357fae27` passed the following browser operations with 17 packed Mnemon artifacts. The later Session source-format follow-up is tracked separately; these runs verify the settings implementation. Machine-readable hashes and results are in [settings-verification.json](./settings-verification.json).
+
+| Published DSH | Uniform DSH packages | Official installed files checked | Actual WebUI operations |
+| --- | ---: | ---: | --- |
+| `0.1.5-rc.2` | 234 | 8 | Workbench; disable Light while Auto Capture/Scoped remain enabled; Core/UI save; reload |
+| `0.1.6-alpha.2` | 251 | 8 | Same operations on the alpha Settings service |
+| `0.1.7-alpha.1` | 267 | 10 | Root and all Sources/Strategies activate; Core/UI consecutive saves; separate UI save; reload and full Host restart |
+
+On alpha7, the interval remained `310000`, Light stayed off, Auto Capture/Scoped stayed on, and both UI toggles stayed off after restart. On RC.2 and alpha.2 the saved intervals were `320000` and `330000`, with Light/turn bar off and the other toggles on. No false revision conflict occurred.
+
+The retained-backup fixture restored recall limit `7`, turn bar on/save action off, and Auto Capture on. Current Light activation/configuration (`1200`) and Documents activation won over legacy values; foreign-profile Scoped preferences were ignored. After a full Host restart, the profile patch, root Config, all 21 non-root rows and original backup hashes were unchanged. Before that restart, 20 initial non-root rows matched the harness initialization semantically; the extra row was the browser's welcome-notice acknowledgement.
+
+The real Mnemon CLI `0.2.8` also answered the WebUI status operation and created/enabled a native memory space with normal storage. The optional default Ollama embedding endpoint was not running; no external embedding or model key was used.
+
+![Fixed alpha7 root and Source activation](./after-alpha7-activation.png)
+![Fixed alpha7 memory workbench](./after-alpha7-status.png)
+![Core/UI settings saved without a false revision conflict](./after-alpha7-settings-saved.png)
+![Strategy choices survive a complete Host restart](./after-alpha7-host-restart.png)
+![Retained UI preferences after recovery](./after-alpha7-legacy-settings.png)
+![Retained preferences survive restart](./after-alpha7-legacy-restart.png)
+![Native CLI space created and enabled through WebUI](./after-alpha7-native-cli.png)
+![RC.2 settings save](./after-rc2-settings-saved.png)
+![Alpha.2 settings save](./after-alpha2-settings-saved.png)
+
+<!-- Append final Session V4 packed WebUI and complete validation results after verification. -->

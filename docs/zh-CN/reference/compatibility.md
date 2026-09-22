@@ -8,6 +8,7 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 |---|---|---|
 | DSH 开发基线 | `0.1.5-rc.1` | 正式发布的契约、WebUI 与隔离 Headless 激活 |
 | DSH Client 兼容 | `0.1.5-rc.2`、`0.1.6-alpha.2` | 完整生产公开类型、正常 npm 制品安装、真实 WebUI 回合插件组合／开关／重载与 Sidebar/Builtin 跳转、制品 Headless 持久化及禁用 Root |
+| DSH profile 设置 | `0.1.7-alpha.1` | 正常 npm 制品安装；真实 WebUI 激活、核心/UI 连续保存、Strategy 选择、旧设置恢复与完整 Host 重启 |
 | 历史 DSH Headless 证据 | `0.1.2-rc.1` | 较早 revision 在隔离 Headless 中激活并重启；合成会话经副本修复后由 0.1.5 公开加载器完成迁移 |
 | 历史 DSH 证据 | `0.1.1-rc.2` | 早期 Sidebar/Builtin 记录保留各自 revision；本次未重跑 |
 | Node.js | `22.19`、`24` | 分别用于源码 CI 与打包制品 CI；开发要求 `^22.19.0 || >=24.0.0` |
@@ -19,7 +20,7 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 
 当前 Client 依赖公开的 UI Session 服务。Root 的两个 DSH peer 范围均为 `^0.1.5-rc.1 || ^0.1.6-alpha.2 || ^0.1.7-alpha.1`；官方插件的 peer 与版本均未改动。较旧的 Headless 和 WebUI 记录仅保留为历史证据。回滚旧版 DSH 时，应同时使用之前针对该宿主验证过的 Mnemon 版本。DSH 0.1.7 将动态设置移入 profile Config；Mnemon 将现有设置页接入该写入器，并按下述流程恢复保留的旧偏好。记忆数据和 Provider 格式不变。
 
-参见[RC/alpha 验证与前后对比截图](../../pr-assets/issue-261-dsh-slots/README.zh-CN.md)、[DSH 0.1.5 验证](../../pr-assets/issue-223-dsh-015/README.zh-CN.md)、[宿主兼容证据](../../pr-assets/dsh-rc1-compat/README.md)、[升级证据](../../pr-assets/main-rebase-20260904/README.md)与[当前开发检查](../development/README.md)。机制测试通过不是 LLM 质量评测通过；特定 OS 与真实 CLI 检查在没有对应环境时可能跳过。
+参见[DSH 0.1.7 设置验证](../../pr-assets/issue-267-settings-migration/README.zh-CN.md)、[RC/alpha 验证与前后对比截图](../../pr-assets/issue-261-dsh-slots/README.zh-CN.md)、[DSH 0.1.5 验证](../../pr-assets/issue-223-dsh-015/README.zh-CN.md)、[宿主兼容证据](../../pr-assets/dsh-rc1-compat/README.md)、[升级证据](../../pr-assets/main-rebase-20260904/README.md)与[当前开发检查](../development/README.md)。机制测试通过不是 LLM 质量评测通过；特定 OS 与真实 CLI 检查在没有对应环境时可能跳过。
 
 历史 v0.5.2 采集发现 390px 设置布局不可用，[失败证据](../../pr-assets/documentation-refresh/README.md)保留原版本身份。[v0.5.4 浅色采集](../../assets/webui-v0.5.4/README.md)覆盖双语桌面浏览，以及 390 × 844 下的记忆空间导航、创建与版本维护。长卡片名称和部分指标会截断；本次没有复测所有 Host 设置页或真实手机，因此不将早期设置限制标为已解决。
 

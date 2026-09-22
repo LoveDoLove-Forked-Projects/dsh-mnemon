@@ -26,6 +26,8 @@ DSH `0.1.7-alpha.1` 将动态 Settings 注册改为从各插件的静态 `Config
 - [插件管理](../../../src/host/plugin-management.ts) 在整个 Profile 被重新协调后重放已选择的 Entry 状态，校验最终组合，并对失败事务执行补偿。
 - [客户端图标别名](../../../src/client/ui-icons.ts) 同时支持旧版按尺寸命名的导出和 alpha7 按字重命名的导出。设置页双语说明改为由 DSH 保存并实时生效，不再硬编码已移除的设置文件。
 
+- [Session 消息](../../../src/host/lifecycle.ts) 使用 alpha7 V4 codec 要求的生产者来源类型 `dsh-mnemon`。读取和去重仍识别历史 wrapper 与官方迁移后的 `plugin:dsh-mnemon`；修复激活后，真实 WebUI 对话继续复现了这一兼容故障。
+
 ## 保留设置与现有 Profile 选择
 
 恢复过程只读 `settings.yaml.imported`，保持其字节不变，并仅通过 `ConfigEditor.edit` 写入。[纯迁移规划器](../../../src/host/legacy-settings-import.ts) 将规范根插件的保留分区映射如下：
@@ -54,4 +56,30 @@ DSH `0.1.7-alpha.1` 将动态 Settings 注册改为从各插件的静态 `Config
 
 制品夹具使用隔离测试数据，确定性模型端点仅绑定 `127.0.0.1`，不需要外部模型 API Key，也不会调用外部模型服务。启动认证 URL、`server.json`、原始 `web.log` 和模型请求日志均留在仓库外；公开证据不得包含凭据或私人数据。
 
-<!-- 最终验证完成后，在此补充实际构建/制品检查、修复后 WebUI 截图和重启结果。目前不记录最终成功结论或测试总数。 -->
+## 设置与迁移实测结果
+
+提交 `407eac75ee46e677f694e6c318ca9380357fae27` 的 17 件 Mnemon 打包制品通过以下浏览器操作。随后补充的 Session 来源格式修复单独记录；本轮记录验证设置实现。机器可读哈希与结果见 [settings-verification.json](./settings-verification.json)。
+
+| 公开 DSH 版本 | 同版本 DSH 包数量 | 核对的官方安装文件 | 实际 WebUI 操作 |
+| --- | ---: | ---: | --- |
+| `0.1.5-rc.2` | 234 | 8 | 打开工作台；关闭 Light 并保留 Auto Capture/Scoped；保存核心/UI 设置；刷新页面 |
+| `0.1.6-alpha.2` | 251 | 8 | 使用该版本 Settings 服务完成相同操作 |
+| `0.1.7-alpha.1` | 267 | 10 | Root 与全部 Source/Strategy 激活；核心/UI 连续保存；独立 UI 保存；页面刷新及完整 Host 重启 |
+
+alpha7 重启后间隔仍为 `310000`，Light 保持关闭，Auto Capture/Scoped 保持开启，两个 UI 开关保持关闭。RC.2、alpha.2 保存的间隔分别为 `320000`、`330000`；Light/回合记忆条关闭，其他开关保持开启。没有出现虚假的 revision 冲突。
+
+旧备份夹具恢复召回上限 `7`、回合记忆条开启/存入按钮关闭，以及主动记录开启。当前 Light 启用和配置（`1200`）、档案启用优先于旧值；外部 profile 的 Scoped 偏好被忽略。完整 Host 重启后，profile patch、根 Config、全部 21 个非 root 行和原始备份哈希均不变。重启前，20 个初始非 root 行与夹具初始化语义相同；新增行来自浏览器确认内测声明。
+
+真实 Mnemon CLI `0.2.8` 还完成了 WebUI 状态调用，并创建、启用存储正常的原生记忆空间。可选的默认 Ollama 嵌入端点未运行；未使用外部嵌入或模型密钥。
+
+![修复后 alpha7 Root 与 Source 激活](./after-alpha7-activation.png)
+![修复后 alpha7 记忆工作台](./after-alpha7-status.png)
+![核心/UI 设置成功保存，无虚假 revision 冲突](./after-alpha7-settings-saved.png)
+![完整 Host 重启后 Strategy 选择保持](./after-alpha7-host-restart.png)
+![旧 UI 偏好恢复](./after-alpha7-legacy-settings.png)
+![旧偏好在重启后保持](./after-alpha7-legacy-restart.png)
+![通过 WebUI 创建并启用原生 CLI 记忆空间](./after-alpha7-native-cli.png)
+![RC.2 设置保存](./after-rc2-settings-saved.png)
+![Alpha.2 设置保存](./after-alpha2-settings-saved.png)
+
+<!-- 最终 Session V4 制品 WebUI 与整体验证完成后追加结果。 -->

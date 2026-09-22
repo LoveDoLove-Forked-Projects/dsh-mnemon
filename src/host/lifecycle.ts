@@ -28,6 +28,15 @@ import type { MemoryWake } from "../core/contracts/index.ts"
 import { agentScope, type MnemonAgentRuntimeSource } from './runtime.ts'
 import { hostSessionEventAt, hostSessionEvents } from './session-events.ts'
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'dsh-mnemon': {
+      kind: 'dsh-mnemon'
+      form: 'recall' | 'instructions'
+    }
+  }
+}
+
 type AgentRuntimeSource = Pick<MnemonAgentRuntimeSource, 'forAgent' | 'executions'>
 
 interface HostDefaultModelService {
@@ -98,15 +107,19 @@ function createPluginMessage(text: string, form: 'recall' | 'instructions'): Hos
     role: 'user' as const,
     content: [{ type: 'text' as const, text }],
     source: {
-      kind: 'plugin',
-      plugin: MNEMON_PLUGIN_SOURCE,
+      kind: MNEMON_PLUGIN_SOURCE,
       form,
-    } satisfies MessageSourceMap['plugin'],
+    } satisfies MessageSourceMap['dsh-mnemon'],
   })
 }
 
-function sourceOf(message: HostUserMessage): { kind?: string; plugin?: string } {
-  return message.source
+function isMnemonMessageSource(source: unknown): boolean {
+  if (typeof source !== 'object' || source === null) return false
+  const { kind, plugin } = source as { kind?: unknown; plugin?: unknown }
+  // V3-to-V4 migrates the legacy plugin wrapper to `plugin:dsh-mnemon`.
+  return kind === MNEMON_PLUGIN_SOURCE
+    || kind === `plugin:${MNEMON_PLUGIN_SOURCE}`
+    || (kind === 'plugin' && plugin === MNEMON_PLUGIN_SOURCE)
 }
 
 /**
@@ -114,10 +127,7 @@ function sourceOf(message: HostUserMessage): { kind?: string; plugin?: string } 
  */
 function isOwnUserMessageEvent(event: HostSessionEvent | undefined): boolean {
   if (event?.type !== 'user/message') return false
-  const source = event.data.source
-  if (typeof source !== 'object' || source === null) return false
-  const { kind, plugin } = source as { kind?: unknown; plugin?: unknown }
-  return kind === 'plugin' && plugin === MNEMON_PLUGIN_SOURCE
+  return isMnemonMessageSource(event.data.source)
 }
 
 function eventTurn(event: HostSessionEvent): number | undefined {
@@ -391,10 +401,7 @@ class MnemonAgentLifecycle {
     }
     if (payload.step !== 1) return decision
 
-    const ownRequest = decision.messages.some(message => {
-      const source = sourceOf(message)
-      return source.kind === 'plugin' && source.plugin === MNEMON_PLUGIN_SOURCE
-    })
+    const ownRequest = decision.messages.some(message => isMnemonMessageSource(message.source))
     if (ownRequest) {
       return decision
     }
