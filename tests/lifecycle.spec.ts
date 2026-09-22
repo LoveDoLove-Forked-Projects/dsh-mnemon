@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { assertReleasedPayloadSemantics } from '@deepseek-ai/dsh-session-format-v0-to-v1'
 import { MemoryExecutions } from '../src/host/memory-executions.ts'
 import { resolveConfig } from "../src/host/config.ts"
@@ -209,18 +211,89 @@ afterEach(() => vi.useRealTimers())
 
 describe('Mnemon DSH lifecycle integration', () => {
 
-  it('emits guided context accepted by the published legacy Session migration', async () => {
+  it('emits producer-owned guided context accepted by the published legacy Session migration', async () => {
     const value = fixture(resolveConfig({ recallMode: 'guided', writebackMode: 'guided' }))
     const decision = await value.preStep([userMessage()], 1)
     if (decision.kind !== 'enter') throw new Error('unexpected rejection')
-    const messages = decision.messages.filter(message => message.source.plugin === 'dsh-mnemon')
+    const messages = decision.messages.filter(message => message.source.kind === 'dsh-mnemon')
     expect(messages.map(message => message.source.form)).toEqual(['instructions', 'recall'])
     for (const message of messages) {
+      expect(message.source).not.toHaveProperty('plugin')
       expect(() => assertReleasedPayloadSemantics({
         type: 'user/message', seq: 0, time: 0, surfaceOp: 'append',
         data: JSON.parse(JSON.stringify(message)),
       }, 0)).not.toThrow()
     }
+    value.stop()
+  })
+
+  // Point at a clean public alpha7 consumer's node_modules to verify the V4
+  // persistence contract without replacing the repository's legacy dev cohort.
+  const v4ContractRoot = process.env.MNEMON_DSH_V4_CONTRACT_ROOT
+  it.skipIf(v4ContractRoot === undefined)('persists guided context through the published V4 codec that rejects plugin wrappers', async () => {
+    const sessionApi = await import(pathToFileURL(join(v4ContractRoot!, '@deepseek-ai/dsh-session/lib/index.js')).href)
+    const format = await import(pathToFileURL(join(v4ContractRoot!, '@deepseek-ai/dsh-session-format-v3-to-v4/lib/index.js')).href)
+    const sessionId = sessionApi.SessionId('mnemon-source-contract-fixture')
+    const session = sessionApi.Session.create(sessionId, undefined, {
+      version: 4, id: sessionId, createdAt: 0, isSeeded: false, delegationDepth: 0,
+    })
+    const value = fixture()
+    const decision = await value.preStep([userMessage()], 1)
+    if (decision.kind !== 'enter') throw new Error('unexpected rejection')
+    const messages = decision.messages.slice(1)
+    expect(messages.map(message => message.source.form)).toEqual(['instructions', 'recall'])
+    for (const message of messages) {
+      const event = session.append('user/message', message, { surfaceOp: 'append' })
+      expect(format.releasedV4SessionFormatCodec.encodeEvent(event).data.source).toEqual(message.source)
+    }
+    const artifact = { header: session.header, inheritedEventCount: 0, events: session.snapshotEvents() }
+    expect(() => format.restoreReleasedV4Artifact(artifact, sessionApi.KNOWN_SESSION_EVENT_TYPES)).not.toThrow()
+    const oldWrapper = { ...artifact.events[0], data: { ...messages[0], source: { kind: 'plugin', plugin: 'dsh-mnemon', form: 'instructions' } } }
+    expect(() => format.restoreReleasedV4Artifact({ ...artifact, events: [oldWrapper] }, sessionApi.KNOWN_SESSION_EVENT_TYPES))
+      .toThrow('format v4 message requires a producer-owned source kind')
+    value.stop()
+  })
+
+  const ownSources = [
+    { kind: 'dsh-mnemon', form: 'instructions' },
+    { kind: 'plugin:dsh-mnemon', form: 'instructions' },
+    { kind: 'plugin', plugin: 'dsh-mnemon', form: 'instructions' },
+  ]
+
+  it.each(ownSources)('does not reinject context into a request already owned by Mnemon: %j', async source => {
+    const value = fixture()
+    const own = { ...userMessage('Previously queued Mnemon context'), source }
+    expect(await value.preStep([own], 1)).toEqual({ kind: 'enter', messages: [own] })
+    value.stop()
+  })
+
+  it.each(ownSources)('recognizes current, migrated and legacy attribution on the durable surface: %j', async source => {
+    const value = fixture()
+    value.events.push({ type: 'user/message', seq: 0, data: { ...userMessage('Retained Mnemon reminder'), source } })
+    ;(value.agent.session as { surface?: { nodes: readonly number[] } }).surface = { nodes: [0] }
+    const decision = await value.preStep([userMessage()], 1)
+    if (decision.kind !== 'enter') throw new Error('unexpected rejection')
+    expect(decision.messages).toHaveLength(2)
+    expect(decision.messages.some(message => message.source.form === 'instructions')).toBe(false)
+    expect(decision.messages.at(-1)?.source.form).toBe('recall')
+    value.stop()
+  })
+
+  it.each([
+    { kind: 'plugin', plugin: 'other-plugin' },
+    { kind: 'plugin:dsh-mnemon-other' },
+    { kind: 'other-plugin', plugin: 'dsh-mnemon' },
+  ])('does not let another producer suppress Mnemon context: %j', async source => {
+    const value = fixture()
+    const other = { ...userMessage('Unrelated producer context'), source }
+    value.events.push({ type: 'user/message', seq: 0, data: other })
+    ;(value.agent.session as { surface?: { nodes: readonly number[] } }).surface = { nodes: [0] }
+    const decision = await value.preStep([other], 1)
+    if (decision.kind !== 'enter') throw new Error('unexpected rejection')
+    expect(decision.messages[0]).toEqual(other)
+    expect(decision.messages.slice(1).map(message => message.source)).toEqual([
+      { kind: 'dsh-mnemon', form: 'instructions' }, { kind: 'dsh-mnemon', form: 'recall' },
+    ])
     value.stop()
   })
 
@@ -238,7 +311,7 @@ describe('Mnemon DSH lifecycle integration', () => {
     expect(decision.kind === 'enter' && decision.messages.slice(0, 2)).toEqual([user, shared])
     expect(decision.kind === 'enter' && decision.messages.at(-1)).toMatchObject({
       content: [{ type: 'text', text }],
-      source: { kind: 'plugin', plugin: 'dsh-mnemon', form: 'recall' },
+      source: { kind: 'dsh-mnemon', form: 'recall' },
     })
     if (decision.kind === 'enter') expect(decision.messages.at(-1)?.source).not.toHaveProperty('summary')
     await value.turnStopping(1)
@@ -264,7 +337,7 @@ describe('Mnemon DSH lifecycle integration', () => {
     const first = await value.preStep([userMessage()], 1)
     expect(first.kind).toBe('enter')
     const reminder = first.kind === 'enter' ? first.messages.at(-1) : undefined
-    expect(reminder?.source).toMatchObject({ kind: 'plugin', plugin: 'dsh-mnemon' })
+    expect(reminder?.source).toMatchObject({ kind: 'dsh-mnemon' })
     commit(reminder as HostUserMessage)
 
     // Still visible: a later first step must not duplicate it.
@@ -280,7 +353,7 @@ describe('Mnemon DSH lifecycle integration', () => {
     const third = await value.preStep([userMessage()], 3)
     expect(third.kind).toBe('enter')
     const reissued = third.kind === 'enter' ? third.messages.at(-1) : undefined
-    expect(reissued?.source).toMatchObject({ kind: 'plugin', plugin: 'dsh-mnemon' })
+    expect(reissued?.source).toMatchObject({ kind: 'dsh-mnemon' })
   })
 
   it('falls back to session-scoped state when the host publishes no surface', async () => {
@@ -501,7 +574,7 @@ describe('Mnemon DSH lifecycle integration', () => {
     expect(decision).toMatchObject({ kind: 'enter' })
     if (decision.kind !== 'enter') throw new Error('unexpected rejection')
     expect(decision.messages).toHaveLength(3)
-    expect(decision.messages[1]?.source).toMatchObject({ kind: 'plugin', plugin: 'dsh-mnemon', form: 'instructions' })
+    expect(decision.messages[1]?.source).toMatchObject({ kind: 'dsh-mnemon', form: 'instructions' })
     expect(decision.messages[1]?.content[0]?.text).toBe('[MNEMON] Use mnemon_view_route only when relevant evidence is missing. Use mnemon_view_action only for an intended memory change; require a write receipt. Use only ids offered by the current View and follow each Source\'s semantics. Otherwise use none.')
     expect(value.coordinator.recall).not.toHaveBeenCalled()
 
@@ -511,7 +584,7 @@ describe('Mnemon DSH lifecycle integration', () => {
     // fixture derives Wake text from the turn, so turn 2 is a new revision.
     expect(second.messages).toHaveLength(2)
     expect(second.messages.some(message => (message.source as { form?: string }).form === 'instructions')).toBe(false)
-    expect(second.messages.at(-1)?.source).toMatchObject({ kind: 'plugin', plugin: 'dsh-mnemon', form: 'recall' })
+    expect(second.messages.at(-1)?.source).toMatchObject({ kind: 'dsh-mnemon', form: 'recall' })
     expect(value.coordinator.recall).not.toHaveBeenCalled()
     expect(value.lifecycle.snapshot('session-1').counters).toMatchObject({ primes: 1, recallCues: 1, writebackCues: 1 })
   })

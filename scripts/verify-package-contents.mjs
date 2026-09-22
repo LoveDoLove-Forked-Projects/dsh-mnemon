@@ -56,7 +56,10 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // Public DSH session binding, reactive settings context and list-slot guards
 // bring the measured package to 1,338,363 bytes (+2,624). Keep less than 1 KB
 // of headroom; Source implementations still ship only in their own packages.
-const maximumUnpackedBytes = 1_339_000
+// Config-backed settings, retained-backup recovery, composition replay and
+// icon/Session compatibility bring the measured package to 1,370,296 bytes. Keep
+// less than 2 KB of headroom; Source/framework implementations stay external.
+const maximumUnpackedBytes = 1_372_000
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)

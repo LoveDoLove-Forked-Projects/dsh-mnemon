@@ -8,6 +8,8 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 |---|---|---|
 | DSH 开发基线 | `0.1.5-rc.1` | 正式发布的契约、WebUI 与隔离 Headless 激活 |
 | DSH Client 兼容 | `0.1.5-rc.2`、`0.1.6-alpha.2` | 完整生产公开类型、正常 npm 制品安装、真实 WebUI 回合插件组合／开关／重载与 Sidebar/Builtin 跳转、制品 Headless 持久化及禁用 Root |
+| DSH profile 设置 | `0.1.7-alpha.1` | 正常 npm 制品安装；真实 WebUI 激活、核心/UI 连续保存、Strategy 选择、旧设置恢复与完整 Host 重启 |
+| DSH Session 消息 | `0.1.5-rc.2`、`0.1.6-alpha.2`、`0.1.7-alpha.1` | 相同 Mnemon 制品完成真实 Runtime/状态工具调用，并在 Session V3/V4 中持久化生产者专属来源；alpha.7 在 Host 重启后恢复对话及 Builtin Runtime 数据 |
 | 历史 DSH Headless 证据 | `0.1.2-rc.1` | 较早 revision 在隔离 Headless 中激活并重启；合成会话经副本修复后由 0.1.5 公开加载器完成迁移 |
 | 历史 DSH 证据 | `0.1.1-rc.2` | 早期 Sidebar/Builtin 记录保留各自 revision；本次未重跑 |
 | Node.js | `22.19`、`24` | 分别用于源码 CI 与打包制品 CI；开发要求 `^22.19.0 || >=24.0.0` |
@@ -17,11 +19,23 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 
 开发锁文件仍使用 `0.1.5-rc.1`。“本回合记忆”以稳定 ID 注册到 alpha 的 list 插槽，同时保留 RC 的 chain selector；组件也会在读取或展示活动前检查回合是否已完成。Sidebar 与设置页跟随 DSH 公开的默认／主会话 binding；Builtin 和 Better Sidebar 保留显式所属会话。
 
-当前 Client 依赖公开的 UI Session 服务。Root 的两个 DSH peer 范围均为 `^0.1.5-rc.1 || ^0.1.6-alpha.2`；官方插件的 peer 与版本均未改动。较旧的 Headless 和 WebUI 记录仅保留为历史证据。回滚旧版 DSH 时，应同时使用之前针对该宿主验证过的 Mnemon 版本。此兼容修复无需迁移配置或已存数据。
+当前 Client 依赖公开的 UI Session 服务。Root 的两个 DSH peer 范围均为 `^0.1.5-rc.1 || ^0.1.6-alpha.2 || ^0.1.7-alpha.1`；官方插件的 peer 与版本均未改动。较旧的 Headless 和 WebUI 记录仅保留为历史证据。回滚旧版 DSH 时，应同时使用之前针对该宿主验证过的 Mnemon 版本。DSH 0.1.7 将动态设置移入 profile Config；Mnemon 将现有设置页接入该写入器，并按下述流程恢复保留的旧偏好。记忆数据和 Provider 格式不变。
 
-参见[RC/alpha 验证与前后对比截图](../../pr-assets/issue-261-dsh-slots/README.zh-CN.md)、[DSH 0.1.5 验证](../../pr-assets/issue-223-dsh-015/README.zh-CN.md)、[宿主兼容证据](../../pr-assets/dsh-rc1-compat/README.md)、[升级证据](../../pr-assets/main-rebase-20260904/README.md)与[当前开发检查](../development/README.md)。机制测试通过不是 LLM 质量评测通过；特定 OS 与真实 CLI 检查在没有对应环境时可能跳过。
+参见[DSH 0.1.7 设置验证](../../pr-assets/issue-267-settings-migration/README.zh-CN.md)、[RC/alpha 验证与前后对比截图](../../pr-assets/issue-261-dsh-slots/README.zh-CN.md)、[DSH 0.1.5 验证](../../pr-assets/issue-223-dsh-015/README.zh-CN.md)、[宿主兼容证据](../../pr-assets/dsh-rc1-compat/README.md)、[升级证据](../../pr-assets/main-rebase-20260904/README.md)与[当前开发检查](../development/README.md)。机制测试通过不是 LLM 质量评测通过；特定 OS 与真实 CLI 检查在没有对应环境时可能跳过。
 
 历史 v0.5.2 采集发现 390px 设置布局不可用，[失败证据](../../pr-assets/documentation-refresh/README.md)保留原版本身份。[v0.5.4 浅色采集](../../assets/webui-v0.5.4/README.md)覆盖双语桌面浏览，以及 390 × 844 下的记忆空间导航、创建与版本维护。长卡片名称和部分指标会截断；本次没有复测所有 Host 设置页或真实手机，因此不将早期设置限制标为已解决。
+
+## DSH 0.1.7 设置恢复
+
+DSH `0.1.7-alpha.1` 用基于 Config 的表单替代了 `settings.register()` 和 `settings-file`。Mnemon 提供动态 Config 字段，现有界面操作通过宿主检查 revision 的 profile 写入器持久化；修改传输权限仍需正常重载插件。DSH `0.1.5-rc.2` 和 `0.1.6-alpha.2` 继续沿用原设置路径。
+
+Mnemon 消息使用 Session V3、V4 均接受的生产者专属来源 `dsh-mnemon`。过滤和去重仍识别历史包装，以及 DSH 迁移后的 `plugin:dsh-mnemon` 消息；本改动不会重写已有 Session 文件。
+
+启动时，Mnemon 可将 `<profile home>/settings.yaml.imported` 中保留的备份恢复到可编辑的根 `mnemon` 条目，包括根设置、`mnemon-ui` 对话开关，以及仅属于当前 profile 的精确 `mnemon-view-*` / `mnemon-plugins-*` 命名空间。当前 profile 的显式值优先，包括显式清空的插件选择；已有 Source 和 Strategy 条目保持原样；Strategy 条目使用动态表达式时，会保留原表达式并跳过该条目的旧覆盖值，避免将当前求值固定下来。恢复后会在根 Config 中记录 `legacySettingsImported: true`，备份文件保持不变。
+
+若 Mnemon 启动时原 `settings.yaml` 仍存在，由 DSH 执行导入；完成后再重启一次该 profile，恢复 Mnemon 专属偏好。DSH 未公开导入完成信号，因此 Mnemon 等待新宿主进程，避免并发写入。只读或归属不明确的根条目不会被修改；相关旧设置节损坏时，不做部分导入，也不标记完成。请保留备份，参考启动诊断后再修复；不会猜测自定义根 ID 或其他 profile 的 hash。
+
+回滚 DSH 时，保留 profile patch 和旧设置备份。0.1.7 上后来修改的设置不会自动反向导出到旧设置文件，需要恢复对应备份或在旧宿主重新设置；Runtime、档案、记忆空间与 Provider 数据不受影响。
 
 ## 升级默认安装
 

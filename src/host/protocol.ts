@@ -208,6 +208,10 @@ export interface Config {
   /** Optional DSH-owned overrides injected into every Mnemon CLI process. */
   embedding?: MnemonEmbeddingConfig
   memoryTopology?: MemoryTopologyConfig
+  /** Profile-owned plugin choices on DSH 0.1.7 and newer. */
+  memoryView?: import('./view-protocol.ts').MemoryViewPreferences
+  /** Successful import of this profile's removed settings namespaces. */
+  legacySettingsImported?: boolean
   recallQuality?: RecallQualityConfig
   routingGuidance?: boolean
   /** Entry placement only. Legacy `buildin` input is migrated to `builtin`. */
