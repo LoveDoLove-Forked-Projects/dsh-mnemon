@@ -14,6 +14,8 @@ node packed-e2e.mjs --mode fixed --cohort alpha --artifacts "$VERIFICATION_ROOT/
 
 `--cohort rc` 使用已发布的 DSH 0.1.5-rc.2；`alpha` 固定使用 0.1.6-alpha.2。修复后的测试环境采用正常的 npm peer 依赖解析。超过 200 条 DSH 包记录必须全部使用所选版本组的精确版本。已安装的公开 SlotCore、Chat、Renderer 和 Conversation 模块必须与未经修改的公开 tarball 字节一致；缺少参照 tarball 时，脚本会从公开 npm registry 获取并校验其公开完整性值。
 
+两种模式均可使用 `--framework-root /path/to/previously-verified-consumer`，把已验证环境中实际安装的公开框架版本组和配套 peer 固定为测试环境的精确依赖。DSH 版本必须与所选版本组一致，固定结果记录在 `framework-pins.json`。这样可避免上游 peer 范围把较新的预发布版本带入历史复现；修复模式仍采用正常 npm 解析，不修改公开包的元数据或字节。Issue #265 的未固定 RC2 首次安装遇到不完整的 RC3 传递发布后，采用了此选项。
+
 `--serve false` 只准备并验证测试环境，不启动 DSH。`--reuse-install true` 跳过 npm 安装，重新启动之前准备好的测试环境，并保留其 home、workspace 和 Mnemon 数据。它仍会检查锁定依赖图、本地包完整性、依赖解析以及原始公开模块的字节。此选项仅用于已经验证过的运行目录，不能用于首次安装。本机回环 registry 可能使用新端口；锁文件中保留的历史 tarball 解析 URL 用于记录制品来源。
 
 `server.json` 记录 WebUI 启动认证 URL、验证进程 PID、DSH PID、CLI 路径以及隔离目录。启动 URL 可能在浏览器访问后失效，不要提前请求它来判断 HTTP 服务是否就绪。向验证进程 PID 发送 `SIGUSR2` 会重启其 DSH 子进程，保留隔离数据，并生成新的启动 URL。`SIGTERM` 会停止 DSH 子进程以及本地 registry 和模型服务。脚本不会安装后台服务。
