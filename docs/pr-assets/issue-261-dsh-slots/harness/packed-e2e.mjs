@@ -46,11 +46,12 @@ for (const item of localPackages.values()) {
 await writeFile(join(runRoot, 'artifact-provenance.json'), JSON.stringify({ artifactsRoot, ...artifactSet.provenance, artifacts: artifactSet.artifacts.map(({ name, version, filename, integrity, sha256, source }) => ({ name, version, filename, integrity, sha256, source })) }, null, 2) + '\n');
 const legacyPeers = mode === 'baseline' && cohort === 'alpha';
 if (legacyPeers && !args.has('--framework-root')) assert(process.platform === 'darwin' && process.arch === 'arm64', 'Bundled baseline pins are macOS ARM64 only; supply --framework-root from a normal exact-cohort install on this platform.');
-const frameworkPeers = legacyPeers
-  ? args.has('--framework-root')
-    ? await frameworkPins(resolve(args.get('--framework-root')), version)
-    : JSON.parse(await readFile(new URL(`./e2e/framework-peers-${cohort}.json`, import.meta.url), 'utf8'))
-  : {};
+const frameworkPeers = args.has('--framework-root')
+  ? await frameworkPins(resolve(args.get('--framework-root')), version)
+  : legacyPeers
+    ? JSON.parse(await readFile(new URL(`./e2e/framework-peers-${cohort}.json`, import.meta.url), 'utf8'))
+    : {};
+if (args.has('--framework-root')) await writeFile(join(runRoot, 'framework-pins.json'), JSON.stringify(frameworkPeers, null, 2) + '\n');
 if (legacyPeers) await writeFile(join(runRoot, 'baseline-framework-pins.json'), JSON.stringify(frameworkPeers, null, 2) + '\n');
 for (const [name, pinned] of Object.entries(frameworkPeers)) if (name.startsWith('@deepseek-ai/dsh')) assert.equal(pinned, version);
 const env = { ...process.env, DSH_HOME: dshHome, DSH_TELEMETRY_DISABLED: '1', DSH_TELEMETRY_MODE: 'DISABLED', MNEMON_DATA_DIR: data, MNEMON_CLI_PATH: nativeCli, DEEPSEEK_API_KEY: 'isolated-issue261-fixture-key' };
@@ -102,7 +103,7 @@ function command(executable, argv, log, cwd = consumer, timeoutMs = 240000) {
 const manifest = {
   name: `issue261-${mode}-${cohort}-web`, version: '0.0.0', private: true, type: 'module',
   dependencies: {
-    ...(legacyPeers ? frameworkPeers : {}),
+    ...frameworkPeers,
     '@deepseek-ai/dsh': version, '@deepseek-ai/dsh-client-ui-primitives': version, '@deepseek-ai/dsh-typert-protocol': version,
     ...Object.fromEntries(['dsh-client-ui-slots', 'dsh-client-ui-chat', 'dsh-client-ui-conversation', 'dsh-client-ui-renderer', 'dsh-client-ui-layout', 'dsh-client-ui-settings', 'dsh-client-store', 'dsh-client-locale'].map(name => [`@deepseek-ai/${name}`, version])),
     '@deepseek-ai/cordis': '4.0.2', react: '18.3.1', 'react-dom': '18.3.1',
