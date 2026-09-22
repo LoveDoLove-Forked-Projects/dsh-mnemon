@@ -1,5 +1,6 @@
 import { isVolatile, type Volatile } from '@deepseek-ai/cosmokit'
-import z from '@deepseek-ai/schemastery'
+import type z from 'schemastery'
+import ProfileSchema from './profile-schema.mjs'
 import { Config as PlainConfig, resolveConfig, type Config } from './config.ts'
 
 /** DSH keeps these references stable while committing live profile edits. */
@@ -24,7 +25,7 @@ export function plainHostConfig(value: unknown = {}): Config {
 function liveConfig(): z<Config, LiveHostConfig> {
   // Rehydrate the published schema into the fork that creates real Volatile
   // references; adding metadata to the old parser would silently skip updates.
-  const schema = new z(PlainConfig.toJSON())
+  const schema = new ProfileSchema(PlainConfig.toJSON())
   schema.dict = Object.fromEntries(Object.entries(schema.dict ?? {}).map(([key, field]) => [
     key, key === 'remoteAccess' ? field : field.volatile(),
   ]))

@@ -21,6 +21,7 @@ mnemon (dsh-mnemon): TypeError: ctx.settings.register is not a function
 DSH `0.1.7-alpha.1` 将动态 Settings 注册改为从各插件的静态 `Config` 生成表单。实现使用公开发布的 `SettingsForms.configure/describe/mutate`、`ConfigEditor.edit`、Cordis 的 `internal/config` waterfall，以及 Loader 的 `loader/volatile-update` 事件。官方 DSH 包、manifest 和源码均未修改；制品夹具不使用 DSH 源码 checkout、工作区 alias 或替代 Settings 服务。
 
 - [Live Config](../../../src/host/live-config.ts) 使用公开 DeepSeek Schemastery/Cosmokit 包提供的真实 volatile 引用，保留原生表单可识别的对象 schema，并执行纯跨字段校验。`remoteAccess` 保持普通字段，沿用 Host 正常的重挂载行为。
+- 私有静态 ESM 桥通过 npm alias `schemastery-live` 导入未修改的公开 fork，以窄类型声明阻止其新增全局泛型合并进旧 schema builder。canonical 开发依赖固定为 `3.18.2`，保留 RC.1 类型组合，并满足一处遗漏运行时依赖的上游声明。Mnemon 输出的公开类型不包含 alias；consumer 的 Host 保持自身框架依赖版本。没有修改官方包、TypeScript 源码路径或导入顺序。
 - [Settings 适配器](../../../src/host/settings-service.ts) 保留 Mnemon 客户端命名空间，将读取、校验和写入绑定到所属 Entry/Fiber。仍提供 `settings.register` 的旧 Host 继续使用原服务。Profile 写入经过 DSH 加锁的编辑器；所属实例的 preflight 在持久化前校验候选运行图，提交后的 volatile 更新负责刷新运行时。
 - Core、UI 和 View 共用一个原生 revision。仅当该命名空间未脱敏的生效值、继承值和显式覆盖仍与已观察快照一致时，才允许有限重试。同命名空间冲突、缺少历史快照、只读状态、实例销毁和 Entry 替换均会拒绝写入；远程描述仍保持脱敏。
 - [插件管理](../../../src/host/plugin-management.ts) 在整个 Profile 被重新协调后重放已选择的 Entry 状态，校验最终组合，并对失败事务执行补偿。

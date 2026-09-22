@@ -141,7 +141,6 @@
   },
   "dependencies": {
     "@deepseek-ai/cosmokit": "^1.8.4",
-    "@deepseek-ai/schemastery": "^3.18.3",
     "dsh-mnemon-provider-byterover": "0.5.4",
     "dsh-mnemon-provider-hindsight": "0.5.4",
     "dsh-mnemon-provider-holographic": "0.5.4",
@@ -160,6 +159,7 @@
     "dsh-mnemon-strategy-scoped": "0.5.4",
     "fflate": "^0.8.3",
     "schemastery": "^3.18.0",
+    "schemastery-live": "npm:@deepseek-ai/schemastery@^3.18.3",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
@@ -203,6 +203,7 @@
     "@deepseek-ai/dsh-tools": "0.1.5-rc.1",
     "@deepseek-ai/dsh-typert-protocol": "0.1.5-rc.1",
     "@deepseek-ai/dsh-typert-registry": "0.1.5-rc.1",
+    "@deepseek-ai/schemastery": "3.18.2",
     "@shikijs/langs": "^4.3.1",
     "@testing-library/react": "^16.3.0",
     "@types/node": "^22.0.0",

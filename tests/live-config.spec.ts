@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { createVolatile, isVolatile } from '@deepseek-ai/cosmokit'
-import z from '@deepseek-ai/schemastery'
+import z from '../src/host/profile-schema.mjs'
 import { describe, expect, it, vi } from 'vitest'
 import { Config as PlainConfig } from '../src/host/config.ts'
 import { LiveConfig, plainHostConfig } from '../src/host/live-config.ts'
