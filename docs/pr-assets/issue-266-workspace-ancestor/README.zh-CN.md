@@ -1,6 +1,6 @@
 # Windows 工作区祖先路径 — issue #266
 
-[English](./README.md) | [Issue #266](https://github.com/omdsh-dev/dsh-mnemon/issues/266) | [Windows 观测](./windows-results.json) | [验证记录](./verification.json)
+[English](./README.md) | [Issue #266](https://github.com/omdsh-dev/dsh-mnemon/issues/266) | [Windows 观测](./windows-results.json) | [WebUI 观测](./webui-verification.json) | [验证记录](./verification.json)
 
 2026-09-22，真实 Windows runner 复现了 #266 报告的无效工作区身份。基线会为普通文件下的路径返回存储哈希；修复后，直接子路径与更深后代均以 `ENOTDIR` 拒绝。基线：`65c0e23ba410993e16c00c8b3adf92d59d853425`（v0.5.12）。实现：`1750e497e58c24406c0092e4fc1549996283aab8`。
 
@@ -34,7 +34,23 @@ JSON 证据保留所有原生用例观测及精简测试结果。SHA-256 字段�
 
 本地验证使用 macOS arm64、Node 25.1.0、pnpm 10.13.1、正式 DSH 0.1.5-rc.1 与官方 Mnemon CLI 0.2.8。设置 `MNEMON_NATIVE_TEST_CLI` 后，`pnpm run verify` 通过 1,185 项根测试、382 项插件测试、确定性构建、类型检查、真实 Native 集成与容量流程、隔离 Headless 激活/重启，以及制品校验。跳过 5 项需要真实 Flash 的根测试、1 项真实 OpenViking 测试，以及 1 项不适用于 macOS 的 Windows Native 冒烟。
 
-随后，`MNEMON_PLUGIN_VERIFY_CONCURRENCY=4 pnpm run verify:plugins --skip-build` 通过 16 个独立插件仓库、17 个制品、只用公开 SDK 的外部消费者、打包 Starter 激活，以及三个可选 Strategy 同时启用验证。构建与制品消费者顺序执行。另从干净的实现 revision 打包全部 17 个已验证制品，供独立 WebUI 验证使用；此处 Windows 观测不代表已操作 Windows WebUI。
+随后，`MNEMON_PLUGIN_VERIFY_CONCURRENCY=4 pnpm run verify:plugins --skip-build` 通过 16 个独立插件仓库、17 个制品、只用公开 SDK 的外部消费者、打包 Starter 激活，以及三个可选 Strategy 同时启用验证。构建与制品消费者顺序执行。另从干净的实现 revision 打包全部 17 个已验证制品，供下面独立的 macOS WebUI 冒烟使用。
+
+## 正式 RC2 与真实 CLI 的 macOS WebUI
+
+macOS 上的 Chrome 加载了实现 `1750e497` 的全部 17 个制品，使用正式 DSH 0.1.5-rc.2 与真实 Mnemon CLI 0.2.8。Scoped、Light context 和 Active capture 同时启用。隔离 profile 包含 234 个 DSH 包，全部精确为 RC2；51 项已检查的 peer 解析都位于该 profile 的 `node_modules` 内，4 个 Client 入口文件与公开制品字节一致。Root tarball 的 SHA-256 为 `3d5259f8a995a662ecf3e015282f42490a4be13e006e4672715aa05a8f6c353b`；[WebUI 记录](./webui-verification.json)保留全部 17 个制品哈希与 CLI 哈希。
+
+在 UI 选择集中工作区，并选中现存的 `项目 with spaces` 目录。发送 `compatibility-261` 后，本地确定性模型调用真实的 `mnemon_runtime_memory` add 与 `mnemon_status` 工具。状态页显示系统正常、Runtime 一条。随后点击 Runtime → 添加记忆，保存 `Issue 266 WebUI: 中文与空格工作区使用稳定集中存储，Runtime 写入后可读回。`；页面显示两条记录及成功提示。
+
+| 集中工作区状态 | Runtime 写入与读回 |
+|---|---|
+| ![Unicode 集中工作区状态正常](./webui-centralized-status.png) | ![UI 写入后显示两条 Runtime 记录](./webui-runtime-write.png) |
+
+只读检查确认规范工作区哈希为 `b541b67e760240d3e9cf9985777163114eb92d9dad1ce95546b73fd0e04c4c12`，`<集中根>/workspaces/<哈希>/runtime/memories.json` 恰有两条记录，其 `MEMORY.md` 投影也包含精确新增文本。全局 Runtime 仍为空，工作区内没有新增 `.mnemon` 目录。WebUI 记录保留 JSON 与投影哈希。截图中的 “Issue 261” 会话标题和第一条记录是复用兼容性夹具时有意保留的标记。
+
+本任务中未固定依赖的安装遇到了不完整的公开 RC3 传递依赖发布。因此，冒烟使用全新的消费者，将依赖固定为此前验证 profile 的精确正式 RC2 图谱，未使用 `--legacy-peer-deps`。[已有安装脚本](../issue-261-dsh-slots/harness/packed-e2e.mjs)的外部副本仅调整为在 fixed 模式也使用 `--framework-root`；已保留该[小范围安装差异](./webui-rc2-pins.patch)，副本 SHA-256 为 `9de47863b19cae46122ab030675879c11b6e598bd46f31c302bd9eeb59b598d2`。没有修改 DSH 包源码或发布 manifest。
+
+该冒烟验证 macOS 上有效集中工作区的操作，与 Windows 原生拒绝证据独立。浏览器流程检查了 Native CLI 版本，但未创建 Native Memory Space；真实 Native 写入、召回、遗忘和容量流程由上面的完整验证覆盖。模型响应与存储内容均为合成数据，未使用外部模型 API 或个人凭据。
 
 ## 兼容与数据
 

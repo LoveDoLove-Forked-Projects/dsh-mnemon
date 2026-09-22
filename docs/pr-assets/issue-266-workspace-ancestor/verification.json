@@ -53,5 +53,13 @@
     "1 live OpenViking integration requires a disposable backend",
     "1 Windows Native binary smoke does not apply to macOS"
   ],
-  "scope": "Windows observations use native node:fs calls, separately from the portable simulated-ENOENT regression. All stores are disposable; no personal data, credentials, external model calls or DSH source changes."
+  "scope": "Windows observations use native node:fs calls, separately from the portable simulated-ENOENT regression. All stores are disposable; no personal data, credentials, external model calls or DSH source changes.",
+  "webui": {
+    "evidence": "webui-verification.json",
+    "platform": "macOS Chrome",
+    "dsh": "0.1.5-rc.2",
+    "packedArtifacts": 17,
+    "runtimeEntries": 2,
+    "status": "passed"
+  }
 }
