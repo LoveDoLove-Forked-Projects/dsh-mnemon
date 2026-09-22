@@ -12,6 +12,8 @@ For new evaluations, commit the reusable harness, workload generator, concise bi
 
 | Record / 记录 | Scope / 范围 |
 |---|---|
+| [Builtin conversation width handles — issue #265](./issue-265-builtin-width-handles/README.md) / [中文](./issue-265-builtin-width-handles/README.zh-CN.md) | RC2/alpha2 WebUI before/after, composer and width dragging, Source writes and plugin isolation / RC2/alpha2 WebUI 对比、输入框与宽度拖动、Source 写入及插件隔离 |
+| [Windows workspace ancestors — issue #266](./issue-266-workspace-ancestor/README.md) / [中文](./issue-266-workspace-ancestor/README.zh-CN.md) | Actual Windows file-ancestor rejection, portable path tests, Native CLI and packed plugin verification / 真实 Windows 文件祖先拒绝、跨平台路径测试、Native CLI 与插件制品验证 |
 | [DSH RC / alpha compatibility — issue #261](./issue-261-dsh-slots/README.md) / [中文](./issue-261-dsh-slots/README.zh-CN.md) | Published package types, real WebUI before/after, turn-tail peers, session isolation and packed Headless / 正式制品类型、真实 WebUI 前后对比、回合插件组合、会话隔离与制品 Headless |
 | [Windows Git probe console — issue #259](./issue-259-windows-git-console/README.md) / [中文](./issue-259-windows-git-console/README.zh-CN.md) | Actual Windows before/after window observation, real WebUI, CLI and plugin composition / 真实 Windows 窗口前后观测、WebUI、CLI 与插件组合验证 |
 | [OpenViking exact writes — issue #233](./issue-233-openviking-20260916/README.md) / [中文](./issue-233-openviking-20260916/README.zh-CN.md) | Controlled false-receipt reproduction, exact content writes and published OpenViking storage/search/delete / 受控错误回执复现、精确正文写入与正式 OpenViking 存储/检索/删除 |

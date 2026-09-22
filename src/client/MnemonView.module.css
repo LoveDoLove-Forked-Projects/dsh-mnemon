@@ -32,6 +32,13 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* DSH keeps width handles mounted across views. Scope suppression to this
+   Builtin's owning conversation; retain the resident composer and peer views. */
+:has(> [data-conversation-scroll] > [data-slot='conversation.session'] > * > [data-slot='conversation.view'] > .shell[data-mnemon-surface='builtin']) > [data-width-handle] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .shell *,
 .shell *::before, .shell *::after { box-sizing: border-box; }
 .shell button,

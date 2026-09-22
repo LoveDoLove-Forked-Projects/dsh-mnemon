@@ -66,6 +66,8 @@ pnpm --filter dsh-mnemon-source-runtime verify
 | Host | 默认组合、配置/数据范围、工具、监督流程、RPC 权限、回执与体验 |
 | 制品 | 所有公开入口、独立安装/构建/测试、外部组合与浏览器制品 |
 
+工作区身份、Client 平台边界和委派工作区范围测试还会在 Windows 的 Node 22.19 与 24 上运行。它们覆盖真实文件系统错误和 junction 别名，并包含模拟 Windows 对文件后代返回 `ENOENT` 的跨平台回归；该模拟不能替代真实 Windows 运行。
+
 远程 Provider 使用可控 HTTP 响应；Native 进程测试使用可控命令 runner，另有可选 Windows 二进制冒烟。额外的 opt-in 测试接受经过官方 checksum 校验的 Native 二进制，创建临时记忆空间，通过 View 写入、召回并删除：
 
 ```sh

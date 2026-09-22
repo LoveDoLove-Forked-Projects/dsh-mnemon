@@ -66,6 +66,8 @@ A plugin can be copied to a new repository and use its own `pnpm install && pnpm
 | Host | Default composition, settings/data scope, tools, supervised workflows, RPC authority, receipts and UX |
 | Artifact | Every public entry, standalone install/build/test, external composition and browser artifacts |
 
+The workspace identity, Client platform boundary and delegated workspace scope tests also run on Windows with Node 22.19 and 24. They cover real filesystem errors and junction aliases as well as a portable regression for Windows returning `ENOENT` below a file; that simulated error is not a substitute for the Windows run.
+
 Remote Provider suites use controlled HTTP responses; Native process suites use controlled command runners plus an optional Windows binary smoke. A separate opt-in test uses an official checksum-verified Native binary to create a disposable space, write through a View, recall and forget:
 
 ```sh
