@@ -44,3 +44,7 @@ Important evidence files are `install-policy.json`, `artifact-provenance.json`, 
 For the fixed alpha.7 run, add `--legacy-settings retained` to seed an unchanged `settings.yaml.imported` backup. The fixture records the exact profile hash and backup SHA-256 in `legacy-settings-fixture.json`. It covers root recovery, independent UI toggles, a current profile override, an existing Strategy config row, legacy Source enablement, and a foreign profile namespace. Verify the recorded expected values after startup and again after a `SIGUSR2` host restart.
 
 `--legacy-settings pending` instead seeds the original `settings.yaml`. The first host leaves Mnemon-specific recovery to the next startup while DSH renames/imports the old file; the second host recovers the retained backup. This path avoids racing DSH's private asynchronous importer. The harness never evaluates YAML expressions itself.
+
+## Repeated loopback runs
+
+Many disposable ports can accumulate cookies on `127.0.0.1`. If the browser's long plugin-resource request returns HTTP 431 while the same public resource succeeds without those headers, retain the current loopback listener and change only the privately read bootstrap URL's hostname to `localhost` before navigating. The official Web authentication accepts that loopback authority and issues its own session. Do not pass `--host localhost`: the public CLI host schema accepts only `127.0.0.1` or `0.0.0.0`. Do not print the bootstrap URL, remove existing browser cookies, increase header limits or alter framework files for this workaround.

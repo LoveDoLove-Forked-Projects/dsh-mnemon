@@ -9,6 +9,7 @@ The Starter pins a tested combination of official plugins. The table records ver
 | DSH development baseline | `0.1.5-rc.1` | Published contracts, WebUI and isolated Headless activation |
 | DSH Client compatibility | `0.1.5-rc.2`, `0.1.6-alpha.2` | Full production public types, normal packed npm installs, real WebUI turn-tail peers/toggles/reload and Sidebar/Builtin navigation, packed Headless persistence and Root disable |
 | DSH profile settings | `0.1.7-alpha.1` | Normal packed npm installation; real WebUI activation, combined Core/UI saves, Strategy selection, retained-settings recovery and full Host restart |
+| DSH Session messages | `0.1.5-rc.2`, `0.1.6-alpha.2`, `0.1.7-alpha.1` | Same packed Mnemon artifacts complete real Runtime/status tool calls and persist producer-owned messages in Session V3/V4; alpha.7 restores the conversation and Builtin Runtime data after Host restart |
 | Historical DSH Headless evidence | `0.1.2-rc.1` | Earlier revision: isolated Headless activation and restart; synthetic Session logs migrate through the 0.1.5 public loader after copy repair |
 | Historical DSH evidence | `0.1.1-rc.2` | Prior Sidebar/Builtin reports retain their own revisions; not rerun for this change |
 | Node.js | `22.19` and `24` | Source CI and packed-artifact CI respectively; development requires `^22.19.0 || >=24.0.0` |
@@ -27,6 +28,8 @@ The historical v0.5.2 capture found unusable settings layout at 390px; [that fai
 ## DSH 0.1.7 settings recovery
 
 DSH `0.1.7-alpha.1` replaces `settings.register()` and `settings-file` with Config-backed forms. Mnemon exposes live Config fields and persists its existing UI operations through the host's revision-checked profile writer. Changes to transport authority still require a normal plugin reload. DSH `0.1.5-rc.2` and `0.1.6-alpha.2` retain their existing settings path.
+
+Mnemon messages use the producer-owned `dsh-mnemon` source kind accepted by both Session V3 and V4. Historical wrappers and DSH's migrated `plugin:dsh-mnemon` messages remain recognizable for filtering and deduplication; no existing Session files are rewritten by this change.
 
 On startup, Mnemon can recover the retained `<profile home>/settings.yaml.imported` backup into the editable root `mnemon` entry. It restores the canonical root settings, `mnemon-ui` conversation toggles, and only the current profile's exact `mnemon-view-*` / `mnemon-plugins-*` namespaces. Explicit current profile values win, including an explicitly empty plugin selection; existing Source and Strategy rows are preserved. A Strategy row using a dynamic expression keeps that expression and skips its legacy overlay rather than freezing the current value. Recovery records `legacySettingsImported: true` in the root Config and leaves the backup unchanged.
 

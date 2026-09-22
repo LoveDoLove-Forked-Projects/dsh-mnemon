@@ -9,6 +9,7 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 | DSH 开发基线 | `0.1.5-rc.1` | 正式发布的契约、WebUI 与隔离 Headless 激活 |
 | DSH Client 兼容 | `0.1.5-rc.2`、`0.1.6-alpha.2` | 完整生产公开类型、正常 npm 制品安装、真实 WebUI 回合插件组合／开关／重载与 Sidebar/Builtin 跳转、制品 Headless 持久化及禁用 Root |
 | DSH profile 设置 | `0.1.7-alpha.1` | 正常 npm 制品安装；真实 WebUI 激活、核心/UI 连续保存、Strategy 选择、旧设置恢复与完整 Host 重启 |
+| DSH Session 消息 | `0.1.5-rc.2`、`0.1.6-alpha.2`、`0.1.7-alpha.1` | 相同 Mnemon 制品完成真实 Runtime/状态工具调用，并在 Session V3/V4 中持久化生产者专属来源；alpha.7 在 Host 重启后恢复对话及 Builtin Runtime 数据 |
 | 历史 DSH Headless 证据 | `0.1.2-rc.1` | 较早 revision 在隔离 Headless 中激活并重启；合成会话经副本修复后由 0.1.5 公开加载器完成迁移 |
 | 历史 DSH 证据 | `0.1.1-rc.2` | 早期 Sidebar/Builtin 记录保留各自 revision；本次未重跑 |
 | Node.js | `22.19`、`24` | 分别用于源码 CI 与打包制品 CI；开发要求 `^22.19.0 || >=24.0.0` |
@@ -27,6 +28,8 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 ## DSH 0.1.7 设置恢复
 
 DSH `0.1.7-alpha.1` 用基于 Config 的表单替代了 `settings.register()` 和 `settings-file`。Mnemon 提供动态 Config 字段，现有界面操作通过宿主检查 revision 的 profile 写入器持久化；修改传输权限仍需正常重载插件。DSH `0.1.5-rc.2` 和 `0.1.6-alpha.2` 继续沿用原设置路径。
+
+Mnemon 消息使用 Session V3、V4 均接受的生产者专属来源 `dsh-mnemon`。过滤和去重仍识别历史包装，以及 DSH 迁移后的 `plugin:dsh-mnemon` 消息；本改动不会重写已有 Session 文件。
 
 启动时，Mnemon 可将 `<profile home>/settings.yaml.imported` 中保留的备份恢复到可编辑的根 `mnemon` 条目，包括根设置、`mnemon-ui` 对话开关，以及仅属于当前 profile 的精确 `mnemon-view-*` / `mnemon-plugins-*` 命名空间。当前 profile 的显式值优先，包括显式清空的插件选择；已有 Source 和 Strategy 条目保持原样；Strategy 条目使用动态表达式时，会保留原表达式并跳过该条目的旧覆盖值，避免将当前求值固定下来。恢复后会在根 Config 中记录 `legacySettingsImported: true`，备份文件保持不变。
 

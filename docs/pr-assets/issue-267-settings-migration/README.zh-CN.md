@@ -82,4 +82,39 @@ alpha7 重启后间隔仍为 `310000`，Light 保持关闭，Auto Capture/Scoped
 ![RC.2 设置保存](./after-rc2-settings-saved.png)
 ![Alpha.2 设置保存](./after-alpha2-settings-saved.png)
 
-<!-- 最终 Session V4 制品 WebUI 与整体验证完成后追加结果。 -->
+## 最终制品的 Session 与重启验证
+
+最终实现 `dc10b5b6a2b39bd3093823741e286592dc640cd6` 从干净 checkout 打包，在三个全新 consumer 中使用正常 npm peer 解析安装。三组使用相同的 17 件 Mnemon 制品；根包 SHA-256 为 `b2204a284db063a128dce845cd115ecac33b5c91e91071d050d2a9d5daf1db16`。[final-verification.json](./final-verification.json) 记录制品哈希、公开包校验、持久化工具回执及测试结果。
+
+`0.1.5-rc.2`、`0.1.6-alpha.2`、`0.1.7-alpha.1` 的实际 WebUI 回合均调用 `mnemon_runtime_memory` 的 `action: add`，随后调用 `mnemon_status`。每组恰好写入一条夹具记忆，状态回执均为健康、原生 CLI 可用、允许写入。每份压缩 Session 均完整解码，保留两条来源为 `dsh-mnemon` 的消息。RC.2、alpha.2 使用 Session V3，alpha.7 使用 V4。提示词和标题仍为 `compatibility-261` / `Issue 261 compatibility`，因为复用了确定性模型夹具；本目录的制品、Profile 与截图属于 Issue 267。
+
+Session 修复前，alpha.7 的真实回合报错 `format v4 message requires a producer-owned source kind`。回归测试使用公开 alpha.7 制品的真实 `encodeEvent`、`restoreReleasedV4Artifact` 契约，并验证旧包装会被拒绝。完整 lifecycle 测试 56 项通过。
+
+最终 alpha.7 制品中，通过浏览器选择 Builtin 显示模式、关闭 Light、保存间隔 `340000`、关闭回合记忆条并保留存入按钮。完整重启 Host 进程后，浏览器确认全部设置、恢复的对话及其一条 Runtime 记忆均保留。Auto Capture、Scoped 仍通过原生 Entry 启用，没有多余的 View 覆盖。
+
+原始文件夹具也通过了两个迁移阶段：DSH 先重命名、导入 `settings.yaml`，此时 Mnemon 补充标记和 View 尚不存在；完整重启一次 Host 后，预期 UI/View 偏好恢复，迁移标记写入。保留备份字节始终不变。这轮仅设置验证使用 `407eac75`；最终 Session 提交没有改动其设置实现。
+
+![最终 alpha.7 回合完成两个 Mnemon 工具调用](./final-alpha7-session-tools.png)
+![Runtime 工具写入一条可见夹具记忆](./final-alpha7-runtime-write.png)
+![RC.2 完成相同的真实工具调用](./final-rc2-session-tools.png)
+![Alpha.2 完成相同的真实工具调用](./final-alpha2-session-tools.png)
+![完整 Host 重启后的最终 alpha.7 设置](./final-alpha7-settings-restart.png)
+![Builtin 工作台在重启后保留 Runtime 记忆](./final-alpha7-builtin-restart.png)
+![原始文件迁移在下一次 Host 启动完成](./after-alpha7-native-import-restart.png)
+
+## 完整本地检查与范围
+
+以下命令通过，插件检查在 `verify` 完成后顺序执行：
+
+```sh
+MNEMON_NATIVE_TEST_CLI=/path/to/mnemon \
+MNEMON_DSH_V4_CONTRACT_ROOT=/path/to/alpha7-consumer/node_modules \
+  npx --yes pnpm@10.13.1 run verify
+npx --yes pnpm@10.13.1 run verify:plugins --skip-build
+```
+
+- Root 测试 1,342 项通过、5 项跳过；插件测试 382 项通过、2 项跳过。跳过项依赖外部 Flash 模型、Windows 或真实 OpenViking 服务。真实原生 CLI、公开 V4 codec 用例均已启用。
+- 文档、类型、确定性构建、包体预算、公开入口导入、声明依赖、`publint`、`attw` 全部通过。根包包含 49 个文件、解包后 1,370,207 字节；验证了 12 个 Node 兼容入口、28 个公开类型依赖和修复 CLI 帮助。
+- Headless 检查通过，包含 39 个工具和 8 个代表性 Mnemon 工具。16 个独立插件仓库、17 个 tarball 的 consumer 检查通过，包括仅依赖 SDK 的外部 consumer、三个可选 Strategy 同时启用及仅 Starter 激活。
+- 这是 macOS、Node `25.1.0` 下的 Mnemon 兼容证据，未覆盖 DSH 全部功能。精简夹具省略 terminal/deliverables/workspace-change 服务；对应等待项、通用 permission-preset 请求失败和 alpha.2 的终端重试按钮不属于 Mnemon 故障。本轮未验证外部模型质量、外部 Provider 或嵌入服务。
+- 多次本地夹具运行后，最终重启复核曾遇到浏览器 HTTP 431。使用合成的 14 KB Cookie 独立复现了短请求成功、较长插件资源请求失败。将同一运行中监听器的浏览地址改用 `localhost` 后完成复核；没有修改 Profile/数据、官方文件、服务端限制或已有浏览器 Cookie。重复执行时可参考夹具说明。

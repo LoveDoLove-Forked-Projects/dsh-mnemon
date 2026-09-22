@@ -82,4 +82,39 @@ The real Mnemon CLI `0.2.8` also answered the WebUI status operation and created
 ![RC.2 settings save](./after-rc2-settings-saved.png)
 ![Alpha.2 settings save](./after-alpha2-settings-saved.png)
 
-<!-- Append final Session V4 packed WebUI and complete validation results after verification. -->
+## Final packed Session and restart verification
+
+The final implementation at `dc10b5b6a2b39bd3093823741e286592dc640cd6` was packed from a clean checkout and installed into three fresh consumers using normal npm peer resolution. All three used the same 17 Mnemon archives; the root archive SHA-256 is `b2204a284db063a128dce845cd115ecac33b5c91e91071d050d2a9d5daf1db16`. [final-verification.json](./final-verification.json) records the artifact hashes, public-package checks, persisted tool receipts and test results.
+
+Actual WebUI turns on `0.1.5-rc.2`, `0.1.6-alpha.2` and `0.1.7-alpha.1` called `mnemon_runtime_memory` with `action: add`, then `mnemon_status`. Each turn wrote exactly one fixture memory and returned a healthy status with the native CLI found and writes enabled. Each compressed Session decoded completely and retained two messages with source kind `dsh-mnemon`. RC.2 and alpha.2 wrote Session V3; alpha.7 wrote V4. The fixture prompt and title retain `compatibility-261` / `Issue 261 compatibility` because the deterministic model fixture is reused; the artifacts, profiles and screenshots in this directory belong to Issue 267.
+
+Before the Session fix, the real alpha.7 turn failed with `format v4 message requires a producer-owned source kind`. The regression uses the actual published alpha.7 `encodeEvent` and `restoreReleasedV4Artifact` contracts, including rejection of the old wrapper. The completed lifecycle suite passed 56 tests.
+
+On the final alpha.7 artifacts, the browser selected Builtin display mode, disabled Light, saved interval `340000`, disabled the turn bar and retained the save action. After a complete Host process restart, the browser confirmed all settings, the restored conversation and its one Runtime memory. Auto Capture and Scoped remained enabled through their native Entries without unwanted View overrides.
+
+The separate original-file fixture also passed both migration stages: DSH first renamed/imported `settings.yaml`, with Mnemon's supplemental marker and View absent; one full Host restart then restored the expected UI/View preferences and wrote the marker. The retained backup remained byte-for-byte unchanged. That settings-only run used `407eac75`; the final Session commit does not change its settings implementation.
+
+![Final alpha.7 turn completes both Mnemon tool calls](./final-alpha7-session-tools.png)
+![The Runtime tool writes one visible fixture memory](./final-alpha7-runtime-write.png)
+![RC.2 completes the same real tool calls](./final-rc2-session-tools.png)
+![Alpha.2 completes the same real tool calls](./final-alpha2-session-tools.png)
+![Final alpha.7 settings after a complete Host restart](./final-alpha7-settings-restart.png)
+![Builtin workbench retains the Runtime memory after restart](./final-alpha7-builtin-restart.png)
+![Original-file migration completes on the next Host start](./after-alpha7-native-import-restart.png)
+
+## Complete local checks and limits
+
+The following commands passed, with the plugin check run after `verify` completed:
+
+```sh
+MNEMON_NATIVE_TEST_CLI=/path/to/mnemon \
+MNEMON_DSH_V4_CONTRACT_ROOT=/path/to/alpha7-consumer/node_modules \
+  npx --yes pnpm@10.13.1 run verify
+npx --yes pnpm@10.13.1 run verify:plugins --skip-build
+```
+
+- Root tests: 1,342 passed, 5 skipped; plugin tests: 382 passed, 2 skipped. The skipped cases require an external Flash model, Windows, or a live OpenViking service. The real native CLI and published V4 codec cases were enabled.
+- Documentation, type checks, deterministic build, package-content budget, public entry imports, declaration dependencies, `publint` and `attw` passed. The root package contains 49 files and 1,370,207 unpacked bytes; 12 Node-compatible entries, 28 public type dependencies and the repair CLI help were verified.
+- The Headless check passed with 39 tools and 8 representative Mnemon tools. Independent-consumer verification passed for all 16 plugin repositories and 17 tarballs, including an SDK-only external consumer, all three optional Strategies together, and Starter-only activation.
+- This is Mnemon compatibility evidence on macOS with Node `25.1.0`, not an end-to-end check of every DSH feature. The minimal fixture omits terminal/deliverables/workspace-change services; their waiting entries, general permission-preset request failure and alpha.2 terminal retry button do not represent Mnemon failures. External model quality, external Providers and embeddings are outside this run.
+- Repeated loopback fixtures produced a browser HTTP 431 during the final restart check. A synthetic 14 KB cookie reproduced a short request succeeding and the longer plugin-resource request failing. Navigating the same running listener through `localhost` completed the browser check without changing profile/data, framework files, server limits or existing browser cookies. See the [harness note](./harness/HARNESS.md#repeated-loopback-runs) for repeating this setup safely.
