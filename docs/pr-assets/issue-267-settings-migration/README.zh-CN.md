@@ -83,15 +83,15 @@ alpha7 重启后间隔仍为 `310000`，Light 保持关闭，Auto Capture/Scoped
 ![RC.2 设置保存](./after-rc2-settings-saved.png)
 ![Alpha.2 设置保存](./after-alpha2-settings-saved.png)
 
-## 最终制品的 Session 与重启验证
+## 类型隔离前的 Session 制品验证
 
-最终实现 `dc10b5b6a2b39bd3093823741e286592dc640cd6` 从干净 checkout 打包，在三个全新 consumer 中使用正常 npm peer 解析安装。三组使用相同的 17 件 Mnemon 制品；根包 SHA-256 为 `b2204a284db063a128dce845cd115ecac33b5c91e91071d050d2a9d5daf1db16`。[final-verification.json](./final-verification.json) 记录制品哈希、公开包校验、持久化工具回执及测试结果。
+Session 修复 `dc10b5b6a2b39bd3093823741e286592dc640cd6` 从干净 checkout 打包，在三个全新 consumer 中使用正常 npm peer 解析安装。三组使用相同的 17 件 Mnemon 制品；根包 SHA-256 为 `b2204a284db063a128dce845cd115ecac33b5c91e91071d050d2a9d5daf1db16`。[final-verification.json](./final-verification.json) 记录这一阶段的制品哈希、公开包校验、持久化工具回执及测试结果。最终类型隔离制品的验证见下文。
 
 `0.1.5-rc.2`、`0.1.6-alpha.2`、`0.1.7-alpha.1` 的实际 WebUI 回合均调用 `mnemon_runtime_memory` 的 `action: add`，随后调用 `mnemon_status`。每组恰好写入一条夹具记忆，状态回执均为健康、原生 CLI 可用、允许写入。每份压缩 Session 均完整解码，保留两条来源为 `dsh-mnemon` 的消息。RC.2、alpha.2 使用 Session V3，alpha.7 使用 V4。提示词和标题仍为 `compatibility-261` / `Issue 261 compatibility`，因为复用了确定性模型夹具；本目录的制品、Profile 与截图属于 Issue 267。
 
 Session 修复前，alpha.7 的真实回合报错 `format v4 message requires a producer-owned source kind`。回归测试使用公开 alpha.7 制品的真实 `encodeEvent`、`restoreReleasedV4Artifact` 契约，并验证旧包装会被拒绝。完整 lifecycle 测试 56 项通过。
 
-最终 alpha.7 制品中，通过浏览器选择 Builtin 显示模式、关闭 Light、保存间隔 `340000`、关闭回合记忆条并保留存入按钮。完整重启 Host 进程后，浏览器确认全部设置、恢复的对话及其一条 Runtime 记忆均保留。Auto Capture、Scoped 仍通过原生 Entry 启用，没有多余的 View 覆盖。
+这组 alpha.7 制品中，通过浏览器选择 Builtin 显示模式、关闭 Light、保存间隔 `340000`、关闭回合记忆条并保留存入按钮。完整重启 Host 进程后，浏览器确认全部设置、恢复的对话及其一条 Runtime 记忆均保留。Auto Capture、Scoped 仍通过原生 Entry 启用，没有多余的 View 覆盖。
 
 原始文件夹具也通过了两个迁移阶段：DSH 先重命名、导入 `settings.yaml`，此时 Mnemon 补充标记和 View 尚不存在；完整重启一次 Host 后，预期 UI/View 偏好恢复，迁移标记写入。保留备份字节始终不变。这轮仅设置验证使用 `407eac75`；最终 Session 提交没有改动其设置实现。
 
@@ -103,6 +103,23 @@ Session 修复前，alpha.7 的真实回合报错 `format v4 message requires a 
 ![Builtin 工作台在重启后保留 Runtime 记忆](./final-alpha7-builtin-restart.png)
 ![原始文件迁移在下一次 Host 启动完成](./after-alpha7-native-import-restart.png)
 
+## 最终类型隔离制品与 WebUI 验证
+
+干净 CI 暴露了旧 Schemastery 与新版 live fork 的全局泛型声明冲突。前述私有桥隔离运行时导入，并保留 main 已有锁文件的 package/snapshot 值。实现提交 `d57e14054a4c523097b382ff36ca6bd3a993ff03` 从干净 checkout 打包，再通过正常 peer 解析安装到三个全新 consumer。最终根包 SHA-256 为 `552eb9c23846e23e958100974888351a74666c471d614d2f098f2426d5a81cb3`；全部 17 件制品哈希和安装校验见 [type-isolation-verification.json](./type-isolation-verification.json)。
+
+三组公开 DSH 均重新完成真实 WebUI Runtime 写入与原生 CLI 状态调用。每个已安装的 `schemastery-live` 包全部八个文件均与未修改的官方 `@deepseek-ai/schemastery@3.18.3` 制品一致。RC.2、alpha.2、alpha.7 的同版本 DSH 包数量/选定官方文件校验仍分别为 234/8、251/8、267/10。
+
+alpha.7 中，浏览器先准备核心/UI 草稿，再通过独立的即时插件写入关闭 Light，最后保存剩余草稿，没有虚假冲突。完整重启 Host 后，Builtin、间隔 `350000`、回合记忆条关闭/存入按钮开启，以及 Light 关闭/Auto Capture 和 Scoped 开启均保留。原对话完整加载，Builtin 工作台显示一条 Runtime 记忆。Profile 与压缩 Session 的核对记录与浏览器证据一并保留。
+
+该实现提交的 [Node 22.19 源码检查](https://github.com/omdsh-dev/dsh-mnemon/actions/runs/35733033143/job/106763140386)和 [Node 24 独立插件制品检查](https://github.com/omdsh-dev/dsh-mnemon/actions/runs/35733033143/job/106763140029)均通过。
+
+![类型隔离后的 alpha.7 制品完成两个工具调用](./v4-alpha7-session-tools.png)
+![类型隔离后的 RC.2 制品完成两个工具调用](./v4-rc2-session-tools.png)
+![类型隔离后的 alpha.2 制品完成两个工具调用](./v4-alpha2-session-tools.png)
+![完整 Host 重启后 Builtin 设置保持](./v4-alpha7-settings-restart.png)
+![审查间隔与组合 Strategy 选择保持](./v4-alpha7-strategies-restart.png)
+![最终 Builtin Runtime 记忆在完整重启后保留](./v4-alpha7-builtin-restart.png)
+
 ## 完整本地检查与范围
 
 以下命令通过，插件检查在 `verify` 完成后顺序执行：
@@ -110,12 +127,12 @@ Session 修复前，alpha.7 的真实回合报错 `format v4 message requires a 
 ```sh
 MNEMON_NATIVE_TEST_CLI=/path/to/mnemon \
 MNEMON_DSH_V4_CONTRACT_ROOT=/path/to/alpha7-consumer/node_modules \
-  npx --yes pnpm@10.13.1 run verify
-npx --yes pnpm@10.13.1 run verify:plugins --skip-build
+  npx --yes --package=node@22.19.0 --package=pnpm@10.13.1 pnpm run verify
+npx --yes --package=node@24.20.0 --package=pnpm@10.13.1 pnpm run verify:plugins --skip-build
 ```
 
 - Root 测试 1,342 项通过、5 项跳过；插件测试 382 项通过、2 项跳过。跳过项依赖外部 Flash 模型、Windows 或真实 OpenViking 服务。真实原生 CLI、公开 V4 codec 用例均已启用。
-- 文档、类型、确定性构建、包体预算、公开入口导入、声明依赖、`publint`、`attw` 全部通过。根包包含 49 个文件、解包后 1,370,207 字节；验证了 12 个 Node 兼容入口、28 个公开类型依赖和修复 CLI 帮助。
+- 文档、类型、确定性构建、包体预算、公开入口导入、声明依赖、`publint`、`attw` 全部通过。最终根包包含 49 个文件、解包后 1,370,296 字节；验证了 12 个 Node 兼容入口、28 个公开类型依赖和修复 CLI 帮助。
 - Headless 检查通过，包含 39 个工具和 8 个代表性 Mnemon 工具。16 个独立插件仓库、17 个 tarball 的 consumer 检查通过，包括仅依赖 SDK 的外部 consumer、三个可选 Strategy 同时启用及仅 Starter 激活。
-- 这是 macOS、Node `25.1.0` 下的 Mnemon 兼容证据，未覆盖 DSH 全部功能。精简夹具省略 terminal/deliverables/workspace-change 服务；对应等待项、通用 permission-preset 请求失败和 alpha.2 的终端重试按钮不属于 Mnemon 故障。本轮未验证外部模型质量、外部 Provider 或嵌入服务。
+- 浏览器夹具运行于 macOS、Node `25.1.0`，最终源码与制品检查分别运行于 Node `22.19.0`、`24.20.0`。这是 Mnemon 兼容证据，未覆盖 DSH 全部功能。精简夹具省略 terminal/deliverables/workspace-change 服务；对应等待项、通用 permission-preset 请求失败和 alpha.2 的终端重试按钮不属于 Mnemon 故障。本轮未验证外部模型质量、外部 Provider 或嵌入服务。
 - 多次本地夹具运行后，最终重启复核曾遇到浏览器 HTTP 431。使用合成的 14 KB Cookie 独立复现了短请求成功、较长插件资源请求失败。将同一运行中监听器的浏览地址改用 `localhost` 后完成复核；没有修改 Profile/数据、官方文件、服务端限制或已有浏览器 Cookie。重复执行时可参考夹具说明。
