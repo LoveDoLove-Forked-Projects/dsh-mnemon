@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@deepseek-ai/cosmokit':
+        specifier: ^1.8.4
+        version: 1.8.4
       dsh-mnemon-provider-byterover:
         specifier: 0.5.4
         version: link:plugins/dsh-mnemon-provider-byterover
@@ -62,18 +65,15 @@ importers:
       schemastery:
         specifier: ^3.18.0
         version: 3.18.0
-      zod:
-        specifier: ^4.4.3
-        version: 4.4.3
-      "@deepseek-ai/cosmokit":
-        specifier: ^1.8.4
-        version: 1.8.4
       schemastery-live:
         specifier: npm:@deepseek-ai/schemastery@^3.18.3
         version: '@deepseek-ai/schemastery@3.18.3'
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
     devDependencies:
       '@arethetypeswrong/cli':
         specifier: ^0.18.5
@@ -171,6 +171,9 @@ importers:
       '@deepseek-ai/dsh-typert-registry':
         specifier: 0.1.5-rc.1
         version: 0.1.5-rc.1(@deepseek-ai/cordis@4.0.2)
+      '@deepseek-ai/schemastery':
+        specifier: 3.18.2
+        version: 3.18.2
       '@shikijs/langs':
         specifier: ^4.3.1
         version: 4.4.3
@@ -258,9 +261,6 @@ importers:
       vitest:
         specifier: ^3.2.0
         version: 3.2.7(@types/debug@4.1.13)(@types/node@22.20.1)(jsdom@26.1.0(supports-color@7.2.0))(lightningcss@1.33.0)(supports-color@7.2.0)(yaml@2.9.0)
-      "@deepseek-ai/schemastery":
-        specifier: 3.18.2
-        version: 3.18.2
 
   plugins/dsh-mnemon-provider-byterover:
     dependencies:
@@ -1151,6 +1151,9 @@ packages:
 
   '@deepseek-ai/cosmokit@1.8.3':
     resolution: {integrity: sha512-qBo+ronVM6Eu2WNVJXi8JcMiqZ19T9BRIpV+5qJUFPXjGH/Z0QKcQMC/IZJ7L394YTOtJgcovbk9qP0w2GsBXQ==}
+
+  '@deepseek-ai/cosmokit@1.8.4':
+    resolution: {integrity: sha512-zOX7hFKtUQNY6GlZi1OCGY+bp6swWDf8aFNbCSAonVKEpEb5Tc2m3moUtNZscT7ksflIcVn+qgqYZo9QKUF+fQ==}
 
   '@deepseek-ai/dsh-acp-app@0.1.5-rc.1':
     resolution: {integrity: sha512-O6+Hl//+uog9ezp+aVI0oQyNAtZ4GHf6haGxgPe7U9Kp/KUKjVYC94Lb2x45SgEimJroSxBOcR1CIQop2Tsn1g==}
@@ -3100,6 +3103,9 @@ packages:
 
   '@deepseek-ai/schemastery@3.18.2':
     resolution: {integrity: sha512-njDtZsznjYxok7KLLlHOPyuv2efdWVbSflAHgztSfbMsg+CVraEoRe2DjOCgClYv3ZCSm7WXoaUkbB/+RY7tWQ==}
+
+  '@deepseek-ai/schemastery@3.18.3':
+    resolution: {integrity: sha512-plZIZADuGLT/3PoYmUaEDZd0vG1rVahU89MevnxXsyQhFEi2D6DUuTJel7FUb3cUM9aCzqGMN99sHJe1RIushA==}
 
   '@earendil-works/pi-ai@0.85.1':
     resolution: {integrity: sha512-+VgVIJDkDO2efYJKEEqvPTH4zmnIaXdAppGbO+vKFA9qy5PdhFiAenuFAkU+oiCSfOC4dMHDyrjdQeL4ZoC5CQ==}
@@ -6263,13 +6269,6 @@ packages:
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
 
-  "@deepseek-ai/cosmokit@1.8.4":
-    resolution: { integrity: sha512-zOX7hFKtUQNY6GlZi1OCGY+bp6swWDf8aFNbCSAonVKEpEb5Tc2m3moUtNZscT7ksflIcVn+qgqYZo9QKUF+fQ== }
-
-  "@deepseek-ai/schemastery@3.18.3":
-    resolution: { integrity: sha512-plZIZADuGLT/3PoYmUaEDZd0vG1rVahU89MevnxXsyQhFEi2D6DUuTJel7FUb3cUM9aCzqGMN99sHJe1RIushA== }
-
-
 snapshots:
 
   '@agentclientprotocol/sdk@1.4.0(zod@4.4.3)':
@@ -6749,6 +6748,8 @@ snapshots:
       '@deepseek-ai/cordis-plugin-loader': 1.0.3(@deepseek-ai/cordis@4.0.2)(node-addon-require-builtin@0.1.4)
 
   '@deepseek-ai/cosmokit@1.8.3': {}
+
+  '@deepseek-ai/cosmokit@1.8.4': {}
 
   '@deepseek-ai/dsh-acp-app@0.1.5-rc.1(bd07a59104ca2c58d915ecd7de50f9a8)':
     dependencies:
@@ -9200,6 +9201,11 @@ snapshots:
   '@deepseek-ai/schemastery@3.18.2':
     dependencies:
       '@deepseek-ai/cosmokit': 1.8.3
+      '@standard-schema/spec': 1.1.0
+
+  '@deepseek-ai/schemastery@3.18.3':
+    dependencies:
+      '@deepseek-ai/cosmokit': 1.8.4
       '@standard-schema/spec': 1.1.0
 
   '@earendil-works/pi-ai@0.85.1(@modelcontextprotocol/sdk@1.30.0(supports-color@7.2.0)(zod@4.4.3))(supports-color@7.2.0)(ws@8.21.3)(zod@4.4.3)':
@@ -12272,10 +12278,3 @@ snapshots:
   zod@4.4.3: {}
 
   zwitch@2.0.4: {}
-
-  "@deepseek-ai/cosmokit@1.8.4": {}
-
-  "@deepseek-ai/schemastery@3.18.3":
-    dependencies:
-      '@deepseek-ai/cosmokit': 1.8.4
-      '@standard-schema/spec': 1.1.0
