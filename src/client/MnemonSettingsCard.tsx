@@ -627,7 +627,7 @@ export function MnemonSettingsCard({ scope, interactionScope: suppliedInteractio
           <span>{t('config.unsaved')}</span>
           <div><button type="button" className={css.discard} disabled={saving} onClick={discard}>{t('config.discard')}</button><button type="button" className={css.save} disabled={saving || error !== null || !writable} onClick={() => void save()}>{saving ? t('config.saving') : t('config.save')}</button></div>
         </footer>
-        <p className={css.settingsNote}>{t('config.noticeBefore')} <code>.dsh/settings.yaml</code>{t('config.noticeAfter')}</p>
+        <p className={css.settingsNote}>{t('config.notice')}</p>
       </>}
     </section>
   )

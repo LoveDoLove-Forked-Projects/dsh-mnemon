@@ -61,8 +61,9 @@ export async function viewManagementFixture(saved?: MemoryViewPreferences, ancho
       if (expected !== current.revision) throw new Error('Settings changed concurrently')
       const next = structuredClone(current.value) as Record<string, unknown>
       for (const op of ops) {
-        if (op.op !== 'set' || op.path.length !== 1) throw new Error('Unexpected fixture mutation')
-        next[op.path[0]!] = structuredClone(op.value)
+        if (op.path.length !== 1) throw new Error('Unexpected fixture mutation')
+        if (op.op === 'unset') delete next[op.path[0]!]
+        else next[op.path[0]!] = structuredClone(op.value)
       }
       current.validate?.(next as never)
       current.value = next
@@ -75,7 +76,7 @@ export async function viewManagementFixture(saved?: MemoryViewPreferences, ancho
   settings.register('mnemon', {}, { base: config, applies: 'live' })
   const management = new MemoryPluginManagement(ctx as unknown as HostContextShape, engine)
   const stop = management.start()
-  await loader.root.update([
+  const profileEntries = [
     { id: 'mnemon-source-runtime', name: runtime.name },
     { id: 'mnemon-source-documents', name: documents.name },
     { id: 'mnemon-source-memory-spaces', name: spaces.name },
@@ -83,7 +84,13 @@ export async function viewManagementFixture(saved?: MemoryViewPreferences, ancho
     { id: 'scoped', name: scoped.name, disabled: true },
     { id: 'light', name: light.name, disabled: true },
     { id: 'capture', name: capture.name, disabled: true },
-  ])
+  ]
+  const reconcileProfile = async () => {
+    await loader.root.update(structuredClone(profileEntries))
+    // The public event fires after every entry in a profile replay has settled.
+    ;(ctx.emit as (event: string) => void)('app-boot/config-reload')
+  }
+  await loader.root.update(structuredClone(profileEntries))
   const treeWrite = vi.spyOn(loader, 'write')
   const graph = createRuntimeGraph(management.resolveConfig(config), workspace, engine)
   const live = new LiveMnemonRuntime(graph, {
@@ -97,5 +104,5 @@ export async function viewManagementFixture(saved?: MemoryViewPreferences, ancho
     await ctx.fiber.dispose()
     rmSync(root, { recursive: true, force: true })
   }
-  return { ctx, root, workspace, engine, loader, modules, settings, settingsDocuments, management, treeWrite, config, graph, live, dispose }
+  return { ctx, root, workspace, engine, loader, modules, settings, settingsDocuments, management, treeWrite, config, graph, live, profileEntries, reconcileProfile, dispose }
 }

@@ -498,7 +498,8 @@ describe('MnemonSettingsCard', () => {
     await waitFor(() => expect(set).toHaveBeenCalledWith('storageScope', 'workspace'))
     expect(screen.getByText('已保存并实时生效')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '恢复默认' })).toBeNull()
-    expect(screen.getByText(/\.dsh\/settings.yaml/)).toBeTruthy()
+    expect(screen.getByText('配置由 DSH 保存，点击保存后实时生效。切换范围不会自动迁移旧内容。')).toBeTruthy()
+    expect(screen.queryByText(/\.dsh\/settings.yaml/)).toBeNull()
     expect(unset).not.toHaveBeenCalled()
   })
 

@@ -166,7 +166,7 @@ describe('dsh-mnemon plugin composition', () => {
     expect(new Set(directDshDependencies.map(([, version]) => version))).toEqual(new Set(['0.1.5-rc.1']))
     expect(manifest.engines.node).toBe('>=20')
     for (const name of ['@deepseek-ai/dsh-client-ui-primitives', '@deepseek-ai/dsh-typert-protocol']) {
-      expect(manifest.peerDependencies[name]).toBe('^0.1.5-rc.1 || ^0.1.6-alpha.2')
+      expect(manifest.peerDependencies[name]).toBe('^0.1.5-rc.1 || ^0.1.6-alpha.2 || ^0.1.7-alpha.1')
     }
     expect(lockedDshVersions.length).toBeGreaterThan(100)
     expect(new Set(lockedDshVersions)).toEqual(new Set(['0.1.5-rc.1']))

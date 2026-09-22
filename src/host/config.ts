@@ -2,6 +2,7 @@ import z from 'schemastery'
 import { DEFAULT_IDLE_REVIEW } from './protocol.ts'
 import { isAbsolute } from 'node:path'
 import { normalizeDisplayMode } from './display-mode.ts'
+import { schema as MemoryViewConfig, preferences as validateMemoryViewPreferences } from './view-preferences.ts'
 import { resolveEmbedding, resolvePersistenceStrategy, resolveRecallQuality } from 'dsh-mnemon-source-memory-spaces'
 
 export { resolveEmbedding, resolvePersistenceStrategy, resolveRecallQuality } from 'dsh-mnemon-source-memory-spaces'
@@ -174,6 +175,8 @@ export const Config: z<Config> = z.object({
     protocol: DEFAULT_EMBEDDING_PROTOCOL,
   }),
   memoryTopology: MemoryTopologySchema,
+  memoryView: MemoryViewConfig,
+  legacySettingsImported: z.boolean(),
   recallQuality: RecallQualitySchema.default({
     policy: DEFAULT_RECALL_QUALITY_POLICY,
     lowScoreThreshold: DEFAULT_RECALL_LOW_SCORE_THRESHOLD,
@@ -316,6 +319,7 @@ function resolveMemoryTopology(value: MemoryTopologyConfig | undefined): SharedR
 }
 
 export function resolveConfig(config: Config = {}): ResolvedConfig {
+  if (config.memoryView !== undefined) validateMemoryViewPreferences(config.memoryView)
   const cliPath = optionalText(config.cliPath)
   const legacyDataDir = optionalText(config.dataDir)
   const legacyPacks = resolveCustomPacks(config.customPacks, legacyDataDir)
