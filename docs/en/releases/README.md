@@ -6,6 +6,7 @@ For an existing installation, start with [Compatibility and upgrades](../referen
 
 ## v0.5
 
+- [v0.5.13: Workspace, Builtin and DSH 0.1.7 Compatibility](./v0.5.13.md)
 - [v0.5.12: DSH RC and Alpha Compatibility](./v0.5.12.md)
 - [v0.5.11: Quiet Windows Git Branch Detection](./v0.5.11.md)
 - [v0.5.10: Exact Memory Writes and Bounded Automatic Review](./v0.5.10.md)
