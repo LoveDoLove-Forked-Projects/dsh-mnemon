@@ -12,6 +12,7 @@ For new evaluations, commit the reusable harness, workload generator, concise bi
 
 | Record / 记录 | Scope / 范围 |
 |---|---|
+| [OpenViking user-key discovery — issue #271](./issue-271-user-key/README.md) / [中文](./issue-271-user-key/README.zh-CN.md) | Admin-denied discovery before/after, scoped data API validation, multi-plugin isolation and real CLI/WebUI / Admin 拒绝发现前后对比、数据 API 范围校验、多插件隔离与真实 CLI/WebUI |
 | [Builtin conversation width handles — issue #265](./issue-265-builtin-width-handles/README.md) / [中文](./issue-265-builtin-width-handles/README.zh-CN.md) | RC2/alpha2 WebUI before/after, composer and width dragging, Source writes and plugin isolation / RC2/alpha2 WebUI 对比、输入框与宽度拖动、Source 写入及插件隔离 |
 | [Windows workspace ancestors — issue #266](./issue-266-workspace-ancestor/README.md) / [中文](./issue-266-workspace-ancestor/README.zh-CN.md) | Actual Windows file-ancestor rejection, portable path tests, Native CLI and packed plugin verification / 真实 Windows 文件祖先拒绝、跨平台路径测试、Native CLI 与插件制品验证 |
 | [DSH RC / alpha compatibility — issue #261](./issue-261-dsh-slots/README.md) / [中文](./issue-261-dsh-slots/README.zh-CN.md) | Published package types, real WebUI before/after, turn-tail peers, session isolation and packed Headless / 正式制品类型、真实 WebUI 前后对比、回合插件组合、会话隔离与制品 Headless |
