@@ -25,6 +25,14 @@ See [DSH 0.1.7 settings verification](../../pr-assets/issue-267-settings-migrati
 
 The historical v0.5.2 capture found unusable settings layout at 390px; [that failure evidence](../../pr-assets/documentation-refresh/README.md) remains versioned. The [v0.5.4 Light capture](../../assets/webui-v0.5.4/README.md) covers bilingual desktop browsing plus Memory Space navigation, creation and version maintenance at 390 × 844. Long card names and some metrics truncate. It does not retest every Host settings surface or physical phones, so the earlier settings limitation is not declared resolved.
 
+## Desktop profile generations
+
+Desktop may remove private `@deepseek-ai/*` packages from a plugin generation and use its own framework versions. Mnemon checks the host's public Volatile APIs before importing the live settings schema. Hosts carrying Cosmokit `1.8.3` use the existing ordinary Config and Settings path; hosts with the live APIs keep revision-checked profile settings.
+
+In the affected `0.5.13` install, Desktop's fallback hides a missing `createVolatile` export behind `Cannot find package 'dsh-mnemon'`. Flattening `mnemon-bundle` does not fix that import failure. The Starter retains its group, root disable gate, independent Source/Strategy choices, private Provider children and existing settings namespaces. Update Mnemon in the owning profile and restart; no memory or configuration migration is required for this fix.
+
+See the [original Desktop reproduction and verification](../../pr-assets/issue-274-profile-generation/README.md).
+
 ## DSH 0.1.7 settings recovery
 
 DSH `0.1.7-alpha.1` replaces `settings.register()` and `settings-file` with Config-backed forms. Mnemon exposes live Config fields and persists its existing UI operations through the host's revision-checked profile writer. Changes to transport authority still require a normal plugin reload. DSH `0.1.5-rc.2` and `0.1.6-alpha.2` retain their existing settings path.
