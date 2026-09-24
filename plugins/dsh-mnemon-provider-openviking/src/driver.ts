@@ -30,6 +30,8 @@ interface OpenVikingProviderOptions {
   requestTimeoutMs?: number
 }
 
+type OpenVikingConnection = OpenVikingSpaceConnection & { discoveryUser?: string }
+
 function object(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
@@ -65,6 +67,16 @@ function safeUser(user: string): boolean {
   return /^[a-zA-Z0-9_.@-]+$/u.test(user) && user !== '.' && user !== '..' && (user.match(/@/gu)?.length ?? 0) <= 1
 }
 
+function discoveryUser(connection: MemoryProviderConnection | OpenVikingConnection): string | undefined {
+  const user = String(connection.discoveryUser ?? '').trim()
+  if (user === '') return undefined
+  if (!safeUser(user) || !safeUser(String(connection.account ?? '').trim())) {
+    throw new Error('OpenViking user-key discovery requires an explicit account and a safe discovery user')
+  }
+  if (String(connection.apiKey ?? '').trim() === '') throw new Error('OpenViking user-key discovery requires a user API key')
+  return user
+}
+
 function isMemoryFile(uri: string, root: string): boolean {
   if (!uri.startsWith(`${root}/`) || !uri.endsWith('.md') || /[%?#\\\u0000-\u001f\u007f]/u.test(uri)) return false
   return uri.slice(root.length + 1).split('/').every(part => part !== '' && !part.startsWith('.') && part.trim() === part)
@@ -95,7 +107,18 @@ export class OpenVikingProvider implements MemoryProviderAdapter {
   }
 
   async discover(connection: MemoryProviderConnection, signal?: AbortSignal): Promise<ProviderMemorySpace[]> {
+    signal?.throwIfAborted()
     let account = String(connection.account ?? '').trim()
+    const selectedUser = discoveryUser(connection)
+    if (selectedUser !== undefined) {
+      const targetUri = await this.validateUserNamespace(connection, selectedUser, signal)
+      return [{
+        externalId: `${account}:${selectedUser}`,
+        name: selectedUser,
+        description: `OpenViking memory namespace for ${selectedUser}`,
+        connection: { targetUri, user: selectedUser, actorPeerId: 'dsh' },
+      }]
+    }
     if (account === '') {
       const accounts = await this.requestConnection(connection, '/api/v1/admin/accounts', {}, { signal })
       const items = Array.isArray(accounts) ? accounts : []
@@ -123,7 +146,13 @@ export class OpenVikingProvider implements MemoryProviderAdapter {
 
   async status(body: MemorySpace, signal?: AbortSignal): Promise<ProviderSpaceStatus> {
     try {
-      await this.request(body, '/health', {}, { signal, timeoutMs: 5_000 })
+      const connection = this.connection(body)
+      const selectedUser = discoveryUser(connection)
+      if (selectedUser === undefined) await this.request(body, '/health', {}, { signal, timeoutMs: 5_000 })
+      else {
+        await this.memoryRoot(body, signal)
+        await this.validateUserNamespace(connection, selectedUser, signal)
+      }
       return { healthy: true }
     } catch (error) {
       return { healthy: false, error: error instanceof Error ? error.message : String(error) }
@@ -254,10 +283,22 @@ export class OpenVikingProvider implements MemoryProviderAdapter {
     }
   }
 
-  private connection(body: MemorySpace): OpenVikingSpaceConnection {
+  private connection(body: MemorySpace): OpenVikingConnection {
     if ((body.provider.typeId ?? body.provider.id) !== this.id) throw new Error(`OpenViking cannot serve provider ${body.provider.id}`)
     const connection = this.memorySpaces.providerConnection(body.id, body.provider.id)
-    return { endpoint: String(connection.endpoint ?? ''), targetUri: String(connection.targetUri ?? ''), apiKey: String(connection.apiKey ?? ''), account: String(connection.account ?? ''), user: String(connection.user ?? ''), actorPeerId: String(connection.actorPeerId ?? '') }
+    return { endpoint: String(connection.endpoint ?? ''), targetUri: String(connection.targetUri ?? ''), apiKey: String(connection.apiKey ?? ''), account: String(connection.account ?? ''), user: String(connection.user ?? ''), actorPeerId: String(connection.actorPeerId ?? ''), discoveryUser: String(connection.discoveryUser ?? '') }
+  }
+
+  private async validateUserNamespace(connection: MemoryProviderConnection | OpenVikingConnection, user: string, signal?: AbortSignal): Promise<string> {
+    const root = `viking://user/${user}/memories`
+    // Health is unauthenticated on some deployments. A read-only, scoped data
+    // request must succeed before the Host persists or replaces projections.
+    const query = new URLSearchParams({ uri: root, recursive: 'false', output: 'original' })
+    const result = await this.requestConnection(connection, `/api/v1/fs/ls?${query}`, {}, { signal })
+    if (!Array.isArray(result) || result.some(item => !string(object(item)?.uri)?.startsWith(`${root}/`))) {
+      throw new Error('OpenViking could not validate the selected memory namespace')
+    }
+    return root
   }
 
   private async memoryRoot(body: MemorySpace, signal?: AbortSignal): Promise<string> {
@@ -266,6 +307,13 @@ export class OpenVikingProvider implements MemoryProviderAdapter {
     const root = connection.targetUri.replace(/\/+$/u, '')
     const match = /^viking:\/\/user(?:\/([^/]+))?\/memories$/u.exec(root)
     if (match === null || (match[1] !== undefined && !safeUser(match[1]))) throw new Error('OpenViking memory URI must be a safe viking://user/<user>/memories root')
+    const selectedUser = discoveryUser(connection)
+    if (selectedUser !== undefined) {
+      if ((match[1] !== undefined && match[1] !== selectedUser) || (connection.user?.trim() && connection.user.trim() !== selectedUser)) {
+        throw new Error('OpenViking memory owner must match the configured discovery user')
+      }
+      return `viking://user/${selectedUser}/memories`
+    }
     if (match[1] !== undefined) return root
     // Retain old persisted shorthand without sending the ambiguous URI to
     // newer servers. With no configured user, ask the authenticated backend.
@@ -285,8 +333,11 @@ export class OpenVikingProvider implements MemoryProviderAdapter {
     return this.requestConnection(connection, path, init, options)
   }
 
-  private async requestConnection(connection: MemoryProviderConnection | OpenVikingSpaceConnection, path: string, init: RequestInit = {}, options: OpenVikingRequestOptions = {}): Promise<unknown> {
+  private async requestConnection(connection: MemoryProviderConnection | OpenVikingConnection, path: string, init: RequestInit = {}, options: OpenVikingRequestOptions = {}): Promise<unknown> {
     options.signal?.throwIfAborted()
+    // In api_key mode the backend binds the account/user to the key and
+    // rejects trusted identity overrides. Preserve old discovery by default.
+    const keyBound = discoveryUser(connection) !== undefined
     const controller = new AbortController()
     const relay = () => controller.abort(options.signal?.reason)
     options.signal?.addEventListener('abort', relay, { once: true })
@@ -297,8 +348,8 @@ export class OpenVikingProvider implements MemoryProviderAdapter {
         headers: {
           'Content-Type': 'application/json',
           ...(connection.apiKey === undefined || connection.apiKey === '' ? {} : { Authorization: `Bearer ${connection.apiKey}` }),
-          ...(connection.account === undefined || connection.account === '' ? {} : { 'X-OpenViking-Account': String(connection.account) }),
-          ...(connection.user === undefined || connection.user === '' ? {} : { 'X-OpenViking-User': String(connection.user) }),
+          ...(keyBound || connection.account === undefined || connection.account === '' ? {} : { 'X-OpenViking-Account': String(connection.account) }),
+          ...(keyBound || connection.user === undefined || connection.user === '' ? {} : { 'X-OpenViking-User': String(connection.user) }),
           ...(connection.actorPeerId === undefined || connection.actorPeerId === '' ? {} : { 'X-OpenViking-Actor-Peer': String(connection.actorPeerId) }),
           ...init.headers,
         },

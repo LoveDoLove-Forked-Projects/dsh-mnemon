@@ -28,7 +28,7 @@ Host 只暴露适配器能够兑现的能力；UI 与 Agent 工具不会伪造�
 
 | Provider | 工作区行为 | 设置中的服务配置 | 记忆空间中的实例配置 |
 |---|---|---|---|
-| OpenViking | 保持 Provider 全局作用域 | `endpoint`、`apiKey`、`account` | `targetUri`、`user`、`actorPeerId` |
+| OpenViking | 保持 Provider 全局作用域 | `endpoint`、`apiKey`、`account`、可选 `discoveryUser` | `targetUri`、`user`、`actorPeerId` |
 | Honcho | 保持 Provider 全局作用域 | `endpoint`、`apiKey` | `workspace`、`userId`、`agentId` |
 | Mem0 | 保持 Provider 全局作用域 | `endpoint`、`apiKey`、`mode` | `userId`、`agentId`、`rerank` |
 | Hindsight | 保持 Provider 全局作用域 | `endpoint`、`apiKey` | `bankId`、`budget` |
@@ -57,7 +57,8 @@ DSH 的“工作区”模式不会统一重写所有 Provider 命名空间。Mne
 ## 运维边界
 
 - OpenViking 使用 `content/write`、`mode: "create"`、`wait: true` 和来源/分类标签创建新的 `.md` 文件。分类分别映射至 `preferences`、`experiences`（insight/decision）、`events`（context）或 `entities`（fact/general）。只有 URI、字节数、向量索引完成状态和公开完整正文读回均匹配时才返回 stored；记忆文件的语义处理状态允许为 `skipped`。召回与浏览读取完整正文，不把摘要当作原文；这些写入不再使用会话抽取或 LLM 提炼。
-- OpenViking 服务须支持上述正文 API；可选集成测试已覆盖正式发布的 v0.4.20 后端。v0.4.20 的自动发现需要配置 `account`，并使用能枚举用户和访问所选命名空间的账号管理员 API key：ROOT key 不能访问租户数据，开发模式则禁止管理员发现。已有显式 `viking://user/<user>/memories` 根保持有效；旧 `viking://user/memories` 通过已配置 `user` 展开，未配置时使用经过身份验证的 system-status 用户信息。配置保留，不迁移注册表；拒绝危险路径成分以及所选用户根以外的删除。
+- OpenViking 服务须支持上述正文 API；可选集成测试已覆盖正式发布的 v0.4.20 后端。默认通过 Admin API 发现，需配置 `account` 与能枚举该账号用户的 key。没有 admin 权限的 user key 可在 `endpoint`、`apiKey`、`account` 之外填写 **User Key 所属用户（跳过 Admin）**（`discoveryUser`）。这会显式选择 `viking://user/<discoveryUser>/memories`，通过只读 `GET /api/v1/fs/ls` 验证后同步一个空间。此模式不发送 account/user 身份请求头，由服务端从 key 解析身份；`account` 标识本地映射，不能覆盖 key 所属租户。账号和用户标识应向服务管理员获取。根目录不存在、访问被拒或响应无效时拒绝保存并保留原配置；不会只凭 health 成功保存，也不在 admin 错误后自动降级。云服务可用性与写入权限需要另外验证，确定性测试不代表真实云账号认证。参见上游[身份验证](https://github.com/volcengine/OpenViking/blob/main/docs/en/guides/04-authentication.md)与[托管服务入门](https://github.com/volcengine/OpenViking/blob/main/docs/en/getting-started/02-quickstart.md)。
+- 已有显式 `viking://user/<user>/memories` 根保持有效；旧 `viking://user/memories` 通过已配置 `user` 展开，未配置时使用经过身份验证的 system-status 用户信息。user-key 发现使用显式所属用户，拒绝不匹配的空间用户。拒绝危险路径成分以及所选用户根以外的删除。注册表格式不变；降级前用当前版本清空 `discoveryUser` 并使用具有 admin 权限的配置，或禁用服务并恢复兼容配置。远端记忆保持不变。
 - OpenViking 错误、索引未完成和超时不会返回已提交回执。远端文件可能已经存在，错误会附带请求 URI，重试前应检查该文件；不自动回退到抽取或重试。经过验证的回执包含精确文件 `id`，使 Host 能在后续本地归档失败时只删除本次新建索引。结果不明的远端写入保留待检查。升级或回退适配器均不会删除已有远端文件；降级会恢复旧写入行为。
 - WebUI 不直接调用远程服务或本地 CLI；Provider I/O 都留在 Host，统一具备取消、超时、进程输出上限和 shell-disabled 参数执行。
 - “断开”三方记忆空间只删除本地目录登记，不删除底层数据。单条记忆的“遗忘”是另一项按能力开放的操作。
