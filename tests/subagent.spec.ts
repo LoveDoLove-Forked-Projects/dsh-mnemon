@@ -1663,6 +1663,25 @@ describe('Mnemon memory subagent coordinator', () => {
     expect(host.start).toHaveBeenCalledWith('spawn', expect.objectContaining({ agentOptions: { maxTokens: 4096 } }))
   })
 
+  it.each(['spawn', 'fork'] as const)('keeps scoped Team %s startup failures closed without replay (issue 275)', async provider => {
+    const host = subagents(undefined, 'error', ['spawn', 'fork'])
+    host.start.mockRejectedValueOnce(new Error('Team policy startup failed'))
+    const runtime = runtimeSource()
+    Object.assign(runtime.config.idleReview, { provider, agentTeams: 'scoped' })
+    const coordinator = createCoordinator(host.value, runtime)
+    const lead = parent()
+    lead.ctx = { get: () => ({}), tools: { get: () => ({}) } } as never
+    await expect(coordinator.review(lead, new AbortController().signal)).rejects.toMatchObject({
+      message: 'Team policy startup failed', review: { status: 'failed', provider, receipts: [] },
+    })
+    expect(host.start).toHaveBeenCalledOnce()
+    expect(coordinator.snapshot()).toMatchObject({ reviews: 0, failures: 1 })
+    const request = host.start.mock.calls[0]![1]!
+    expect(request.maxDepth).toBe(1)
+    expect(request.toolFilter?.allow).not.toEqual(expect.arrayContaining(['spawn_teammate']))
+    expect(request.persona).toContain('Those capabilities remain unavailable')
+  })
+
   it.each(['spawn', 'skip'] as const)('handles an unavailable fork before startup with %s policy', async fallback => {
     const host = subagents({ summary: 'No mutation.', action: 'skipped', memoryBodyIds: [] })
     const runtime = runtimeSource()

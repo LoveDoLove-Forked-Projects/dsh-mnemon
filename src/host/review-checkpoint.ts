@@ -32,7 +32,9 @@ export function reviewCheckpoint(session: HostSession, maxChars: number): string
   for (const seq of candidates.slice(-128).reverse()) {
     const event = hostSessionEventAt(session, seq)
     if (event === undefined || !['user/message', 'assistant/message', 'tool/result'].includes(event.type)) continue
-    const message = record(event.data.message)
+    // Public user/message data is the UserMessage itself; assistant and tool
+    // events wrap their message with turn/step metadata.
+    const message = record(event.type === 'user/message' ? event.data : event.data.message)
     const source = record(message.source)
     if (event.type === 'user/message' && source.kind !== 'user') continue
     const text = textContent(message.content, event.type === 'tool/result')

@@ -409,7 +409,8 @@ describe('MnemonWorkbench', () => {
   it('explains an automatic-review Team pause without presenting a failed child', async () => {
     const { connection } = createConnection({ reviewTeam: true })
     render(<MnemonWorkbench connection={connection} settingsScope={settingsScope} t={translateEn} locale="en" />)
-    expect(await screen.findByText(/Idle review is paused while Agent Teams tools are active/)).toBeTruthy()
+    expect(await screen.findByText(/Idle review is paused by the Agent Teams compatibility setting/)).toBeTruthy()
+    expect(screen.getByText(/select “Scoped child review”/u)).toBeTruthy()
     expect(screen.queryByRole('alert', { name: 'Background review failed' })).toBeNull()
   })
 

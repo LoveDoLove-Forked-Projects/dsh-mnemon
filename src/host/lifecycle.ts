@@ -314,7 +314,7 @@ class MnemonAgentLifecycle {
       reviewRunning: this.reviewRunning,
       reviewActivity: this.reviewActivity(),
       idleReviewAttempts: this.idleReviewAttempts,
-      ...(idleReviewBlockReason(this.agent) === undefined ? {} : { idleReviewBlocked: 'agent-team' as const }),
+      ...(idleReviewBlockReason(this.agent, this.config.idleReview.agentTeams) === undefined ? {} : { idleReviewBlocked: 'agent-team' as const }),
       ...(this.lastReviewAttemptAt === undefined ? {} : { nextReviewAt: new Date(this.lastReviewAttemptAt + this.config.idleReview.minIntervalMs).toISOString() }),
       ...(this.lastReviewFailure === undefined ? {} : { lastReviewFailure: this.lastReviewFailure }),
       lastPhase: this.lastPhase,
@@ -486,7 +486,7 @@ class MnemonAgentLifecycle {
   private idleReviewAllowed(): boolean {
     return this.config.lifecycleEnabled && this.config.writeEnabled && this.config.writebackMode === 'guided'
       && this.config.idleReview.enabled && this.idleReviewAttempts < this.config.idleReview.maxPerSession
-      && idleReviewBlockReason(this.agent) === undefined
+      && idleReviewBlockReason(this.agent, this.config.idleReview.agentTeams) === undefined
       && this.config.memoryTopology.strategyId === 'default-three-tier'
   }
 

@@ -120,6 +120,7 @@ const IdleReviewSchema = z.object({
   enabled: z.boolean().default(DEFAULT_IDLE_REVIEW.enabled),
   provider: z.union(['spawn', 'fork'] as const).default(DEFAULT_IDLE_REVIEW.provider),
   fallback: z.union(['spawn', 'skip'] as const).default(DEFAULT_IDLE_REVIEW.fallback),
+  agentTeams: z.union(['pause', 'scoped'] as const).default(DEFAULT_IDLE_REVIEW.agentTeams),
   minIntervalMs: z.number().step(1).min(5_000).max(86_400_000).default(DEFAULT_IDLE_REVIEW.minIntervalMs),
   maxPerSession: z.number().step(1).min(0).max(200).default(DEFAULT_IDLE_REVIEW.maxPerSession),
   maxContextChars: z.number().step(1).min(1_000).max(1_000_000).default(DEFAULT_IDLE_REVIEW.maxContextChars),

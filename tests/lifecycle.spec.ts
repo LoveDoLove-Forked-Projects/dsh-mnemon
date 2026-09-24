@@ -717,6 +717,26 @@ describe('Mnemon DSH lifecycle integration', () => {
     } finally { value.stop() }
   })
 
+  it('allows explicitly scoped Team review and honors switching back to pause (issue 275)', async () => {
+    vi.useFakeTimers()
+    const config = resolveConfig({ idleReviewMs: 5_000, idleReview: { agentTeams: 'scoped', minIntervalMs: 5_000 } } as never)
+    const value = fixture(config)
+    const get = value.agent.ctx.get!
+    value.agent.ctx.get = name => name === 'agentTeams' ? {} : get(name)
+    value.agent.ctx.tools = { get: name => name === 'spawn_teammate' ? {} : undefined }
+    try {
+      for (let turn = 1; turn <= 2; turn += 1) { await value.preStep([durableCandidate(300)], turn); await value.turnStopping(turn) }
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(value.coordinator.review).toHaveBeenCalledOnce()
+      expect(value.lifecycle.snapshot('session-1').current?.idleReviewBlocked).toBeUndefined()
+      for (let turn = 3; turn <= 4; turn += 1) { await value.preStep([durableCandidate(300)], turn); await value.turnStopping(turn) }
+      Object.assign(config.idleReview, { agentTeams: 'pause' })
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(value.coordinator.review).toHaveBeenCalledOnce()
+      expect(value.lifecycle.snapshot('session-1').current).toMatchObject({ idleReviewBlocked: 'agent-team', idleReviewAttempts: 1 })
+    } finally { value.stop() }
+  })
+
   it('disables only idle review and cancels an already scheduled review when toggled off', async () => {
     vi.useFakeTimers()
     const config = resolveConfig({ idleReviewMs: 5_000 })
