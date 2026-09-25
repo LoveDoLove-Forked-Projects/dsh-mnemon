@@ -1,6 +1,6 @@
-import { isVolatile, type Volatile } from '@deepseek-ai/cosmokit'
+import type { Volatile } from '@deepseek-ai/cosmokit'
 import type z from 'schemastery'
-import ProfileSchema from './profile-schema.mjs'
+import ProfileSchema, { isVolatile, supportsLiveConfig } from './profile-schema.mjs'
 import { Config as PlainConfig, resolveConfig, type Config } from './config.ts'
 
 /** DSH keeps these references stable while committing live profile edits. */
@@ -52,4 +52,4 @@ function liveConfig(): z<Config, LiveHostConfig> {
 }
 
 /** Profile Config for live forms; transport authority retains normal remounts. */
-export const LiveConfig = liveConfig()
+export const LiveConfig = supportsLiveConfig ? liveConfig() : PlainConfig
