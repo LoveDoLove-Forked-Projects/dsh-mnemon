@@ -25,6 +25,14 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 
 历史 v0.5.2 采集发现 390px 设置布局不可用，[失败证据](../../pr-assets/documentation-refresh/README.md)保留原版本身份。[v0.5.4 浅色采集](../../assets/webui-v0.5.4/README.md)覆盖双语桌面浏览，以及 390 × 844 下的记忆空间导航、创建与版本维护。长卡片名称和部分指标会截断；本次没有复测所有 Host 设置页或真实手机，因此不将早期设置限制标为已解决。
 
+## Desktop profile generation
+
+Desktop 可能删除插件 generation 内的私有 `@deepseek-ai/*` 包，改用宿主自己的框架版本。Mnemon 在导入动态设置 schema 前检查宿主公开的 Volatile API；携带 Cosmokit `1.8.3` 的宿主沿用普通 Config 和 Settings 路径，提供动态 API 的宿主继续使用检查 revision 的 profile 设置。
+
+受影响的 `0.5.13` 安装中，Desktop 的回退分支会将缺少 `createVolatile` 导出的真实错误隐藏为 `Cannot find package 'dsh-mnemon'`。平铺 `mnemon-bundle` 不能修复该导入失败。Starter 保留 group、根停用总开关、独立 Source/Strategy 选择、私有 Provider 子项和已有设置命名空间。在所属 profile 更新 Mnemon 后重启即可；本修复不需要迁移记忆或配置。
+
+参见[原版 Desktop 复现与验收记录](../../pr-assets/issue-274-profile-generation/README.zh-CN.md)。
+
 ## DSH 0.1.7 设置恢复
 
 DSH `0.1.7-alpha.1` 用基于 Config 的表单替代了 `settings.register()` 和 `settings-file`。Mnemon 提供动态 Config 字段，现有界面操作通过宿主检查 revision 的 profile 写入器持久化；修改传输权限仍需正常重载插件。DSH `0.1.5-rc.2` 和 `0.1.6-alpha.2` 继续沿用原设置路径。
