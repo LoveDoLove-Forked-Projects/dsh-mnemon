@@ -12,6 +12,7 @@ For new evaluations, commit the reusable harness, workload generator, concise bi
 
 | Record / 记录 | Scope / 范围 |
 |---|---|
+| [v0.5.14 release](./release-v0.5.14/README.md) / [中文](./release-v0.5.14/README.zh-CN.md) | Versioned artifacts, real CLI, packed WebUI Runtime edits and cold-restart settings / 版本化制品、真实 CLI、制品 WebUI Runtime 编辑与冷启动设置 |
 | [Agent Teams idle review — issue #275](./issue-275-agent-teams/README.md) / [中文](./issue-275-agent-teams/README.zh-CN.md) | Published Teams compatibility, whole user checkpoints, guarded child execution, real CLI and packed WebUI / 正式 Teams 兼容、完整用户检查点、子代理执行限制、真实 CLI 与制品 WebUI |
 | [OpenViking user-key discovery — issue #271](./issue-271-user-key/README.md) / [中文](./issue-271-user-key/README.zh-CN.md) | Admin-denied discovery before/after, scoped data API validation, multi-plugin isolation and real CLI/WebUI / Admin 拒绝发现前后对比、数据 API 范围校验、多插件隔离与真实 CLI/WebUI |
 | [Desktop profile generations — issue #274](./issue-274-profile-generation/README.md) / [中文](./issue-274-profile-generation/README.zh-CN.md) | Original Desktop loader failure, generation installs, legacy/live settings, real WebUI and Headless / 原版 Desktop loader 失败、generation 安装、新旧设置、真实 WebUI 与 Headless |
