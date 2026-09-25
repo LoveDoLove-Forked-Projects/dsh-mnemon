@@ -28,6 +28,7 @@ describe('live Host configuration', () => {
       }, { displayMode: 'builtin', remoteAccess: 'trusted-host' })
       const config = received as ReturnType<typeof LiveConfig>
       expect(isVolatile(config.displayMode)).toBe(true)
+      if (!isVolatile(config.displayMode)) throw new Error('The live schema must provide references on this host')
       expect(config.displayMode.get()).toBe('builtin')
       expect(isVolatile(config.remoteAccess)).toBe(false)
       expect(config.remoteAccess).toBe('trusted-host')

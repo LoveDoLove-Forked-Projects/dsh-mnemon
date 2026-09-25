@@ -26,6 +26,8 @@ Test-Path "$env:LOCALAPPDATA\Programs\mnemon\mnemon.exe"
 
 状态页显示 Mnemon / dsh-mnemon 版本、Runtime、Memory Spaces、Documents 和当前实际目录。`mnemon status` 会打开有效 Store，上游 CLI 可能初始化数据或执行迁移，因此不是完全无副作用的只读探测。
 
+如果 OpenViking 提示 `/api/v1/admin/*` access restrictions，在设置中填写 **User Key 所属用户（跳过 Admin）**（`discoveryUser`）、账号标识、服务地址与 user API key。这会用数据 API 验证所选记忆根；根目录被拒绝或不存在时保留原配置。此校验不证明写入权限，也不改变 key 绑定的身份。留空仍使用 admin 发现。参见 [Provider 边界与降级步骤](./memory-providers.md#运维边界)。
+
 ## 版本检查与更新
 
 状态页的“检查版本”打开“检查与更新版本”面板：

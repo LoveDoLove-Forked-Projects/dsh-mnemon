@@ -67,6 +67,17 @@ export const descriptor: MemoryProviderDescriptor = {
       "i18nKey": "overview.providerAccount"
     },
     {
+      "key": "discoveryUser",
+      "label": "User key owner (skip admin)",
+      "scope": "service",
+      "input": "text",
+      "required": false,
+      "maxLength": 200,
+      "pattern": "^(?!\\.{1,2}$)(?!.*@.*@)[a-zA-Z0-9_.@\\-]+$",
+      "validationMessage": "OpenViking discovery user must be a safe user ID",
+      "i18nKey": "overview.providerDiscoveryUser"
+    },
+    {
       "key": "user",
       "label": "User",
       "scope": "memory",

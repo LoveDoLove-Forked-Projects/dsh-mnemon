@@ -1,6 +1,9 @@
 import type Schema from 'schemastery'
 import type { Volatile } from '@deepseek-ai/cosmokit'
 
+export const supportsLiveConfig: boolean
+export function isVolatile(value: unknown): value is Volatile<unknown>
+
 // The published fork and legacy parser declare different global Schemastery
 // generics. Only this private runtime boundary needs the new volatile method.
 interface ProfileSchema<S = any, T = S> extends Schema<S, T> {

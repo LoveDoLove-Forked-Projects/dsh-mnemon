@@ -181,6 +181,7 @@ Settings centralizes stable user choices and reusable **service configuration**:
 - Memory enhancements provide three shipped switches—Active capture, Light context, and Scoped composition—disabled by default and applied immediately to future turns;
 - every external Provider has its own switch and is off by default;
 - endpoint, API Key, and Provider-specific fields appear only after enabling;
+- OpenViking's optional **User key owner (skip admin)** field selects one user namespace for keys without Admin API access; fill the account and user key as well. A rejected data-plane check leaves the previous service configuration unchanged. [Setup and limits](./memory-providers.md#operational-boundaries);
 - API Keys use a conventional password field whose eye button toggles visible/hidden; there is no clear-credential checkbox, dedicated Remove row, or saved-secret caption;
 - the three enhancement switches apply immediately; the footer Save action persists all other changes without waiting for discovery or recall. Health belongs on Status and instances belong on Overview;
 - global / workspace / custom tags show effective scope; Providers with the same scope semantics reuse Mnemon's configuration framework.
