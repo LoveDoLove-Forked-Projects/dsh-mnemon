@@ -42,7 +42,7 @@
     "dsh-mnemon-strategy-default-three-tier": "^0.5.4",
     "tsdown": "^0.22.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public",
