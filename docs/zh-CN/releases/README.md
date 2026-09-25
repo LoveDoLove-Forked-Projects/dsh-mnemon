@@ -6,6 +6,7 @@
 
 ## v0.5
 
+- [v0.5.14：Desktop 加载、OpenViking User Key 与 Agent Teams 审查](./v0.5.14.md)
 - [v0.5.13：工作区、Builtin 与 DSH 0.1.7 兼容修复](./v0.5.13.md)
 - [v0.5.12：兼容 DSH RC 与 Alpha](./v0.5.12.md)
 - [v0.5.11：隐藏 Windows Git 分支查询窗口](./v0.5.11.md)
