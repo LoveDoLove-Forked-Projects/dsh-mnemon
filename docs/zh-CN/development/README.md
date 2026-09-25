@@ -81,6 +81,8 @@ OpenViking 提供显式启用的回环集成测试：`MNEMON_OPENVIKING_TEST_END
 
 Runtime 用例在 View 固定后，通过真实 Host 工具创建并激活两个 Native 空间，归档两条完整检查点并验证待新增内容。路由决策由本地脚本固定，不调用模型 API。
 
+可选 Agent Teams 矩阵通过包出口加载隔离的正式 DSH profile：`MNEMON_TEAM_TEST_PROFILE=/absolute/profile pnpm exec vitest run tests/agent-team-review-host.spec.ts`。使用匹配的 DSH/Teams 0.1.7-rc.1 组合；DSH 0.1.5-rc.2 与 Teams 0.1.5-alpha.2 则另设 `MNEMON_TEAM_TEST_LEGACY=1`。测试执行真实 fork/spawn、原生/Code Mode 工具、全部三个 Strategy 增强、子代理执行限制、Runtime 提交与父 Team 工具。普通 CI 跳过这组额外安装。[Issue #275 记录](../../pr-assets/issue-275-agent-teams/README.zh-CN.md)提供复现 profile、制品 WebUI 夹具与人工验收证据。
+
 可选的 Flash 压力测试使用四个真实 DSH 会话、委派写入者、独立维护任务和临时 Native 存储，保留默认 10 KiB 上限，验证反复归档后的精确原文、命名空间路由和无会话 Web 管理。通过 `DEEPSEEK_API_KEY` 提供 DeepSeek 凭据，通过 `MNEMON_NATIVE_TEST_CLI` 提供已验证的 CLI，然后运行：
 
 ```sh

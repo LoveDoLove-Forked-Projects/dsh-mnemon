@@ -56,6 +56,7 @@ mnemon:
     enabled: true
     provider: spawn
     fallback: spawn
+    agentTeams: pause # pause | scoped
     minIntervalMs: 300000
     maxPerSession: 20
     maxContextChars: 24000
@@ -99,6 +100,7 @@ mnemon:
 | `idleReview.enabled` | `true` | boolean | Independent automatic-review switch |
 | `idleReview.provider` | `spawn` | `spawn` / `fork` | Bounded checkpoint or inherited parent context |
 | `idleReview.fallback` | `spawn` | `spawn` / `skip` | Missing/incompatible fork handling before startup only |
+| `idleReview.agentTeams` | `pause` | `pause` / `scoped` | Pause for older Team policies or explicitly allow guarded review; verified with DSH/Teams 0.1.7-rc.1 |
 | `idleReview.minIntervalMs` | `300000` | 5000–86400000 ms | Minimum interval between attempts |
 | `idleReview.maxPerSession` | `20` | 0–200 | Attempt cap per loaded parent Agent; includes failures/cancellations |
 | `idleReview.maxContextChars` | `24000` | 1000–1000000 | Spawn checkpoint character limit |
@@ -325,7 +327,11 @@ Review requires local child publication, `agents.isOwnedBy`, and `agent.ctx.tool
 
 `idleReviewMs` remains the continuous-idle debounce. A separate `minIntervalMs` spaces attempts, including failures and cancellations. `maxPerSession` caps attempts for the loaded parent Agent, including across context clear/compact notifications; zero suspends review. Restarting the Host or unloading/reopening the Agent starts a new in-memory budget. Completed runs are disposed through DSH's public API. Persisted session history is retained: the published Host provides no plugin-scoped archive/TTL contract, and Mnemon never deletes session files or other plugins' agents.
 
-**Known composition limitation:** the published DSH 0.1.5-rc.2 with experimental Agent Teams 0.1.5-alpha.2 tools installs a Team policy before either fork or spawn publishes its descriptor. Both providers can then fail with `TEAM_NOT_MEMBER`. Mnemon checks the public `agentTeams` service and scoped `spawn_teammate` capability and pauses automatic review before creating a child. The workspace explains the pause. TeamService alone does not trigger it; after Team tools are removed, the next eligible completed turn can schedule review. This does not change recall, writeback, or manual-operation settings and does not repair upstream manual delegation.
+**Agent Teams compatibility:** `idleReview.agentTeams: pause` remains the default for existing profiles. It pauses before child creation when both the public `agentTeams` service and parent-scoped `spawn_teammate` tool are present. DSH 0.1.5-rc.2 with Teams 0.1.5-alpha.2 has a dynamic child policy that can fail with `TEAM_NOT_MEMBER`. TeamService alone does not pause review.
+
+With DSH and all official Agent Teams components at **0.1.7-rc.1**, select **Scoped child review** under Settings → Idle review, or set `idleReview.agentTeams: scoped`. That published Team policy supports both bounded spawn and explicit fork. The opt-in retains parent ownership checks, local child publication, `maxDepth: 1`, and the monotonic review-tool allowlist, including Code Mode dispatch. Team tools and further delegation stay denied to the reviewer; the parent keeps Teams. No package-version guess or other plugin policy removal is used. Missing guard/ownership support or a policy error fails the run without fallback replay. Use `pause` on older unverified combinations, or `idleReview.enabled: false` to disable only review while keeping Teams, recall and explicit writes.
+
+Bounded spawn reads live-user evidence from the public flat `user/message` event payload. It includes only whole visible messages before the completed checkpoint; injected recall, summaries and messages without a live-user source are not promoted to user assertions. This preserves explicit decisions and no-write instructions within the configured character budget.
 
 Failed reviews remain failures. The workspace shows the child run id and committed mutation receipt metadata when writes happened before failure, including a committed inner tool followed by a failed Code Mode wrapper. No rollback or automatic replay occurs. Inspect the run and the listed document ids or Runtime revisions before any manual retry. A later review still respects the cooldown and session budget. To disable only this maintenance pass, set `idleReview.enabled: false` in Settings or configuration.
 

@@ -10,13 +10,13 @@ export interface ReviewToolHost {
 const startingReview = new AsyncLocalStorage<symbol>()
 
 /**
- * The published Agent Teams alpha.2 tool suite installs its policy before a
- * provider publishes a child descriptor. Both rc.2 in-process providers then
- * lose membership on step two. Inspect public services/capabilities only and
- * skip before creating a child; do not remove another plugin's policy.
+ * Older published Team tools evaluate membership after a child loses its
+ * temporary Lead identity. Keep their conservative pause unless the operator
+ * selects scoped review (verified with DSH/Teams 0.1.7-rc.1). That opt-in still
+ * requires startGuardedReview; it never removes another plugin's policy.
  */
-export function idleReviewBlockReason(parent: HostAgent): 'agent-team' | undefined {
-  return parent.ctx?.get?.('agentTeams') !== undefined
+export function idleReviewBlockReason(parent: HostAgent, agentTeams: 'pause' | 'scoped' = 'pause'): 'agent-team' | undefined {
+  return agentTeams !== 'scoped' && parent.ctx?.get?.('agentTeams') !== undefined
     && parent.ctx.tools?.get?.('spawn_teammate', parent) !== undefined ? 'agent-team' : undefined
 }
 

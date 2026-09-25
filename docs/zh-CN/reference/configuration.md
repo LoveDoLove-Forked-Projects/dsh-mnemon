@@ -58,6 +58,7 @@ mnemon:
     enabled: true
     provider: spawn
     fallback: spawn
+    agentTeams: pause # pause | scoped
     minIntervalMs: 300000
     maxPerSession: 20
     maxContextChars: 24000
@@ -101,6 +102,7 @@ mnemon:
 | `idleReview.enabled` | `true` | boolean | 自动审查独立开关 |
 | `idleReview.provider` | `spawn` | `spawn` / `fork` | 有界检查点或继承父上下文 |
 | `idleReview.fallback` | `spawn` | `spawn` / `skip` | 仅启动前处理 fork 缺失/不兼容 |
+| `idleReview.agentTeams` | `pause` | `pause` / `scoped` | 兼容旧版 Team 策略的暂停模式，或显式启用受 guard 保护的审查；已验证 DSH/Teams 0.1.7-rc.1 |
 | `idleReview.minIntervalMs` | `300000` | 5000–86400000 ms | 两次尝试的最短间隔 |
 | `idleReview.maxPerSession` | `20` | 0–200 | 当前加载父 Agent 的尝试上限；包括失败/取消 |
 | `idleReview.maxContextChars` | `24000` | 1000–1000000 | spawn 检查点字符上限 |
@@ -327,7 +329,11 @@ depthLimit   = true
 
 `idleReviewMs` 仍是连续空闲防抖时间。独立的 `minIntervalMs` 限制尝试间隔，失败与取消也计入；`maxPerSession` 限制当前加载的父 Agent 的尝试次数，清空/压缩上下文通知不会重置，零表示暂停。重启 Host 或卸载后重新打开 Agent 会获得新的内存内预算。运行结束通过 DSH 公开 API dispose。持久会话历史保留：已发布 Host 没有插件范围的归档/TTL 契约，Mnemon 不删除会话文件或其他插件的 Agent。
 
-**已知组合限制：**已发布的 DSH 0.1.5-rc.2 与 experimental Agent Teams 0.1.5-alpha.2 工具在 fork 和 spawn 发布 descriptor 之前安装 Team policy，两种 Provider 都可能随后报 `TEAM_NOT_MEMBER`。Mnemon 检查公开的 `agentTeams` 服务和当前作用域的 `spawn_teammate` 能力，在创建子 Agent 前暂停自动审查，并在工作区解释原因。仅加载 TeamService 不会暂停；移除 Team 工具后，下一个符合条件的已完成回合可再次排程。不更改召回、writeback 或手动操作设置，也不修复上游的手动委派问题。
+**Agent Teams 兼容：**现有配置默认保留 `idleReview.agentTeams: pause`。同时检测到公开 `agentTeams` 服务与父 Agent 作用域的 `spawn_teammate` 工具时，在创建子代理前暂停。DSH 0.1.5-rc.2 与 Teams 0.1.5-alpha.2 的动态子代理策略可能报 `TEAM_NOT_MEMBER`。仅加载 TeamService 不会暂停审查。
+
+DSH 与全部官方 Agent Teams 组件均为 **0.1.7-rc.1** 时，可在设置 → 空闲审查中选择**受限子代理审查**，或设置 `idleReview.agentTeams: scoped`。该已发布 Team 策略兼容有界 spawn 与显式 fork。此模式仍检查父子归属、本地子代理发布、`maxDepth: 1` 和单调的审查工具白名单（包括 Code Mode 子调用）。审查子代理仍不能使用 Team 工具或再次委派；父 Agent 保留 Teams。不会猜测包版本或移除其他插件的策略。缺少 guard/归属能力或策略报错时，运行失败且不通过 fallback 重放。旧版或未验证组合应保留 `pause`；也可设置 `idleReview.enabled: false`，只关闭审查，保留 Teams、召回与主动写入。
+
+有界 spawn 按公开的扁平 `user/message` 事件读取真实用户证据，仅保留已完成检查点之前、当前可见的完整消息；注入的召回、摘要和没有真实用户来源的消息不会被提升为用户断言。配置的字符预算内，明确决策与禁止写入指令都以整条消息保留。
 
 失败的审查仍计为失败。如果失败前已有写入提交，工作区显示子运行 id 和已提交变更回执元数据，包括 Code Mode 外层失败前已提交的内部工具。不自动回滚或重放。手动重试前请核对该运行、档案 id 或 Runtime revision。后续审查仍遵守冷却和会话预算。只需停用此维护流程时，可在设置或配置中使用 `idleReview.enabled: false`。
 

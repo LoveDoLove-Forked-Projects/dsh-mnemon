@@ -81,6 +81,8 @@ OpenViking has an opt-in loopback integration test: `MNEMON_OPENVIKING_TEST_ENDP
 
 The Runtime case creates and activates two Native spaces through real Host tools after the View is pinned, archives two exact checkpoints and verifies the pending add. Routing decisions are fixed locally; no model API is used.
 
+The optional Agent Teams matrix loads an isolated published DSH profile through its package exports: `MNEMON_TEAM_TEST_PROFILE=/absolute/profile pnpm exec vitest run tests/agent-team-review-host.spec.ts`. Use the matching DSH/Teams 0.1.7-rc.1 cohort, or set `MNEMON_TEAM_TEST_LEGACY=1` for DSH 0.1.5-rc.2 with Teams 0.1.5-alpha.2. It exercises real fork/spawn, native/Code Mode tools, all three Strategy extensions, restricted child execution, actual Runtime commits and parent Team tools. Ordinary CI skips this extra installation. Reproduction profiles, the packed WebUI fixture and reviewed evidence are in the [Issue #275 record](../../pr-assets/issue-275-agent-teams/README.md).
+
 The opt-in Flash pressure suite uses four real DSH sessions, delegated writers, independent maintenance tasks and a disposable Native store. It keeps the default 10 KiB limit and verifies exact committed content across repeated archival, namespace routing and session-free browser management. Supply a DeepSeek credential through `DEEPSEEK_API_KEY` and a verified CLI through `MNEMON_NATIVE_TEST_CLI`, then run:
 
 ```sh

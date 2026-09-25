@@ -176,6 +176,7 @@ export const DEFAULT_IDLE_REVIEW = {
   enabled: true,
   provider: 'spawn',
   fallback: 'spawn',
+  agentTeams: 'pause',
   minIntervalMs: 300_000,
   maxPerSession: 20,
   maxContextChars: 24_000,
@@ -187,6 +188,8 @@ export interface ResolvedIdleReviewConfig {
   provider: 'spawn' | 'fork'
   /** Applies only before a child starts; a failed run is never replayed. */
   fallback: 'spawn' | 'skip'
+  /** Explicit opt-in for compatible Team policies; tool isolation is mandatory. */
+  agentTeams: 'pause' | 'scoped'
   minIntervalMs: number
   maxPerSession: number
   maxContextChars: number

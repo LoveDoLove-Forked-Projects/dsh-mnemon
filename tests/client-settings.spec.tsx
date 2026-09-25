@@ -59,10 +59,21 @@ describe('MnemonSettingsCard', () => {
     expect((screen.getByRole('button', { name: '保存' }) as HTMLButtonElement).disabled).toBe(true)
     expect(mutate).not.toHaveBeenCalled()
     fireEvent.change(screen.getByRole('spinbutton', { name: '每会话最多尝试次数' }), { target: { value: '3' } })
+    fireEvent.change(screen.getByRole('combobox', { name: /Agent Teams 兼容模式/u }), { target: { value: 'scoped' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(mutate).toHaveBeenCalledWith([{ op: 'set', path: ['idleReview'], value: {
-      enabled: false, provider: 'spawn', fallback: 'spawn', minIntervalMs: 300_000, maxPerSession: 3, maxContextChars: 24_000, maxTokens: 4_096,
+      enabled: false, provider: 'spawn', fallback: 'spawn', agentTeams: 'scoped', minIntervalMs: 300_000, maxPerSession: 3, maxContextChars: 24_000, maxTokens: 4_096,
     } }]))
+  })
+
+  it('keeps Team review compatibility selection read-only without the Host settings grant', () => {
+    const snapshot = { status: 'ready' as const, value: { idleReview: { agentTeams: 'scoped' as const } }, revision: 0, writable: false, mode: 'host' as const }
+    const scope = { getSnapshot: () => snapshot, subscribe: () => () => {}, set: vi.fn(), unset: vi.fn(), setPath: vi.fn(), unsetPath: vi.fn(), mutate: vi.fn() }
+    render(<MnemonSettingsCard scope={scope} t={translateEn} />)
+    const choice = screen.getByRole('combobox', { name: /Agent Teams compatibility/u }) as HTMLSelectElement
+    expect(choice.value).toBe('scoped')
+    expect(choice.disabled).toBe(true)
+    expect(scope.mutate).not.toHaveBeenCalled()
   })
   it('persists a validated DSH-managed Mnemon embedding override as one live setting', async () => {
     const mutate = vi.fn(async () => {})

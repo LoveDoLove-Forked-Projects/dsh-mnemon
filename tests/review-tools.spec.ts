@@ -46,6 +46,8 @@ describe('review publication and execution boundary', () => {
     const get = vi.fn(() => capability ? {} : undefined)
     const parent = { ctx: { get: (name: string) => service && name === 'agentTeams' ? {} : undefined, tools: { get } } } as unknown as HostAgent
     expect(idleReviewBlockReason(parent)).toBe(service && capability ? 'agent-team' : undefined)
+    expect(idleReviewBlockReason(parent, 'pause')).toBe(service && capability ? 'agent-team' : undefined)
+    expect(idleReviewBlockReason(parent, 'scoped')).toBeUndefined()
     if (service) expect(get).toHaveBeenCalledWith('spawn_teammate', parent)
   })
   it('separates nested same-parent reviews and leaves other parents alone', async () => {
@@ -111,6 +113,9 @@ describe('review publication and execution boundary', () => {
     expect(child.denial('mnemon_subagent_result')).toBeUndefined()
     expect(child.denial('run_code')).toBeUndefined()
     expect(child.denial('mcp__aoci__aoci_overview')).toContain('reuse the inherited checkpoint')
+    for (const name of ['spawn_teammate', 'send_message', 'team_task_create', 'fork_agent', 'spawn_agent']) {
+      expect(child.denial(name)).toContain('Mnemon review cannot execute')
+    }
     const disposing = run.dispose()
     expect(child.guards.size).toBe(1)
     release.resolve()
