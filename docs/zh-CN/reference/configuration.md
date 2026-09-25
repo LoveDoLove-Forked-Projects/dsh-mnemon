@@ -14,7 +14,9 @@ $DSH_HOME/settings.yaml
 
 执行中的回合保留已固定的运行图。已经派发的子 Agent 保留委托运行图直到本次 activation 销毁，即使父回合已结束；后续父回合和新委托的 activation 使用新 generation。保存设置不会静默扩大既有任务的 Recall 权限。
 
-Web 设置页编辑 `storageScope`、独立的 `runtimeUserScope`、`dataDir`、Mnemon Native 的 Ollama 嵌入覆盖、三个记忆层的总开关、后台任务 Agent 的模型路由，以及 `mnemon-ui` 下的回合记忆条和存入记忆按钮。“全局 / 工作区 / 集中工作区”是整个记忆系统的范围，可选的集中根目录在范围选择器旁配置；USER.md 用户档案也可以显式保持全局，而项目记忆继续跟随该范围。`custom` 数据位置、嵌入运行配置与 ZIP 备份 / 迁移收纳在 Mnemon Native 折叠栏。每个第三方 Provider 有独立的服务配置折叠栏；这里保存的是 endpoint、凭据或可执行文件等可复用服务信息，不会创建记忆空间。具体记忆空间及其数据范围仍在“记忆空间 → 概览”中创建。其他高级项需要直接修改 YAML。
+Web 设置页编辑 `storageScope`、独立的 `runtimeUserScope`、`dataDir`、Mnemon Native 的 Ollama 嵌入覆盖、三个记忆层的总开关、后台任务 Agent 的模型路由，以及 `mnemon-ui` 下的回合记忆条和存入记忆按钮。“全局 / 工作区 / 集中工作区”是整个记忆系统的范围，可选的集中根目录在范围选择器旁配置；USER.md 用户档案也可以显式保持全局，而项目记忆继续跟随该范围。`custom` 数据位置、嵌入运行配置与 ZIP 备份 / 迁移收纳在 Mnemon Native 折叠栏。每个第三方 Provider 有独立的服务配置折叠栏，保存 endpoint、凭据或可执行文件等可复用服务信息。启用或保存时发现 Provider 已有的命名空间，并同步到“记忆空间 → 概览”；禁用只移除本地映射，不删除 Provider 数据。其他高级项需要直接修改 YAML。
+
+OpenViking user key 没有 admin 权限时，可组合服务字段 `discoveryUser`、`endpoint`、`apiKey`、`account`，显式发现单个用户的记忆空间；`discoveryUser` 留空仍枚举 admin。服务字段保存在 Memory Spaces 的 Provider 注册表，不是新的 Mnemon 顶层 YAML 设置。参见 [OpenViking 配置与兼容性](../guides/memory-providers.md#运维边界)。
 
 ## 完整示例
 

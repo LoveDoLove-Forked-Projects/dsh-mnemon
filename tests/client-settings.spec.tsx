@@ -17,6 +17,38 @@ function deferred<T>() {
 }
 
 describe('MnemonSettingsCard', () => {
+  it.each([false, true])('submits the OpenViking user-key scope to its owning instance and reports rejection=%s', async rejected => {
+    const snapshot = { status: 'ready' as const, value: {}, base: {}, user: {}, revision: 0, writable: true, mode: 'host' as const }
+    const scope = { getSnapshot: () => snapshot, subscribe: () => () => {}, set: vi.fn(), unset: vi.fn(), setPath: vi.fn(), unsetPath: vi.fn() }
+    const descriptor = MEMORY_PROVIDER_CATALOG.find(candidate => candidate.id === 'openviking')!
+    const providers = ['work-cloud', 'personal-cloud'].map(id => ({ ...descriptor, id, typeId: 'openviking', label: id }))
+    const call = vi.fn(async (channel: string, endpoint: string, payload: unknown) => {
+      if (channel === '/dsh-mnemon-read' && endpoint === 'provider-services') return { ok: true as const, value: {
+        providers, items: providers.map(provider => ({ providerId: provider.id, enabled: true, configured: true, settings: { endpoint: 'https://memory.example/openviking', account: 'work' }, configuredSecrets: ['apiKey'] })), generatedAt: '2026-09-25T00:00:00.000Z',
+      } }
+      if (channel === '/dsh-mnemon-write' && endpoint === 'provider-service-update') {
+        if (rejected) throw new Error('Synthetic user key cannot access this memory namespace')
+        const request = payload as { providerId: string; settings: Record<string, string> }
+        return { ok: true as const, value: { ...request, enabled: true, configured: true, configuredSecrets: ['apiKey'] } }
+      }
+      if (channel === '/dsh-mnemon-pack' && endpoint === 'target') return { ok: true as const, value: { root: '/fixture/.mnemon', scope: 'global' } }
+      throw new Error(`unexpected ${channel} ${endpoint}`)
+    })
+    render(<MnemonSettingsCard scope={scope} connection={{ rpc: { call } } as ClientConnectionHandle} />)
+    const card = await screen.findByRole('group', { name: 'work-cloud 服务配置' })
+    await waitFor(() => expect((within(card).getByRole('button') as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(within(card).getByRole('button'))
+    const user = within(card).getByRole('textbox', { name: 'User Key 所属用户（跳过 Admin）' })
+    fireEvent.change(user, { target: { value: rejected ? 'bob' : 'alice' } })
+    fireEvent.click(within(card).getByRole('button', { name: '保存服务配置' }))
+    await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-write', 'provider-service-update', {
+      providerId: 'work-cloud', enabled: true, settings: { endpoint: 'https://memory.example/openviking', account: 'work', discoveryUser: rejected ? 'bob' : 'alice' },
+    }))
+    await within(card).findByText(rejected ? /Synthetic user key cannot access/ : '服务配置已保存，记忆空间目录已同步')
+    expect(call.mock.calls.filter(([, endpoint]) => endpoint === 'provider-service-update')).toHaveLength(1)
+    expect(within(screen.getByRole('group', { name: 'personal-cloud 服务配置' })).queryByRole('textbox')).toBeNull()
+  })
+
   it('saves independent review settings and rejects an invalid attempt budget', async () => {
     const mutate = vi.fn(async () => {})
     const snapshot = { status: 'ready' as const, value: {}, base: {}, user: {}, revision: 0, writable: true, mode: 'host' as const }

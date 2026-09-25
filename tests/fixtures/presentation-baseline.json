@@ -126,5 +126,15 @@
       "keys": 995,
       "sha256": "5127ac969debbb3c5285290563bb999416e2a449d21785028c8d44d6beeffff3"
     }
+  },
+  "openVikingUserDiscovery": {
+    "zh": {
+      "keys": 996,
+      "sha256": "2959dd74145e0f113d97252f76755a893c4d1c9a936ae21fcb6cae9dcb031e40"
+    },
+    "en": {
+      "keys": 996,
+      "sha256": "45763281da41bc88b8929c5f98ff444922e111baadbdefa7d3fc38df5cf6d3f0"
+    }
   }
 }
