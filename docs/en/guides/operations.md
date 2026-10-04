@@ -132,10 +132,14 @@ On the configured branch and remote directory (defaults `mnemon-sync` and `mnemo
 - The mirror under `state/sync/git` is disposable and never a pack component, so it cannot sync itself; deleting it costs one fetch.
 - Both directions require `writeEnabled`; a read-only deployment refuses push and pull with the same message Import ZIP uses.
 
+**Sign in with GitHub** replaces the token field for most setups. Under **Storage → Git sync**, the sign-in button runs GitHub's OAuth device flow: the page shows a one-time code, opens `https://github.com/login/device`, and asks GitHub whether the browser step finished, at the interval GitHub asked for. The Host stores the answer in DSH's credentials store under the key `dsh-mnemon/github`; the access token never reaches the browser and never appears in a response. The requested scope is `repo`, so the grant reaches private repositories.
+
+Once signed in, **Your repositories** lists the repositories the account may push to — private ones are marked, and one without push permission cannot be chosen — and selecting one saves its clone URL as the sync repository. **Create repository** makes a new repository under the account (private by default, with an initial commit) and selects it, so the first push has a branch to publish to. Signing out deletes the stored grant; the manual token field stays available underneath and is the only path on a Host that mounts no credentials provider, which reports the login as unavailable instead of failing.
+
 Credentials stay out of the payload, the configuration file and the logs:
 
-- The token is read per operation from the `MNEMON_SYNC_GIT_TOKEN` environment variable or from `state/sync-git.json` (mode `0600`), and is never written into the payload or printed in an error message.
-- Status and configuration responses describe the token (`hasToken`), never its value.
+- The token is resolved per operation, in this order: the `MNEMON_SYNC_GIT_TOKEN` environment variable, the token in `state/sync-git.json` (mode `0600`), then the grant GitHub sign-in wrote into DSH's credentials store. It is never written into the payload or printed in an error message.
+- Status and configuration responses describe the credential (`hasToken`, `credentialSource`, `credentialLogin`), never its value.
 - An unreachable remote, or a push without credentials, still commits locally and reports that the push was skipped; nothing is lost. Run push again once credentials are available.
 
 ### Recovery rehearsal

@@ -132,7 +132,7 @@ Starter 固定一组经过测试、各自独立版本的包。同一时间只运
 
 - 运行时记忆与项目档案是本地文件，Mnemon Native 也在本地；第三方 Provider 使用各自的服务与作用域。
 - 关闭组件不会删除其中的记忆，更换存储位置也不会搬移数据；需要迁移时使用 ZIP 备份。
-- Git 同步把同一份 Mnemon Pack 载荷以可读文件发布到你自己的仓库，另一台机器可以拉取。push 与 pull 都会先要求确认；`writeEnabled=false` 时两个方向都会被拒绝。
+- Git 同步把同一份 Mnemon Pack 载荷以可读文件发布到你自己的仓库，另一台机器可以拉取。用 GitHub 登录后可从已有仓库中选择或新建一个；token 字段保留为选填。push 与 pull 都会先要求确认；`writeEnabled=false` 时两个方向都会被拒绝。
 - 已保存的 Provider 凭据只留在宿主上，不会被导出；但备份仍包含私有记忆，请妥善保护。
 - Source 与 Strategy 是受信任的进程内 JavaScript，**不是沙箱代码**；历史记忆永远不会凌驾于当前指令之上。
 

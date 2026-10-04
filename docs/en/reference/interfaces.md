@@ -206,13 +206,22 @@ Backups contain private memory, so callers must treat the authenticated DSH brow
 
 | Endpoint | Behavior |
 |---|---|
-| `status` | Mirror path, configured repository, branch, remote directory, `hasToken`, remote reachability and the last commit; read-only |
-| `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` |
+| `status` | Mirror path, configured repository, branch, remote directory, `hasToken`, `credentialSource`, `credentialLogin`, remote reachability and the last commit; read-only |
+| `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` and `credentialSource` |
 | `push` | Export the full Mnemon Pack payload into the mirror, commit it and push the branch; requires `confirmed: true` |
 | `preview` | Read the remote manifest and its SHA-256 inventory and report which components differ from local; read-only |
 | `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts an optional one-off `components` parameter |
+| `github-status` | Whether this Host mounts a credentials store, whether an account is signed in, whether that store is writable, the account login and scopes, and the pending device-flow code; read-only |
+| `github-start` | Ask GitHub for a device code and return the code, the verification URL and the poll interval; requires `writeEnabled: true` |
+| `github-poll` | Ask once whether the browser step finished, at the cadence GitHub asked for; on success it stores the grant; requires `writeEnabled: true` |
+| `github-cancel` | Forget a pending device flow without touching the stored grant; requires `writeEnabled: true` |
+| `github-signout` | Forget the stored grant; requires `writeEnabled: true` |
+| `github-repositories` | List the repositories the signed-in account may push to, most recently updated first; read-only |
+| `github-create` | Create one public or private repository under the signed-in account and read it back; requires `writeEnabled: true` |
 
-The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional `pull` parameter. `configure`, `push` and `pull` require `writeEnabled: true` and otherwise answer the same read-only refusal pack import uses. Tokens never appear in a response or an error message: `state/sync-git.json` (mode `0600`) and `MNEMON_SYNC_GIT_TOKEN` are read per network operation, and the environment variable wins when both are set.
+The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional `pull` parameter. `configure`, `push`, `pull` and every `github-` endpoint that changes something require `writeEnabled: true` and otherwise answer the same read-only refusal pack import uses.
+
+Tokens never appear in a response or an error message. The channel resolves one credential per network operation, in this order: `MNEMON_SYNC_GIT_TOKEN`, the token stored in `state/sync-git.json` (mode `0600`), then the grant GitHub sign-in wrote into DSH's credentials store under the key `dsh-mnemon/github`. `credentialSource` names the winner — `environment`, `token`, `github` or `none` — and `hasToken` is `true` for the first three, so a signed-in account needs no token field at all. GitHub calls use the ambient `fetch`, the same seam the version check uses, so a launcher's proxy policy applies to them; a failure reports GitHub's error code and the HTTP status only, never a response body.
 
 Configuration, credentials and the failure semantics are described under [Backup and recovery](../guides/operations.md#git-repository-sync).
 

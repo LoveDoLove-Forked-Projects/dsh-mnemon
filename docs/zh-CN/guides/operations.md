@@ -132,10 +132,14 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
 - `state/sync/git` 下的镜像是可丢弃的，且不属于任何数据组件，因此镜像不会同步自己；删除它只多一次 fetch。
 - 双向操作都要求 `writeEnabled`；只读部署会以与“导入 ZIP”相同的提示拒绝 push 与 pull。
 
+**使用 GitHub 登录**在多数场景下取代了手填 token。在**存储 → Git 同步**中点击登录按钮即走 GitHub 的 OAuth 设备码流程：页面显示一次性设备码，打开 `https://github.com/login/device`，并按 GitHub 要求的间隔询问浏览器步骤是否完成。Host 把结果保存到 DSH 凭据存储的 `dsh-mnemon/github` 键下；访问令牌不会到达浏览器，也不会出现在任何响应中。申请的 scope 是 `repo`，因此可以访问私有仓库。
+
+登录后，**你的仓库**会列出该账号可推送的仓库——私有仓库会标注，没有推送权限的无法选择——选中即把其 clone 地址保存为同步仓库。**新建仓库**会在该账号下新建仓库（默认私有，带一个初始提交）并选中它，让第一次 push 就有分支可发布。退出登录会删除已保存的凭据；手填 token 仍保留在下方，是未挂载凭据 provider 的 Host 上唯一的路径——那种 Host 会把登录报告为不可用，而不是失败。
+
 凭据不进入载荷、配置文件与日志：
 
-- token 每次操作时从环境变量 `MNEMON_SYNC_GIT_TOKEN` 或 `state/sync-git.json`（权限 `0600`）读取，不会写入载荷，也不会出现在错误信息里。
-- 状态与配置响应只描述 token（`hasToken`），不回传其值。
+- token 每次操作时按以下顺序解析：环境变量 `MNEMON_SYNC_GIT_TOKEN`、`state/sync-git.json`（权限 `0600`）中的 token，最后是 GitHub 登录写入 DSH 凭据存储的凭据。它不会写入载荷，也不会出现在错误信息里。
+- 状态与配置响应只描述凭据（`hasToken`、`credentialSource`、`credentialLogin`），不回传其值。
 - 远端不可达或没有凭据时仍会本地提交，并报告推送被跳过，不会丢失数据；拿到凭据后再执行一次 push 即可。
 
 ### 恢复演练

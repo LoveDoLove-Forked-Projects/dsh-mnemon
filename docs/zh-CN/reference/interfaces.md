@@ -206,13 +206,22 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 
 | Endpoint | 行为 |
 |---|---|
-| `status` | 镜像路径、已配置的仓库、分支、远端目录、`hasToken`、远端可达性与最后一次提交；只读 |
-| `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` |
+| `status` | 镜像路径、已配置的仓库、分支、远端目录、`hasToken`、`credentialSource`、`credentialLogin`、远端可达性与最后一次提交；只读 |
+| `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` 与 `credentialSource` |
 | `push` | 把完整的 Mnemon Pack 载荷导出到镜像，提交并推送分支；需要 `confirmed: true` |
 | `preview` | 读取远端 manifest 与 SHA-256 清单，报告哪些组件与本地不同；只读 |
 | `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` |
+| `github-status` | 当前 Host 是否挂载了凭据存储、是否已登录账号、该存储是否可写、账号名与 scope，以及待完成的设备码；只读 |
+| `github-start` | 向 GitHub 申请设备码，返回设备码、验证地址与轮询间隔；需要 `writeEnabled: true` |
+| `github-poll` | 按 GitHub 要求的节奏询问一次浏览器步骤是否完成，成功时保存凭据；需要 `writeEnabled: true` |
+| `github-cancel` | 放弃待完成的设备码流程，不动已保存的凭据；需要 `writeEnabled: true` |
+| `github-signout` | 删除已保存的凭据；需要 `writeEnabled: true` |
+| `github-repositories` | 列出已登录账号可推送的仓库，最近更新的在前；只读 |
+| `github-create` | 在已登录账号下新建公开或私有仓库并回读；需要 `writeEnabled: true` |
 
-同步载荷始终是完整的 Mnemon Pack：Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择，组件筛选只作为 `pull` 的一次性参数存在。`configure`、`push` 与 `pull` 都要求 `writeEnabled: true`，否则返回与 pack 导入相同的只读拒绝。token 不会出现在任何响应或错误信息中：`state/sync-git.json`（权限 `0600`）与环境变量 `MNEMON_SYNC_GIT_TOKEN` 在每次网络操作时读取，两者都存在时以环境变量为准。
+同步载荷始终是完整的 Mnemon Pack：Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择，组件筛选只作为 `pull` 的一次性参数存在。`configure`、`push`、`pull` 以及每个会改动状态的 `github-` endpoint 都要求 `writeEnabled: true`，否则返回与 pack 导入相同的只读拒绝。
+
+token 不会出现在任何响应或错误信息中。通道在每次网络操作时解析一个凭据，顺序为：环境变量 `MNEMON_SYNC_GIT_TOKEN`、`state/sync-git.json`（权限 `0600`）中保存的 token，最后是 GitHub 登录写入 DSH 凭据存储（键 `dsh-mnemon/github`）的凭据。`credentialSource` 指出生效的那一个——`environment`、`token`、`github` 或 `none`——前三者都让 `hasToken` 为 `true`，因此已登录的账号完全不需要填 token。GitHub 请求走环境自带的 `fetch`（与版本检查相同的接缝），启动器配置的代理策略对它同样生效；失败只报告 GitHub 的错误码与 HTTP 状态，绝不回显响应体。
 
 配置、凭据与失败语义见[备份与恢复](../guides/operations.md#git-仓库同步)。
 
