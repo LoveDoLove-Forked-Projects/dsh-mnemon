@@ -9,8 +9,9 @@ import type { MemoryCapability, MemoryJsonValue, MemoryOperationScope, MemorySou
 import type { CreateMemoryBodyRequest as CreateMemorySpaceRequest, Insight, MemoryBodyCatalog as MemorySpaceCatalog, PreparedMemoryPlacement, RememberRequest } from 'dsh-mnemon-source-memory-spaces/contracts'
 import type { RuntimeMemoryMutation } from 'dsh-mnemon-source-runtime/contracts'
 import type { DocumentMutation } from 'dsh-mnemon-source-documents/contracts'
-import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus } from './protocol.ts'
-export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
+import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus, type MnemonPackComponent } from './protocol.ts'
+import { MNEMON_PACK_COMPONENTS } from './protocol.ts'
+export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('payload must be an object')
@@ -55,6 +56,16 @@ function requireLayerOn(runtime: ScopedRuntime, sourceTypeId: string | undefined
 }
 function sourceTypeOf(generation: { sourceInstances(): ReadonlyArray<{ sourceInstanceKey: string; sourceTypeId: string }> } | undefined, sourceInstanceKey: string): string | undefined {
   return generation?.sourceInstances().find(source => source.sourceInstanceKey === sourceInstanceKey)?.sourceTypeId
+}
+/** A one-off pull filter; an absent value means every component. */
+function requestedComponents(value: unknown): MnemonPackComponent[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value) || value.length === 0) throw new Error('components must be a non-empty array')
+  const components = value.map(String) as MnemonPackComponent[]
+  if (new Set(components).size !== components.length || components.some(component => !MNEMON_PACK_COMPONENTS.includes(component))) {
+    throw new Error('components must be runtime, documents, or memory-spaces')
+  }
+  return components
 }
 function success(value: unknown): RpcResult<unknown> { return { ok: true, value } }
 function failure(error: unknown): RpcResult<unknown> {
@@ -402,20 +413,53 @@ export function createPackHandler(input: LiveMnemonRuntime): HostRpcHandler {
   }
 }
 
+/** Git sync reads and writes the same storage root, under the same gates as Pack. */
+export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
+  return async (endpoint, rawPayload, signal) => {
+    try {
+      const payload = object(rawPayload)
+      const runtime = scoped(input, payload)
+      const sync = runtime.graph.sync
+      if (endpoint === 'status') return success(await sync.status(signal))
+      if (endpoint === 'configure') {
+        requireWritable(runtime)
+        return success(sync.configure(payload))
+      }
+      if (endpoint === 'push') {
+        requireWritable(runtime)
+        if (payload.confirmed !== true) throw new Error('Publishing the sync branch requires confirmation')
+        return success(await sync.push({ ...(payload.message === undefined ? {} : { message: payload.message }), ...(signal === undefined ? {} : { signal }) }))
+      }
+      if (endpoint === 'preview') return success(await sync.preview(signal))
+      if (endpoint === 'pull') {
+        requireWritable(runtime)
+        if (payload.confirmed !== true) throw new Error('Importing the remote Mnemon payload requires confirmation')
+        const components = requestedComponents(payload.components)
+        const result = await sync.pull({ mode: 'merge', ...(components === undefined ? {} : { components }), ...(signal === undefined ? {} : { signal }) })
+        if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
+        return success(result)
+      }
+      return badRequest('unknown sync endpoint: ' + endpoint)
+    } catch (error) { return failure(error) }
+  }
+}
 export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager): {
   read: HostRpcHandler
   activation: HostRpcHandler
   write: HostRpcHandler
   pack: HostRpcHandler
+  sync: HostRpcHandler
 } {
   const versionManager = versions ?? new VersionUpdateManager({ mnemonCliPath: () => input.config.cliPath })
   const readHandler = createReadHandler(input, lifecycle, versionManager)
   const activationHandler = createActivationHandler(input)
   const writeHandler = createWriteHandler(input, lifecycle, versionManager)
   const packHandler = createPackHandler(input)
+  const syncHandler = createSyncHandler(input)
   connection.rpc.handle(MNEMON_READ_CHANNEL, readHandler)
   connection.rpc.handle(MNEMON_ACTIVATION_CHANNEL, activationHandler)
   connection.rpc.handle(MNEMON_WRITE_CHANNEL, writeHandler)
   connection.rpc.handle(MNEMON_PACK_CHANNEL, packHandler)
-  return { read: readHandler, activation: activationHandler, write: writeHandler, pack: packHandler }
+  connection.rpc.handle(MNEMON_SYNC_CHANNEL, syncHandler)
+  return { read: readHandler, activation: activationHandler, write: writeHandler, pack: packHandler, sync: syncHandler }
 }

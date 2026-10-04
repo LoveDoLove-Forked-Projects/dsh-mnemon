@@ -32,6 +32,13 @@ export const MNEMON_READ_CHANNEL = '/dsh-mnemon-read'
 export const MNEMON_ACTIVATION_CHANNEL = '/dsh-mnemon-activation'
 export const MNEMON_WRITE_CHANNEL = '/dsh-mnemon-write'
 export const MNEMON_PACK_CHANNEL = '/dsh-mnemon-pack'
+export const MNEMON_SYNC_CHANNEL = '/dsh-mnemon-sync'
+/**
+ * The credential environment variable the sync channel reads before its stored
+ * token. The name travels to the browser so the settings form can tell the user
+ * which variable wins; the value never does.
+ */
+export const MNEMON_SYNC_TOKEN_ENV = 'MNEMON_SYNC_GIT_TOKEN'
 export const MNEMON_SETTINGS_CHANNEL = '/dsh-mnemon-settings'
 /** DSH API Gateway endpoints used by paired remote Web clients. */
 export const MNEMON_REMOTE_CHANNEL = '/api'
@@ -40,6 +47,7 @@ export const MNEMON_REMOTE_READ_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/read`
 export const MNEMON_REMOTE_ACTIVATION_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/activation`
 export const MNEMON_REMOTE_WRITE_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/write`
 export const MNEMON_REMOTE_PACK_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/pack`
+export const MNEMON_REMOTE_SYNC_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/sync`
 export const MNEMON_REMOTE_SETTINGS_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/settings`
 export const MNEMON_REMOTE_VIEW_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/view`
 export const MNEMON_REMOTE_VIEW_WRITE_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/viewWrite`
@@ -589,6 +597,114 @@ export interface MnemonPackPreview {
 export interface MnemonPackImportResult {
   imported: true
   mode: MnemonPackImportMode
+  targetRoot: string
+  components: MnemonPackComponent[]
+  summary: MnemonPackComponentSummary[]
+}
+
+/**
+ * Git repository sync: the Mnemon Pack payload published as readable files on one
+ * branch, so a second machine can pull it back. Push and pull are confirmed
+ * actions, and the token is read per operation and never leaves the Host.
+ */
+export interface MnemonSyncConfigView {
+  repoUrl?: string
+  branch: string
+  subdir: string
+  /** Whether a token is available; its value is never part of an answer. */
+  hasToken: boolean
+  authorName: string
+  authorEmail: string
+}
+
+export interface MnemonSyncGitStatus {
+  available: boolean
+  required: string
+  version?: string
+  /** Why Git cannot serve the channel, when it cannot. */
+  issue?: string
+}
+
+export interface MnemonSyncRemoteStatus {
+  reachable: boolean
+  branchExists: boolean
+  commit?: string
+  error?: string
+}
+
+export interface MnemonSyncCommit {
+  id: string
+  message: string
+  committedAt: string
+}
+
+export interface MnemonSyncStatus {
+  configured: boolean
+  config: MnemonSyncConfigView
+  configPath: string
+  /** The disposable Git work tree the channel commits in. */
+  mirrorPath: string
+  git: MnemonSyncGitStatus
+  remote: MnemonSyncRemoteStatus
+  lastCommit?: MnemonSyncCommit
+}
+
+export interface MnemonSyncPushResult {
+  repoUrl: string
+  branch: string
+  subdir: string
+  /** The commit holding this payload in the mirror. */
+  commit: string
+  /** Whether this run recorded a new commit; a repeat of the same payload does not. */
+  committed: boolean
+  message: string
+  files: number
+  bytes: number
+  summary: MnemonPackComponentSummary[]
+  pushed: boolean
+  /** Why the branch was not published, when it was not. */
+  reason?: string
+}
+
+export interface MnemonSyncComponentDelta extends MnemonPackComponentSummary {
+  /** Whether the remote payload differs from this machine's for the component. */
+  changed: boolean
+}
+
+export interface MnemonSyncFileDelta {
+  total: number
+  changed: number
+  added: number
+  removed: number
+}
+
+export interface MnemonSyncPreview {
+  repoUrl: string
+  branch: string
+  subdir: string
+  commit: string
+  pushedAt?: string
+  manifest: MnemonPackManifest
+  archiveBytes: number
+  expandedBytes: number
+  targetRoot: string
+  targetScope: StorageScopeKind
+  occupied: Record<MnemonPackComponent, boolean>
+  components: MnemonSyncComponentDelta[]
+  files: MnemonSyncFileDelta
+  /** When this machine's payload was collected for the comparison. */
+  localExportAt: string
+}
+
+export interface MnemonSyncPullResult {
+  imported: true
+  mode: MnemonPackImportMode
+  repoUrl: string
+  branch: string
+  subdir: string
+  commit: string
+  pushedAt?: string
+  manifest: MnemonPackManifest
   targetRoot: string
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
