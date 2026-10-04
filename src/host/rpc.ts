@@ -2,6 +2,7 @@ import { isDefaultSourceInstance, isWorkspaceStorageScope } from './protocol.ts'
 import type { HostConnectionHandle, HostRpcHandler, RpcResult } from './dsh.ts'
 import type { MnemonLifecycle } from './lifecycle.ts'
 import type { LiveMnemonRuntime } from './runtime.ts'
+import type { MnemonGitHubAuth } from './github-auth.ts'
 import { assertParticipation } from './access.ts'
 import { sourceFailure } from './source-session.ts'
 import { isVersionComponentId, VersionUpdateManager } from './version-updates.ts'
@@ -420,6 +421,13 @@ export function createPackHandler(input: LiveMnemonRuntime): HostRpcHandler {
   }
 }
 
+/** The one sign-in every generation of this runtime shares. */
+function githubAuth(input: LiveMnemonRuntime): MnemonGitHubAuth {
+  const auth = input.sync.github()
+  if (auth === undefined) throw new Error('GitHub sign-in is unavailable in this DSH Host')
+  return auth
+}
+
 /** Git sync reads and writes the same storage root, under the same gates as Pack. */
 export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
   return async (endpoint, rawPayload, signal) => {
@@ -430,7 +438,7 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
       if (endpoint === 'status') return success(await sync.status(signal))
       if (endpoint === 'configure') {
         requireWritable(runtime)
-        return success(sync.configure(withoutScope(payload)))
+        return success(await sync.configure(withoutScope(payload)))
       }
       if (endpoint === 'push') {
         requireWritable(runtime)
@@ -438,6 +446,30 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
         return success(await sync.push({ ...(payload.message === undefined ? {} : { message: payload.message }), ...(signal === undefined ? {} : { signal }) }))
       }
       if (endpoint === 'preview') return success(await sync.preview(signal))
+      // GitHub sign-in is a property of the Host, not of one workspace graph,
+      // so these endpoints never touch the mirror or the remote branch.
+      if (endpoint === 'github-status') return success(await githubAuth(input).status())
+      if (endpoint === 'github-start') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).start(signal))
+      }
+      if (endpoint === 'github-poll') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).poll(signal))
+      }
+      if (endpoint === 'github-cancel') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).cancel())
+      }
+      if (endpoint === 'github-signout') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).signOut())
+      }
+      if (endpoint === 'github-repositories') return success(await githubAuth(input).repositories(signal))
+      if (endpoint === 'github-create') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).create(payload.name, payload.private, signal))
+      }
       if (endpoint === 'pull') {
         requireWritable(runtime)
         if (payload.confirmed !== true) throw new Error('Importing the remote Mnemon payload requires confirmation')
