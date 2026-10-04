@@ -94,7 +94,11 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // System page and how an update ended, from the Profile's record (#325), bring it to 1,520,447 bytes.
 // The Entities page's two lists, loading placeholders and copy, bundled from the Memory
 // Spaces presentation, bring it to 1,524,506 bytes.
-const maximumUnpackedBytes = 1_525_500
+// Git repository sync's payload declarations, its own RPC channel and the storage
+// page's section in both languages bring the measured package to 1,592,708 bytes
+// (+67,477 over the 1,525,231 measured on main). Keep less than 1 KB of headroom;
+// no credential, payload or Git implementation enters the artifact.
+const maximumUnpackedBytes = 1_593_500
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)
