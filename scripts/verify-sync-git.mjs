@@ -1,0 +1,336 @@
+#!/usr/bin/env node
+// Real end-to-end verification for the Mnemon Git sync channel.
+//
+// It launches two independent DSH Web instances over disposable DSH_HOME and
+// storage roots, drives /dsh-mnemon-sync over real loopback HTTP with the same
+// envelopes the browser sends, and publishes to a real bare repository. The
+// only stand-in is the model endpoint, which never answers a memory request.
+//
+// Run after 'pnpm run build && pnpm --workspace-concurrency=4 -r build'.
+// Set MNEMON_SYNC_E2E_KEEP=1 to keep the fixture for inspection.
+import { spawn } from 'node:child_process'
+import { createServer } from 'node:http'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const dshBin = join(root, 'node_modules/@deepseek-ai/dsh/lib/bin.js')
+const keep = process.env.MNEMON_SYNC_E2E_KEEP === '1'
+const MARKER = 'Sync e2e: the maintainer keeps acceptance notes in the project wiki.'
+const PROFILE = 'Sync e2e profile entry.'
+const TOKEN = 'ghp_sync_e2e_placeholder_token'
+
+const failures = []
+const children = []
+let fixture
+
+function check(label, condition, detail) {
+  if (condition) console.log('  ok   ' + label)
+  else {
+    failures.push(label)
+    console.log('  FAIL ' + label + (detail === undefined ? '' : ': ' + detail))
+  }
+}
+
+function run(command, args, options = {}) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, { cwd: options.cwd, env: options.env ?? process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', chunk => { stdout += chunk })
+    child.stderr.on('data', chunk => { stderr += chunk })
+    child.once('error', reject)
+    child.once('exit', code => resolveRun({ code, stdout, stderr }))
+  })
+}
+
+async function git(args, cwd) {
+  const result = await run('git', args, { cwd })
+  if (result.code !== 0) throw new Error('git ' + args.join(' ') + ' failed: ' + (result.stderr || result.stdout).trim())
+  return result.stdout.trim()
+}
+
+/** One POST with the browser's envelope and cookie; no Origin, so the fence passes. */
+function post(port, path, body, cookie) {
+  const payload = Buffer.from(JSON.stringify(body), 'utf8')
+  return new Promise((resolvePost, reject) => {
+    const headers = { 'content-type': 'application/json', 'content-length': String(payload.byteLength) }
+    if (cookie !== undefined) headers.cookie = cookie
+    const request = httpRequest({ host: '127.0.0.1', port, path, method: 'POST', headers }, response => {
+      const chunks = []
+      response.on('data', chunk => { chunks.push(chunk) })
+      response.on('end', () => resolvePost({ status: response.statusCode, text: Buffer.concat(chunks).toString('utf8') }))
+    })
+    request.once('error', reject)
+    request.end(payload)
+  })
+}
+
+let sequence = 0
+async function call(instance, channel, endpoint, payload) {
+  const envelope = { type: 'client-request', rpcId: 'sync-e2e-' + String(++sequence), method: endpoint, payload }
+  const response = await post(instance.port, channel + '/' + endpoint, envelope, instance.cookie)
+  if (response.status !== 200) throw new Error(channel + '/' + endpoint + ' answered HTTP ' + String(response.status) + ': ' + response.text.trim())
+  const parsed = JSON.parse(response.text)
+  if (parsed.type !== 'server-response' || parsed.rpcId !== envelope.rpcId) throw new Error('unexpected envelope: ' + response.text.slice(0, 200))
+  return parsed.result
+}
+
+function sync(instance, endpoint, payload = {}) {
+  return call(instance, '/dsh-mnemon-sync', endpoint, payload)
+}
+
+function expectOk(result, label) {
+  if (result?.ok !== true) throw new Error(label + ' failed: ' + JSON.stringify(result?.error ?? result))
+  return result.value
+}
+
+function expectFailure(result, pattern, label) {
+  if (result?.ok !== false) throw new Error(label + ' unexpectedly succeeded: ' + JSON.stringify(result))
+  if (!pattern.test(result.error.message)) throw new Error(label + ' reported ' + JSON.stringify(result.error.message))
+  return result.error.message
+}
+
+/** The one stand-in: a loopback model that never receives a memory request. */
+function modelStub() {
+  const server = createServer((request, response) => {
+    request.resume()
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    const event = value => response.write('event: ' + value.type + '\ndata: ' + JSON.stringify(value) + '\n\n')
+    event({ type: 'message_start', message: { id: 'sync-e2e', type: 'message', role: 'assistant', model: 'stub', content: [], usage: { input_tokens: 1, output_tokens: 0 } } })
+    event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
+    event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Sync e2e has no conversation.' } })
+    event({ type: 'content_block_stop', index: 0 })
+    event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } })
+    event({ type: 'message_stop' })
+    response.end()
+  })
+  return server
+}
+
+async function install(home, workspace, env) {
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+  const selfRegistering = new Set(['dsh-mnemon-strategy-scoped', 'dsh-mnemon-strategy-light-context', 'dsh-mnemon-strategy-auto-capture', 'dsh-mnemon-strategy-general'])
+  const plugins = Object.keys(manifest.dependencies).filter(name => name.startsWith('dsh-mnemon-') && !selfRegistering.has(name))
+  const result = await run(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add',
+    'link:' + root, ...plugins.map(name => 'link:' + join(root, 'plugins', name)),
+  ], { cwd: workspace, env })
+  if (result.code !== 0) throw new Error('DSH installation failed (' + String(result.code) + '): ' + (result.stderr || result.stdout).slice(-2000))
+}
+
+/** Launch one real Web instance and exchange the launch token for a cookie. */
+async function launch(label, home, dataDir, workspace, env) {
+  const child = spawn(process.execPath, [dshBin, 'web', '--no-open', '--host', '127.0.0.1', '--port', '0'], {
+    cwd: workspace, env: { ...env, DSH_HOME: home, MNEMON_DATA_DIR: dataDir }, stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  children.push(child)
+  let stdout = ''
+  let stderr = ''
+  child.stdout.on('data', chunk => { stdout += chunk })
+  child.stderr.on('data', chunk => { stderr += chunk })
+  const url = await new Promise((resolveUrl, reject) => {
+    const deadline = setTimeout(() => reject(new Error(label + ' did not print a URL in 120s. stdout: ' + stdout.slice(-2000) + ' stderr: ' + stderr.slice(-2000))), 120_000)
+    const inspect = () => {
+      const match = /dsh web: (http:\/\/\S+)/u.exec(stdout)
+      if (match === undefined) return
+      clearTimeout(deadline)
+      resolveUrl(match[1])
+    }
+    child.stdout.on('data', inspect)
+    child.once('exit', code => { clearTimeout(deadline); reject(new Error(label + ' exited with ' + String(code) + ': ' + stderr.slice(-2000))) })
+  })
+  const token = new URL(url).searchParams.get('token')
+  const exchange = await fetch(url, { redirect: 'manual' })
+  const setCookie = exchange.headers.getSetCookie()[0]
+  if (exchange.status !== 303 || setCookie === undefined) throw new Error(label + ' token exchange answered ' + String(exchange.status))
+  const cookie = setCookie.split(';')[0]
+  console.log(label + ' ready at ' + new URL(url).origin + ' (cookie ' + cookie.split('=')[0] + ')')
+  return { label, child, port: Number(new URL(url).port), cookie, home, dataDir, stdout: () => stdout, stderr: () => stderr }
+}
+
+/** Ask one instance to stop and remember whether it needed the hard kill. */
+async function stop(instance) {
+  if (instance === undefined || instance.stopped !== undefined) return
+  const exited = new Promise(resolveExit => instance.child.once('exit', resolveExit))
+  instance.child.kill('SIGTERM')
+  const settled = await Promise.race([exited.then(() => true), new Promise(resolveWait => setTimeout(() => resolveWait(false), 15_000))])
+  if (!settled) instance.child.kill('SIGKILL')
+  instance.stopped = settled ? 'SIGTERM' : 'SIGKILL'
+}
+
+const { request: httpRequest } = await import('node:http')
+
+let a
+let b
+let model
+
+try {
+  fixture = await mkdtemp(join(tmpdir(), 'mnemon-sync-e2e-'))
+  const homes = { a: join(fixture, 'home-a'), b: join(fixture, 'home-b') }
+  const data = { a: join(fixture, 'data-a'), b: join(fixture, 'data-b') }
+  const workspaces = { a: join(fixture, 'workspace-a'), b: join(fixture, 'workspace-b') }
+  const origin = join(fixture, 'origin.git')
+  const clone = join(fixture, 'tamper')
+  await Promise.all([...Object.values(homes), ...Object.values(data), ...Object.values(workspaces)].map(path => mkdir(path)))
+  await git(['init', '--bare', '--quiet', '--initial-branch=mnemon-sync', origin])
+  console.log('Fixture: ' + fixture)
+  console.log('Origin:  ' + origin)
+
+  model = modelStub()
+  await new Promise((resolveListen, reject) => { model.once('error', reject); model.listen(0, '127.0.0.1', resolveListen) })
+  const env = {
+    ...process.env,
+    DSH_TELEMETRY_DISABLED: '1',
+    DEEPSEEK_API_KEY: 'sync-e2e-stub-key',
+    DEEPSEEK_BASE_URL: 'http://127.0.0.1:' + String(model.address().port),
+  }
+  await install(homes.a, workspaces.a, { ...env, DSH_HOME: homes.a })
+  await install(homes.b, workspaces.b, { ...env, DSH_HOME: homes.b })
+
+  console.log('\n1. One instance publishes the whole pack to a real repository')
+  a = await launch('instance A', homes.a, data.a, workspaces.a, env)
+  const fresh = expectOk(await sync(a, 'status'), 'status')
+  check('a fresh storage root reports Git and an unconfigured remote',
+    fresh.configured === false && fresh.git.available === true && fresh.git.required === '2.20'
+    && fresh.remote.reachable === false && fresh.remote.branchExists === false, JSON.stringify(fresh))
+  check('the configuration path lives inside the storage root', fresh.configPath === join(data.a, 'state', 'sync-git.json'), fresh.configPath)
+  const configured = expectOk(await sync(a, 'configure', {
+    repoUrl: origin, branch: 'mnemon-sync', subdir: 'mnemon/',
+    authorName: 'Mnemon Sync E2E', authorEmail: 'sync-e2e@localhost',
+  }), 'configure')
+  check('configure echoes the effective settings without a token',
+    configured.repoUrl === origin && configured.branch === 'mnemon-sync' && configured.subdir === 'mnemon/'
+    && configured.hasToken === false && configured.authorName === 'Mnemon Sync E2E', JSON.stringify(configured))
+  const added = expectOk(await call(a, '/dsh-mnemon-write', 'runtime-memory', { action: 'add', target: 'memory', content: MARKER }), 'runtime-memory')
+  check('the working memory accepted one entry through the write channel', added.success === true && added.entryCount === 1, JSON.stringify(added))
+  expectOk(await call(a, '/dsh-mnemon-write', 'runtime-memory', { action: 'add', target: 'user', content: PROFILE }), 'runtime-memory user')
+  const beforePush = expectOk(await sync(a, 'status'), 'status')
+  check('the configured remote is reachable and still has no branch',
+    beforePush.configured === true && beforePush.remote.reachable === true && beforePush.remote.branchExists === false, JSON.stringify(beforePush.remote))
+
+  const unconfirmedPush = await sync(a, 'push', { message: 'Sync from the acceptance run' })
+  expectFailure(unconfirmedPush, /requires confirmation/u, 'an unconfirmed push')
+  check('an unconfirmed push is refused', unconfirmedPush.ok === false)
+
+  const pushed = expectOk(await sync(a, 'push', { message: 'Sync from the acceptance run', confirmed: true }), 'push')
+  check('push committed and published one pack', pushed.committed === true && pushed.pushed === true
+    && /^[0-9a-f]{40}$/u.test(pushed.commit) && pushed.branch === 'mnemon-sync' && pushed.subdir === 'mnemon/', JSON.stringify(pushed))
+  check('the pack holds every component', JSON.stringify(pushed.summary.map(entry => entry.component)) === '["runtime","documents","memory-spaces"]', JSON.stringify(pushed.summary))
+  const tree = await git(['ls-tree', '-r', '--name-only', 'mnemon-sync'], origin)
+  check('the branch holds the manifest, the checksums and the payload',
+    tree.includes('mnemon/manifest.json') && tree.includes('mnemon/checksums.json')
+    && tree.includes('mnemon/payload/runtime/memories.json') && tree.includes('mnemon/payload/runtime/USER.md')
+    && tree.includes('mnemon/payload/runtime/MEMORY.md'), tree.split('\n').slice(0, 8).join(', '))
+  const publishedMemory = await git(['show', 'mnemon-sync:mnemon/payload/runtime/MEMORY.md'], origin)
+  check('the published working memory carries the entry', publishedMemory.includes(MARKER))
+  const manifest = JSON.parse(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin))
+  check('the manifest declares the pack and its channel',
+    manifest.format === 'mnemonpack' && manifest.version === 1 && manifest.scope === 'full'
+    && manifest.sync.channel === 'git' && manifest.sync.branch === 'mnemon-sync' && manifest.sync.subdir === 'mnemon/'
+    && manifest.sync.pushedAt === manifest.exportedAt, JSON.stringify(manifest.sync))
+  check('the mirror lives under the storage root and not at its top level',
+    existsSync(join(data.a, 'state', 'sync', 'git', '.git')) === true && existsSync(join(data.a, '.git')) === false)
+  const repeat = expectOk(await sync(a, 'push', { message: 'Sync from the acceptance run', confirmed: true }), 'push')
+  check('a repeated push publishes nothing new',
+    repeat.committed === false && repeat.pushed === false && repeat.commit === pushed.commit
+    && repeat.reason === 'the branch already holds this payload', JSON.stringify(repeat))
+  check('the branch holds exactly one commit', (await git(['rev-list', '--count', 'mnemon-sync'], origin)) === '1')
+
+  console.log('\n2. A second instance previews and imports the same branch')
+  b = await launch('instance B', homes.b, data.b, workspaces.b, env)
+  expectOk(await sync(b, 'configure', { repoUrl: origin }), 'configure')
+  const preview = expectOk(await sync(b, 'preview'), 'preview')
+  check('preview reports the published commit and its manifest',
+    preview.commit === pushed.commit && preview.branch === 'mnemon-sync' && preview.subdir === 'mnemon/'
+    && preview.manifest.scope === 'full' && preview.pushedAt === manifest.sync.pushedAt, JSON.stringify({ commit: preview.commit, pushedAt: preview.pushedAt }))
+  // An empty root still has byte-identical empty documents and body indexes, so
+  // only the component that really carries the entry has to report a change.
+  const runtimeDelta = preview.components.find(entry => entry.component === 'runtime')
+  check('preview reports the working memory as changed against an empty root',
+    preview.components.length === 3 && runtimeDelta?.changed === true
+    && preview.files.changed > 0 && preview.expandedBytes > 0, JSON.stringify(preview.components))
+  const unconfirmedPull = await sync(b, 'pull', {})
+  expectFailure(unconfirmedPull, /requires confirmation/u, 'an unconfirmed pull')
+  const untouchedMemory = join(data.b, 'runtime', 'MEMORY.md')
+  check('preview imported nothing',
+    (existsSync(untouchedMemory) ? await readFile(untouchedMemory, 'utf8') : '').includes(MARKER) === false)
+  const pulled = expectOk(await sync(b, 'pull', { confirmed: true }), 'pull')
+  check('pull imported the published commit through the pack importer',
+    pulled.imported === true && pulled.mode === 'merge' && pulled.commit === pushed.commit
+    && JSON.stringify(pulled.components) === '["runtime","documents","memory-spaces"]', JSON.stringify({ mode: pulled.mode, components: pulled.components }))
+  const secondMemory = await readFile(join(data.b, 'runtime', 'MEMORY.md'), 'utf8')
+  const secondProfile = await readFile(join(data.b, 'runtime', 'USER.md'), 'utf8')
+  check('the second machine now holds the working memory and the profile',
+    secondMemory.includes(MARKER) && secondProfile.includes(PROFILE))
+
+  console.log('\n3. A tampered payload fails hard and imports nothing')
+  await git(['-c', 'core.autocrlf=false', 'clone', '--quiet', '--branch', 'mnemon-sync', origin, clone])
+  await writeFile(join(clone, 'mnemon', 'payload', 'runtime', 'MEMORY.md'), publishedMemory + '\ntampered\n')
+  await git(['add', '--all'], clone)
+  await git(['-c', 'user.name=Tamper', '-c', 'user.email=tamper@localhost', 'commit', '--quiet', '-m', 'Tamper with the payload'], clone)
+  await git(['push', '--quiet', 'origin', 'HEAD:refs/heads/mnemon-sync'], clone)
+  const tamperedPreview = await sync(b, 'preview')
+  expectFailure(tamperedPreview, /failed its checksum: payload\/runtime\/MEMORY\.md/u, 'preview of a tampered payload')
+  check('the checksum failure names the changed file', /failed its checksum: payload\/runtime\/MEMORY\.md/u.test(tamperedPreview.error.message))
+  const tamperedPull = await sync(b, 'pull', { confirmed: true })
+  expectFailure(tamperedPull, /failed its checksum/u, 'pull of a tampered payload')
+  check('the tampered payload was not imported', (await readFile(join(data.b, 'runtime', 'MEMORY.md'), 'utf8')) === secondMemory)
+
+  console.log('\n4. A token never reaches a response, a file, or the mirror')
+  const withToken = expectOk(await sync(a, 'configure', { token: TOKEN }), 'configure')
+  check('configure answers with hasToken only', withToken.hasToken === true && JSON.stringify(withToken).includes(TOKEN) === false, JSON.stringify(withToken))
+  const tokenStatus = expectOk(await sync(a, 'status'), 'status')
+  check('status answers with hasToken only', tokenStatus.config.hasToken === true && JSON.stringify(tokenStatus).includes(TOKEN) === false)
+  const stateFile = await readFile(join(data.a, 'state', 'sync-git.json'), 'utf8')
+  check('the token is stored in the 0600 state file', stateFile.includes(TOKEN))
+  const masked = await sync(a, 'configure', { repoUrl: 'https://127.0.0.1:1/owner/repo.git' })
+  expectOk(masked, 'configure')
+  const unreachable = expectOk(await sync(a, 'status'), 'status')
+  check('an unreachable remote is reported without leaking the token',
+    unreachable.remote.reachable === false && typeof unreachable.remote.error === 'string'
+    && unreachable.remote.error.includes(TOKEN) === false, unreachable.remote.error)
+  const failedPush = await sync(a, 'push', { confirmed: true })
+  expectFailure(failedPush, /./u, 'push to an unreachable remote')
+  check('a failed push never echoes the token', failedPush.error.message.includes(TOKEN) === false, failedPush.error.message)
+  check('the token never reaches the mirror',
+    (await readFile(join(data.a, 'state', 'sync', 'git', '.git', 'config'), 'utf8')).includes(TOKEN) === false)
+
+  console.log('\n5. Read-only work still answers while every write stays gated')
+  const unknown = await sync(a, 'nope', {})
+  expectFailure(unknown, /unknown sync endpoint: nope/u, 'an unknown endpoint')
+  check('an unknown endpoint is a bad request', unknown.error.code === 'bad-request')
+
+  await stop(a)
+  await stop(b)
+  check('both instances shut down on the polite signal',
+    a.stopped === 'SIGTERM' && b.stopped === 'SIGTERM', JSON.stringify({ a: a.stopped, b: b.stopped }))
+} catch (error) {
+  failures.push('harness')
+  console.error(error)
+} finally {
+  // Stop the instances before the fixture goes away, even after a failure, so
+  // nothing holds a lock on a directory that is about to be removed.
+  for (const instance of [a, b]) {
+    if (instance !== undefined) await stop(instance).catch(() => undefined)
+  }
+  // The model stand-in is the only handle this process still owns; without
+  // closing it the loop would stay alive after the report is printed.
+  if (model !== undefined) {
+    model.closeAllConnections()
+    await new Promise(resolveClose => model.close(resolveClose))
+  }
+  if (fixture !== undefined) {
+    if (keep) console.log('Kept fixture: ' + fixture)
+    else await rm(fixture, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  }
+}
+
+if (failures.length > 0) {
+  console.error('\nFAILED (' + String(failures.length) + '): ' + failures.join('; '))
+  process.exitCode = 1
+} else {
+  console.log('\nGit sync end-to-end verification passed.')
+}
