@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import { Button, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
+  MNEMON_SYNC_DEFAULT_BRANCH,
+  MNEMON_SYNC_DEFAULT_SUBDIR,
   MNEMON_SYNC_TOKEN_ENV,
   type ClientConnectionHandle,
   type MnemonSyncConfigView,
@@ -29,8 +31,12 @@ interface SyncDraft {
 function draftOf(config: MnemonSyncConfigView | undefined): SyncDraft {
   return {
     repoUrl: config?.repoUrl ?? '',
-    branch: config?.branch ?? '',
-    subdir: config?.subdir ?? '',
+    // The branch and the directory always carry a value: the Host fills them
+    // with its defaults, so the form shows what a push would really use. The
+    // commit author stays empty when nobody set one, because Git then records
+    // the identity this machine already has.
+    branch: config?.branch ?? MNEMON_SYNC_DEFAULT_BRANCH,
+    subdir: config?.subdir ?? MNEMON_SYNC_DEFAULT_SUBDIR,
     token: '',
     clearToken: false,
     authorName: config?.authorName ?? '',
@@ -38,7 +44,7 @@ function draftOf(config: MnemonSyncConfigView | undefined): SyncDraft {
   }
 }
 
-/** The branch and directory the form shows as placeholders while nothing is configured. */
+/** A repository is the one thing a save cannot invent, so it gates the save button. */
 function configured(draft: SyncDraft): boolean {
   return draft.repoUrl.trim() !== ''
 }
@@ -366,41 +372,44 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
         </>}
         {githubFailed !== null && <p className={css.error}>{t('config.syncGitHubFailed', { error: githubFailed })}</p>}
       </div>
-      {signedIn && <div className={css.syncBlock}>
+      {github !== null && github.available && <div className={css.syncBlock}>
         <header>
           <strong>{t('config.syncRepositories')}</strong>
           {repositories !== null && <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void loadRepositories()}>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesLoad')}</Button>}
         </header>
-        {repositories === null && <small>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesHint')}</small>}
-        {repositories !== null && repositories.length === 0 && <small>{t('config.syncRepositoriesEmpty')}</small>}
-        {repositories !== null && repositories.length > 0 && <div className={css.syncField}>
-          <label htmlFor="mnemon-sync-repository">{t('config.syncRepositories')}</label>
-          <select id="mnemon-sync-repository" value={selected} disabled={!editable || busy !== null}
-            onChange={event => {
-              const repository = repositories.find(candidate => candidate.url === event.target.value)
-              if (repository !== undefined) void choose(repository)
-            }}>
-            <option value="">{t('config.syncRepositoriesChoose')}</option>
-            {repositories.map(repository => <option key={repository.fullName} value={repository.url} disabled={!repository.push}>
-              {repository.fullName + (repository.private ? ' · ' + t('config.syncRepositoriesPrivate') : '') + (repository.push ? '' : ' · ' + t('config.syncRepositoriesNoPush'))}
-            </option>)}
-          </select>
-          <small>{t('config.syncRepoUrlHint')}</small>
-        </div>}
-        <div className={css.syncField}>
-          <label htmlFor="mnemon-sync-repository-name">{t('config.syncRepositoryName')}</label>
-          <input id="mnemon-sync-repository-name" type="text" value={repositoryName} placeholder="mnemon-memory"
-            disabled={!editable || busy !== null} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
-            onChange={event => setRepositoryName(event.target.value)} />
-          <label className={css.syncCheck}>
-            <input type="checkbox" checked={repositoryPrivate} disabled={!editable || busy !== null}
-              onChange={event => setRepositoryPrivate(event.target.checked)} />
-            <span>{t('config.syncRepositoryPrivate')}</span>
-          </label>
-        </div>
-        <div className={css.syncFormActions}>
-          <Button variant="outline" size="sm" disabled={!editable || busy !== null || repositoryName.trim() === ''} onClick={() => void createRepository()}>{busy === 'create' ? t('config.syncRepositoryCreating') : t('config.syncRepositoryCreate')}</Button>
-        </div>
+        {!signedIn && <small>{t('config.syncRepositoriesSignIn')}</small>}
+        {signedIn && <>
+          {repositories === null && <small>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesHint')}</small>}
+          {repositories !== null && repositories.length === 0 && <small>{t('config.syncRepositoriesEmpty')}</small>}
+          {repositories !== null && repositories.length > 0 && <div className={css.syncField}>
+            <label htmlFor="mnemon-sync-repository">{t('config.syncRepositories')}</label>
+            <select id="mnemon-sync-repository" value={selected} disabled={!editable || busy !== null}
+              onChange={event => {
+                const repository = repositories.find(candidate => candidate.url === event.target.value)
+                if (repository !== undefined) void choose(repository)
+              }}>
+              <option value="">{t('config.syncRepositoriesChoose')}</option>
+              {repositories.map(repository => <option key={repository.fullName} value={repository.url} disabled={!repository.push}>
+                {repository.fullName + (repository.private ? ' · ' + t('config.syncRepositoriesPrivate') : '') + (repository.push ? '' : ' · ' + t('config.syncRepositoriesNoPush'))}
+              </option>)}
+            </select>
+            <small>{t('config.syncRepoUrlHint')}</small>
+          </div>}
+          <div className={css.syncField}>
+            <label htmlFor="mnemon-sync-repository-name">{t('config.syncRepositoryName')}</label>
+            <input id="mnemon-sync-repository-name" type="text" value={repositoryName} placeholder="mnemon-memory"
+              disabled={!editable || busy !== null} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+              onChange={event => setRepositoryName(event.target.value)} />
+            <label className={css.syncCheck}>
+              <input type="checkbox" checked={repositoryPrivate} disabled={!editable || busy !== null}
+                onChange={event => setRepositoryPrivate(event.target.checked)} />
+              <span>{t('config.syncRepositoryPrivate')}</span>
+            </label>
+          </div>
+          <div className={css.syncFormActions}>
+            <Button variant="outline" size="sm" disabled={!editable || busy !== null || repositoryName.trim() === ''} onClick={() => void createRepository()}>{busy === 'create' ? t('config.syncRepositoryCreating') : t('config.syncRepositoryCreate')}</Button>
+          </div>
+        </>}
       </div>}
       <div className={css.syncField}>
         <label htmlFor="mnemon-sync-repo">{t('config.syncRepoUrl')}</label>
@@ -440,15 +449,16 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       </div>
       <div className={css.syncField}>
         <label htmlFor="mnemon-sync-author-name">{t('config.syncAuthorName')}</label>
-        <input id="mnemon-sync-author-name" type="text" value={draft.authorName} disabled={!editable}
+        <input id="mnemon-sync-author-name" type="text" value={draft.authorName} placeholder={t('config.syncAuthorOptional')} disabled={!editable}
           autoComplete="off" spellCheck={false}
           onChange={event => setDraft(current => ({ ...current, authorName: event.target.value }))} />
+        <small>{t('config.syncAuthorHint')}</small>
       </div>
       <div className={css.syncField}>
         <label htmlFor="mnemon-sync-author-email">{t('config.syncAuthorEmail')}</label>
-        <input id="mnemon-sync-author-email" type="text" value={draft.authorEmail} disabled={!editable}
+        <input id="mnemon-sync-author-email" type="text" value={draft.authorEmail} placeholder={t('config.syncAuthorOptional')} disabled={!editable}
           autoComplete="off" spellCheck={false}
-          onChange={event => setDraft(current => ({ ...current, authorEmail: event.target.value }))} />
+          onChange={event => setDraft(d => ({ ...d, authorEmail: event.target.value }))} />
       </div>
       <div className={css.syncFormActions}>
         <Button variant="primary" size="sm" disabled={!editable || busy !== null || !configured(draft)} onClick={() => void save()}>{busy === 'save' ? t('config.syncSave') + '…' : t('config.syncSave')}</Button>
