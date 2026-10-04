@@ -71,6 +71,16 @@ function fixture(options: { writable?: boolean; failApply?: boolean; failRefresh
     if (channel === '/dsh-mnemon-read' && endpoint === 'task-agent-models') return { ok: true as const, value: { groups: [], failures: [] } }
     if (channel === '/dsh-mnemon-read' && endpoint === 'provider-services') return { ok: true as const, value: { providers: [], items: [], generatedAt: '' } }
     if (channel === '/dsh-mnemon-pack' && endpoint === 'target') return { ok: true as const, value: { root: '/root/.mnemon', scope: 'global' as const } }
+    // The storage page reads the sync channel on mount; an unconfigured Host answers it.
+    if (channel === '/dsh-mnemon-sync' && endpoint === 'status') return {
+      ok: true as const,
+      value: {
+        configured: false,
+        config: { branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost' },
+        configPath: '/root/.mnemon/state/sync-git.json', mirrorPath: '/root/.mnemon/state/sync/git',
+        git: { available: true, required: '2.20' }, remote: { reachable: false, branchExists: false },
+      },
+    }
     return { ok: false as const, error: { code: 'internal' as const, message: `unsupported ${channel} ${endpoint}`, details: {} } }
   })
   return { call, connection: { rpc: { call }, isLoopback: true } as ClientConnectionHandle }
