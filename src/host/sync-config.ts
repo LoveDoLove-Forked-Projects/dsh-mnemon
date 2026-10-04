@@ -200,12 +200,21 @@ export class MnemonSyncSettingsStore {
     return settings.token
   }
 
+  /**
+   * The saved view. Only the two sources this file can see are named here; the
+   * channel layers a stored GitHub grant on top when neither is set.
+   */
   view(settings: MnemonSyncSettings): MnemonSyncConfigView {
+    const token = this.token(settings)
+    const present = token !== undefined && token !== ''
     return {
       ...(settings.repoUrl === undefined ? {} : { repoUrl: settings.repoUrl }),
       branch: settings.branch,
       subdir: settings.subdir,
-      hasToken: this.token(settings) !== undefined,
+      hasToken: present,
+      credentialSource: present
+        ? (process.env[MNEMON_SYNC_TOKEN_ENV]?.trim() ?? '') === '' ? 'token' : 'environment'
+        : 'none',
       authorName: settings.authorName,
       authorEmail: settings.authorEmail,
     }

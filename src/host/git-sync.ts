@@ -7,10 +7,11 @@ import { runProcess, type ProcessRunner } from './process.ts'
 import { MnemonPackManager, MNEMON_PACK_MAX_EXPANDED_BYTES } from './pack.ts'
 import type {
   MnemonPackComponent, MnemonPackImportMode, MnemonPackManifest, MnemonSyncComponentDelta, MnemonSyncConfigView,
-  MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview, MnemonSyncPullResult, MnemonSyncPushResult,
-  MnemonSyncRemoteStatus, MnemonSyncStatus,
+  MnemonSyncCredentialSource, MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview, MnemonSyncPullResult,
+  MnemonSyncPushResult, MnemonSyncRemoteStatus, MnemonSyncStatus,
 } from './protocol.ts'
-import { MNEMON_PACK_COMPONENTS } from './protocol.ts'
+import { MNEMON_PACK_COMPONENTS, MNEMON_SYNC_TOKEN_ENV } from './protocol.ts'
+import { MnemonGitHubAuth } from './github-auth.ts'
 import type { StorageRoot } from './storage-root.ts'
 import { MnemonSyncSettingsStore, type MnemonSyncSettings } from './sync-config.ts'
 
@@ -41,6 +42,13 @@ interface MnemonSyncRemoteExtension {
   branch: string
   subdir: string
   pushedAt: string
+}
+
+/** The credential one operation resolved, and where it came from. */
+interface SyncCredential {
+  source: MnemonSyncCredentialSource
+  token?: string
+  login?: string
 }
 
 interface RemotePayload {
@@ -214,6 +222,7 @@ export class MnemonGitSync {
   private readonly root: string
   private readonly store: MnemonSyncSettingsStore
   private sequence = 0
+  private auth: MnemonGitHubAuth | undefined
 
   constructor(
     runner: StorageRoot,
@@ -231,6 +240,46 @@ export class MnemonGitSync {
     return this.store
   }
 
+  /**
+   * Hand the channel the Host's GitHub sign-in. Every runtime generation shares
+   * one instance, so a grant stored from the settings page reaches the graphs
+   * an Agent executes in as well.
+   */
+  useGitHubAuth(auth: MnemonGitHubAuth | undefined): void {
+    this.auth = auth
+  }
+
+  /** The sign-in surface, or undefined on a Host that provides no store. */
+  github(): MnemonGitHubAuth | undefined {
+    return this.auth
+  }
+
+  /**
+   * The credential one operation authenticates with, and where it came from.
+   * The environment wins over the stored token, and the GitHub grant is the
+   * fallback a user reaches for when neither is set.
+   */
+  private async credential(settings: MnemonSyncSettings): Promise<SyncCredential> {
+    const token = this.store.token(settings)
+    if (token !== undefined && token !== '') {
+      return { source: (process.env[MNEMON_SYNC_TOKEN_ENV]?.trim() ?? '') === '' ? 'token' : 'environment', token }
+    }
+    const grant = await this.auth?.grant()
+    if (grant === undefined) return { source: 'none' }
+    return { source: 'github', token: grant.accessToken, ...(grant.login === undefined ? {} : { login: grant.login }) }
+  }
+
+  /** The saved view, with the source the channel would actually authenticate with. */
+  private async credentialView(settings: MnemonSyncSettings): Promise<MnemonSyncConfigView> {
+    const credential = await this.credential(settings)
+    return {
+      ...this.store.view(settings),
+      hasToken: credential.token !== undefined,
+      credentialSource: credential.source,
+      ...(credential.login === undefined ? {} : { credentialLogin: credential.login }),
+    }
+  }
+
   async status(signal?: AbortSignal): Promise<MnemonSyncStatus> {
     const settings = this.store.read()
     const repoUrl = settings.repoUrl
@@ -243,7 +292,7 @@ export class MnemonGitSync {
     const commit = existsSync(this.store.mirror()) && git.available ? await this.lastCommit(signal) : undefined
     return {
       configured: repoUrl !== undefined,
-      config: this.store.view(settings),
+      config: await this.credentialView(settings),
       configPath: this.store.path(),
       mirrorPath: this.store.mirror(),
       git,
@@ -252,10 +301,10 @@ export class MnemonGitSync {
     }
   }
 
-  configure(patch: unknown): MnemonSyncConfigView {
+  async configure(patch: unknown): Promise<MnemonSyncConfigView> {
     const next = this.store.patch(patch)
     this.store.write(next)
-    return this.store.view(next)
+    return this.credentialView(next)
   }
 
   /** Collect the full pack, write it into the mirror when it changed, and publish the difference. */
@@ -289,7 +338,7 @@ export class MnemonGitSync {
       }
       const head = await this.head(input.signal)
       const published = committed
-        ? await this.publish(settings, input.signal)
+        ? await this.publish(settings, await this.credential(settings), input.signal)
         : { pushed: false, reason: prepared.tip === undefined ? 'nothing to publish' : 'the branch already holds this payload' }
       const summary = exported.manifest.summary.map(entry => ({ ...entry, changed: componentChanged(before, entries, entry.component) }))
       return {
@@ -386,17 +435,18 @@ export class MnemonGitSync {
   }
 
   private async remoteStatus(settings: MnemonSyncSettings & { repoUrl: string }, signal?: AbortSignal): Promise<MnemonSyncRemoteStatus> {
+    const credential = await this.credential(settings)
     try {
-      const tip = await this.lsRemote(settings, signal)
+      const tip = await this.lsRemote(settings, credential, signal)
       return tip === undefined ? { reachable: true, branchExists: false } : { reachable: true, branchExists: true, commit: tip }
     } catch (error) {
-      return { reachable: false, branchExists: false, error: this.mask(error instanceof Error ? error.message : String(error), settings) }
+      return { reachable: false, branchExists: false, error: this.mask(error instanceof Error ? error.message : String(error), credential) }
     }
   }
 
-  private async lsRemote(settings: MnemonSyncSettings & { repoUrl: string }, signal?: AbortSignal): Promise<string | undefined> {
+  private async lsRemote(settings: MnemonSyncSettings & { repoUrl: string }, credential: SyncCredential, signal?: AbortSignal): Promise<string | undefined> {
     const reference = 'refs/heads/' + settings.branch
-    const result = await this.git(['ls-remote', '--heads', settings.repoUrl, reference], { signal, token: this.store.token(settings), authenticated: true })
+    const result = await this.git(['ls-remote', '--heads', settings.repoUrl, reference], { signal, token: credential.token, authenticated: true })
     if (result.exitCode !== 0) throw new Error(tail(result.stderr || result.stdout) || 'git ls-remote failed')
     for (const line of result.stdout.split('\n')) {
       const [commit, name] = line.trim().split(/\s+/u)
@@ -421,6 +471,7 @@ export class MnemonGitSync {
 
   /** Create or refresh the disposable mirror, and return the remote tip when the branch exists. */
   private async ensureMirror(settings: MnemonSyncSettings & { repoUrl: string }, signal?: AbortSignal): Promise<{ tip?: string }> {
+    const credential = await this.credential(settings)
     const mirror = this.store.mirror()
     mkdirSync(this.store.directory(), { recursive: true, mode: 0o700 })
     if (!existsSync(join(mirror, '.git'))) {
@@ -434,13 +485,13 @@ export class MnemonGitSync {
       if (renamed.exitCode !== 0) throw new Error('git symbolic-ref failed: ' + tail(renamed.stderr || renamed.stdout))
     }
     // The branch is the source of truth, so an unreachable remote fails here rather than at push time.
-    const tip = await this.lsRemote(settings, signal)
+    const tip = await this.lsRemote(settings, credential, signal)
     if (tip === undefined) return {}
     const fetched = await this.git(
       ['fetch', '--no-tags', '--quiet', settings.repoUrl, 'refs/heads/' + settings.branch],
-      { cwd: mirror, signal, token: this.store.token(settings), authenticated: true },
+      { cwd: mirror, signal, token: credential.token, authenticated: true },
     )
-    if (fetched.exitCode !== 0) throw new Error('git fetch failed: ' + this.mask(tail(fetched.stderr || fetched.stdout), settings))
+    if (fetched.exitCode !== 0) throw new Error('git fetch failed: ' + this.mask(tail(fetched.stderr || fetched.stdout), credential))
     const reset = await this.git(['reset', '--hard', '--quiet', 'FETCH_HEAD'], { cwd: mirror, signal })
     if (reset.exitCode !== 0) throw new Error('git reset failed: ' + tail(reset.stderr || reset.stdout))
     return { tip }
@@ -465,12 +516,12 @@ export class MnemonGitSync {
     }
   }
 
-  private async publish(settings: MnemonSyncSettings & { repoUrl: string }, signal?: AbortSignal): Promise<{ pushed: boolean; reason?: string }> {
+  private async publish(settings: MnemonSyncSettings & { repoUrl: string }, credential: SyncCredential, signal?: AbortSignal): Promise<{ pushed: boolean; reason?: string }> {
     const reference = 'refs/heads/' + settings.branch + ':refs/heads/' + settings.branch
-    const result = await this.git(['push', '--porcelain', settings.repoUrl, reference], { cwd: this.store.mirror(), signal, token: this.store.token(settings), authenticated: true })
+    const result = await this.git(['push', '--porcelain', settings.repoUrl, reference], { cwd: this.store.mirror(), signal, token: credential.token, authenticated: true })
     if (result.exitCode === 0) return { pushed: true }
-    const reason = this.mask(tail(result.stderr || result.stdout), settings)
-    if (this.store.token(settings) === undefined) {
+    const reason = this.mask(tail(result.stderr || result.stdout), credential)
+    if (credential.token === undefined) {
       return { pushed: false, reason: 'the commit stays local because no token is available: ' + (reason || 'git push failed') }
     }
     return { pushed: false, reason: reason || 'git push failed' }
@@ -515,8 +566,9 @@ export class MnemonGitSync {
     }
   }
 
-  private mask(text: string, settings: MnemonSyncSettings): string {
-    const token = this.store.token(settings)
+  /** Remove the credential from anything a user will read. */
+  private mask(text: string, credential: SyncCredential): string {
+    const token = credential.token
     if (token === undefined || token === '') return text
     return text.replaceAll(token, '***')
   }

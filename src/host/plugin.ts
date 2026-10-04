@@ -1,7 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import { Config as PlainConfig, InteractionConfig, resolveConfig, resolveInteractionConfig, type Config as MnemonConfig } from './config.ts'
 import { registerCommands } from './commands.ts'
-import type { HostContextShape, HostWorkspaceRegistry } from './dsh.ts'
+import type { HostContextShape, HostCredentialsService, HostWorkspaceRegistry } from './dsh.ts'
+import { githubGrantFromRecord, MNEMON_SYNC_GITHUB_CREDENTIAL_KEY, MnemonGitHubAuth, type MnemonGitHubCredentialPort } from './github-auth.ts'
 import { registerGuidance } from './guidance.ts'
 import { createRuntimeGraph, LiveMnemonRuntime } from './runtime.ts'
 import { MnemonLifecycle } from './lifecycle.ts'
@@ -34,6 +35,47 @@ function optionalWorkspaceRegistry(ctx: HostContextShape): HostWorkspaceRegistry
   }
 }
 
+/**
+ * The one credentials record this plugin keeps, as DSH's store addresses it:
+ * `<scope>/<id>`. Presence of the record is the whole fact, and every write
+ * goes through `modifyRecord` so a replacement happens under the store's lock.
+ */
+function credentialPort(service: () => HostCredentialsService | undefined): MnemonGitHubCredentialPort {
+  return {
+    available: () => service() !== undefined,
+    describe: async () => {
+      const store = service()
+      if (store === undefined) return { configured: false, writable: false }
+      const info = await store.describeRecord(MNEMON_SYNC_GITHUB_CREDENTIAL_KEY)
+      return { configured: info.configured, writable: info.writable }
+    },
+    read: async () => githubGrantFromRecord(await service()?.readRecord(MNEMON_SYNC_GITHUB_CREDENTIAL_KEY)),
+    write: async grant => {
+      const store = service()
+      if (store === undefined) throw new Error('this DSH Host provides no credentials store, so GitHub sign-in is unavailable')
+      await store.modifyRecord(MNEMON_SYNC_GITHUB_CREDENTIAL_KEY, async () => ({ kind: 'grant', payload: grant }))
+    },
+    clear: async () => {
+      const store = service()
+      if (store === undefined) return
+      // An absent record is already the signed-out state; deleting one twice is not a failure.
+      if (await store.readRecord(MNEMON_SYNC_GITHUB_CREDENTIAL_KEY) === undefined) return
+      await store.deleteRecord(MNEMON_SYNC_GITHUB_CREDENTIAL_KEY)
+    },
+  }
+}
+
+/**
+ * GitHub sign-in lives beside the sync channel, not inside it: one instance
+ * spans every runtime generation, so a grant stored from the settings page is
+ * the same one an Agent's workspace graph resolves. The credentials service is
+ * read at call time, because a Headless profile may mount none at all.
+ */
+function optionalGitHubAuth(ctx: HostContextShape): MnemonGitHubAuth {
+  const current = (): HostCredentialsService | undefined => (ctx.get('credentials') ?? ctx.credentials) as HostCredentialsService | undefined
+  return new MnemonGitHubAuth(credentialPort(current))
+}
+
 /** DSH owns assembly; this Host only wires scope, phases and user preferences. */
 export function apply(rawContext: unknown, rawConfig: MnemonConfig | LiveHostConfig = {}): void {
   const ctx = rawContext as unknown as HostContextShape
@@ -52,6 +94,7 @@ export function apply(rawContext: unknown, rawConfig: MnemonConfig | LiveHostCon
     validate: value => createRuntimeGraph(effectiveConfig(value), undefined, extensions).dispose(),
   })
   const runtime = new LiveMnemonRuntime(createRuntimeGraph(effectiveConfig(settings.get()), undefined, extensions), optionalWorkspaceRegistry(ctx), ctx.agents, extensions)
+  runtime.useGitHubAuth(optionalGitHubAuth(ctx))
   const resolved = runtime.config
   ctx.effect(() => hostSettings.onUpdated((namespace, value) => {
     if (namespace === memoryPlugins.settingsNamespace) {

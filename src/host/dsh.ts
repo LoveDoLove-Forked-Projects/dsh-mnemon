@@ -265,6 +265,25 @@ export interface HostLlmService {
   }>>
 }
 
+/** What the credentials store says about one record, as this plugin reads it. */
+export interface HostCredentialRecordInfo {
+  configured: boolean
+  kind?: 'api-key' | 'grant'
+  writable: boolean
+}
+
+/**
+ * The record half of DSH's credentials store. Records are addressed by
+ * `"<scope>/<id>"`, presence is the whole fact, and `modifyRecord` is the only
+ * write path, so a grant is replaced under the store's own cross-process lock.
+ */
+export interface HostCredentialsService {
+  readRecord(key: string): Promise<unknown>
+  describeRecord(key: string): Promise<HostCredentialRecordInfo>
+  modifyRecord(key: string, mutate: (current: unknown) => Promise<unknown>): Promise<unknown>
+  deleteRecord(key: string): Promise<void>
+}
+
 export interface HostContextShape {
   tools: { register(definition: ToolDefinition): unknown }
   commands: CommandService
@@ -276,6 +295,8 @@ export interface HostContextShape {
   subagents: HostSubagentsService
   /** Web workbench catalog; Agent execution routes by session cwd without it. */
   workspaceRegistry?: HostWorkspaceRegistry
+  /** DSH's credentials store; absent from a profile that mounts no provider. */
+  credentials?: HostCredentialsService
   get(name: string): unknown
   /** Cordis owns service publication in every profile, including Headless. */
   provide(name: string, value?: unknown, check?: () => boolean): unknown

@@ -611,10 +611,71 @@ export interface MnemonSyncConfigView {
   repoUrl?: string
   branch: string
   subdir: string
-  /** Whether a token is available; its value is never part of an answer. */
+  /** Whether a credential is available; its value is never part of an answer. */
   hasToken: boolean
+  /** Where the credential the channel would authenticate with comes from. */
+  credentialSource: MnemonSyncCredentialSource
+  /** The GitHub account the stored grant belongs to, when that is the source. */
+  credentialLogin?: string
   authorName: string
   authorEmail: string
+}
+
+/**
+ * The credential the next Git operation authenticates with. The environment
+ * wins over the stored token, and the GitHub sign-in is what a user reaches for
+ * when neither is set: the order here is the order of resolution.
+ */
+export type MnemonSyncCredentialSource = 'environment' | 'token' | 'github' | 'none'
+
+/** How far the browser step of a GitHub sign-in has come. */
+export type MnemonSyncGitHubFlowStatus = 'pending' | 'expired' | 'denied' | 'error'
+
+export interface MnemonSyncGitHubFlow {
+  userCode: string
+  verificationUri: string
+  /** When the code stops being accepted, as an ISO timestamp. */
+  expiresAt: string
+  /** The cadence the Host polls at, so the page can match it. */
+  intervalMs: number
+}
+
+/** The sign-in surface: whether it is possible, and how far it has come. */
+export interface MnemonSyncGitHubStatus {
+  /** Whether this Host exposes a credentials store the grant can live in. */
+  available: boolean
+  signedIn: boolean
+  /** Whether the store accepts writes, which a read-only source denies. */
+  writable: boolean
+  login?: string
+  scopes?: string[]
+  flow?: MnemonSyncGitHubFlow
+}
+
+export interface MnemonSyncGitHubPoll {
+  status: 'pending' | 'success' | 'expired' | 'denied' | 'error'
+  /** The cadence to wait for before asking again. */
+  intervalMs?: number
+  login?: string
+  /** Why the sign-in ended without a grant, when it did. */
+  message?: string
+}
+
+export interface MnemonSyncGitHubRepository {
+  name: string
+  fullName: string
+  /** The HTTPS address Git clones, which is what the channel stores. */
+  url: string
+  private: boolean
+  defaultBranch: string
+  owner: string
+  /** Whether the account may push here; a repository it cannot is shown disabled. */
+  push: boolean
+}
+
+export interface MnemonSyncGitHubRepositoryList {
+  login: string
+  repositories: MnemonSyncGitHubRepository[]
 }
 
 export interface MnemonSyncGitStatus {

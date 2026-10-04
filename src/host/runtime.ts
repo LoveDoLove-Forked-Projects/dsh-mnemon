@@ -4,6 +4,7 @@ import type { ResolvedConfig } from './config.ts'
 import type { HostAgent, HostAgentsService, HostWorkspace, HostWorkspaceRegistry } from './dsh.ts'
 import { MnemonPackManager } from './pack.ts'
 import { MnemonGitSync } from './git-sync.ts'
+import type { MnemonGitHubAuth } from './github-auth.ts'
 import { StorageScopeInspector } from './storage-scope.ts'
 import { createStorageRoot } from './storage-root.ts'
 import { canonicalWorkspacePath } from './workspace-storage.ts'
@@ -129,6 +130,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
   private readonly workspaceGraphs = new Map<string, MnemonRuntimeGraph>()
   private readonly agentGraphs = new Map<string, { token: symbol; graph: MnemonRuntimeGraph }>()
   private readonly retiredGraphs = new Set<MnemonRuntimeGraph>()
+  private githubAuth: MnemonGitHubAuth | undefined
   private closed = false
 
   readonly config: ResolvedConfig
@@ -144,6 +146,20 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     this.sync = liveProxy(() => this.current.sync)
   }
 
+  /**
+   * Share one GitHub sign-in with every generation this runtime builds. The
+   * settings page and an Agent's workspace graph then resolve the same grant,
+   * and a later generation cannot silently lose the login.
+   */
+  useGitHubAuth(auth: MnemonGitHubAuth | undefined): void {
+    this.githubAuth = auth
+    this.applyGitHubAuth(this.current)
+  }
+
+  private applyGitHubAuth(graph: MnemonRuntimeGraph): void {
+    if (this.githubAuth !== undefined) graph.sync.useGitHubAuth(this.githubAuth)
+  }
+
   swap(next: MnemonRuntimeGraph): void {
     if (this.closed) {
       next.dispose()
@@ -151,6 +167,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     }
     const previous = this.current
     this.current = next
+    this.applyGitHubAuth(next)
     this.retireGraph(previous)
     for (const graph of this.workspaceGraphs.values()) this.retireGraph(graph)
     this.workspaceGraphs.clear()
@@ -256,6 +273,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     let graph = this.workspaceGraphs.get(key)
     if (graph === undefined) {
       graph = createRuntimeGraph(this.current.config, key, this.extensions)
+      this.applyGitHubAuth(graph)
       this.workspaceGraphs.set(key, graph)
     }
     return graph
