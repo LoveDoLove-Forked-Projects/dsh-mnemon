@@ -6,6 +6,7 @@ import type { HostRpcHandler } from '../src/host/dsh.ts'
 import { runProcess } from '../src/host/process.ts'
 import { createSyncHandler } from '../src/host/rpc.ts'
 import { compositionFixture } from './fixtures/composition.ts'
+import { MNEMON_GITHUB_DEFAULT_CLIENT_ID, MnemonGitHubAuth, type MnemonGitHubCredentialPort, type MnemonGitHubGrant } from '../src/host/github-auth.ts'
 
 const directories: string[] = []
 const releases: Array<() => Promise<void>> = []
@@ -19,6 +20,35 @@ async function git(args: string[], cwd?: string): Promise<string> {
 }
 
 const available = await git(['--version']).then(() => true, () => false)
+const DEVICE_CODE = { device_code: 'device-1', user_code: '2654-9D74', verification_uri: 'https://github.com/login/device', expires_in: 899, interval: 5 }
+const REPOSITORY = { name: 'memory', full_name: 'octocat/memory', clone_url: 'https://github.com/octocat/memory.git', private: true, default_branch: 'main', owner: { login: 'octocat' }, permissions: { push: true } }
+let clock = 0
+
+/** A signed-in account with no store behind it: the channel only needs the seam. */
+function gitHubAuth(): MnemonGitHubAuth {
+  const answers: Array<{ status: number; body: unknown }> = [
+    { status: 200, body: DEVICE_CODE },
+    { status: 200, body: { access_token: 'gho_rpc_token', scope: 'repo' } },
+    { status: 200, body: { login: 'octocat' } },
+    { status: 200, body: [REPOSITORY] },
+    { status: 200, body: { login: 'octocat' } },
+    { status: 201, body: { ...REPOSITORY, name: 'mnemon-memory', full_name: 'octocat/mnemon-memory', clone_url: 'https://github.com/octocat/mnemon-memory.git' } },
+  ]
+  let grant: MnemonGitHubGrant | undefined
+  const port: MnemonGitHubCredentialPort = {
+    available: () => true,
+    describe: async () => ({ configured: grant !== undefined, writable: true }),
+    read: async () => grant,
+    write: async next => { grant = next },
+    clear: async () => { grant = undefined },
+  }
+  const request = (async () => {
+    const answer = answers.shift()
+    if (answer === undefined) throw new Error('unexpected GitHub request')
+    return new Response(JSON.stringify(answer.body), { status: answer.status })
+  }) as unknown as typeof fetch
+  return new MnemonGitHubAuth(port, MNEMON_GITHUB_DEFAULT_CLIENT_ID, () => clock, request)
+}
 
 function temporary(label: string): string {
   const directory = mkdtempSync(join(tmpdir(), 'dsh-mnemon-' + label + '-'))
@@ -149,5 +179,58 @@ describe.skipIf(!available)('Mnemon Git sync over RPC', { timeout: 90_000 }, () 
     expect(await sync('push', { confirmed: true })).toMatchObject(readOnly)
     expect(await sync('pull', { confirmed: true })).toMatchObject(readOnly)
     expect(await sync('status', {})).toMatchObject({ ok: true, value: { configured: false } })
+  })
+
+  it('drives GitHub sign-in through the channel and keeps the token out of every answer', async () => {
+    const host = await compositionFixture({}, { githubAuth: gitHubAuth() })
+    releases.push(host.dispose)
+    const sync = createSyncHandler(host.live)
+
+    const start = await sync('github-start', {})
+    const flow = (start as { value: { flow: { userCode: string; verificationUri: string; intervalMs: number } } }).value.flow
+    expect(flow.userCode).toBe('2654-9D74')
+    expect(flow.verificationUri).toBe('https://github.com/login/device')
+    expect(flow.intervalMs).toBe(5_000)
+
+    // The status keeps the pending flow so a page that reloads still sees the code.
+    const waiting = await sync('github-status', {})
+    expect(waiting).toMatchObject({ ok: true, value: { available: true, signedIn: false, writable: true, flow: { userCode: '2654-9D74' } } })
+
+    clock = 5_000
+    expect(await sync('github-poll', {})).toMatchObject({ ok: true, value: { status: 'success', login: 'octocat' } })
+    const signedIn = await sync('github-status', {})
+    expect(signedIn).toMatchObject({ ok: true, value: { available: true, signedIn: true, writable: true, login: 'octocat' } })
+    expect(JSON.stringify(signedIn)).not.toContain('gho_rpc_token')
+
+    // The configured credential is the signed-in account, and the view says so.
+    const configured = await sync('configure', { repoUrl: 'https://github.com/octocat/memory.git' })
+    expect(configured).toMatchObject({ ok: true, value: { hasToken: true, credentialSource: 'github', credentialLogin: 'octocat' } })
+    expect(JSON.stringify(configured)).not.toContain('gho_rpc_token')
+
+    expect(await sync('github-repositories', {})).toMatchObject({ ok: true, value: { login: 'octocat', repositories: [{ fullName: 'octocat/memory' }] } })
+    expect(await sync('github-create', { name: 'mnemon-memory', private: true }))
+      .toMatchObject({ ok: true, value: { fullName: 'octocat/mnemon-memory' } })
+
+    // Signing out is a write, so a read-only Host refuses it before any request.
+    const readOnly = await compositionFixture({ writeEnabled: false }, { githubAuth: gitHubAuth() })
+    releases.push(readOnly.dispose)
+    const gated = createSyncHandler(readOnly.live)
+    for (const endpoint of ['github-start', 'github-poll', 'github-cancel', 'github-signout', 'github-create']) {
+      expect(await gated(endpoint, {})).toMatchObject({ ok: false, error: { message: expect.stringContaining('read-only') } })
+    }
+    expect(await gated('github-status', {})).toMatchObject({ ok: true, value: { available: true, signedIn: false } })
+    // Listing repositories is a read, so a read-only Host refuses it for the
+    // missing sign-in rather than for its write gate.
+    expect(await gated('github-repositories', {})).toMatchObject({ ok: false, error: { message: 'sign in to GitHub before choosing a repository' } })
+  })
+
+  it('reports the login as unavailable on a Host that mounts no credentials store', async () => {
+    const fixture = await compositionFixture({}, { githubAuth: new MnemonGitHubAuth(undefined) })
+    releases.push(fixture.dispose)
+    const sync = createSyncHandler(fixture.live)
+    expect(await sync('github-status', {})).toMatchObject({ ok: true, value: { available: false, signedIn: false, writable: false } })
+    expect(await sync('github-start', {})).toMatchObject({ ok: false, error: { message: expect.stringContaining('no credentials store') } })
+    expect(await sync('github-poll', {})).toMatchObject({ ok: false, error: { message: expect.stringContaining('no credentials store') } })
+    expect(await sync('github-repositories', {})).toMatchObject({ ok: false, error: { message: 'sign in to GitHub before choosing a repository' } })
   })
 })

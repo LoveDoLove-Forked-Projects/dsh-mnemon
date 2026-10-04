@@ -172,6 +172,34 @@ describe('MnemonClient product transport', () => {
     })
   })
 
+  it('routes GitHub sign-in and the repository picker through the sync channel', async () => {
+    const call = vi.fn(async () => ({ ok: true as const, value: {} }))
+    const client = new MnemonClient({ rpc: { call }, isLoopback: true } as ClientConnectionHandle, 'session-1', 'workspace-1')
+
+    await client.githubStatus()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-status', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.githubStart()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-start', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.githubPoll()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-poll', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.githubCancel()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-cancel', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.githubSignOut()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-signout', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.githubRepositories()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-repositories', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.githubCreateRepository('mnemon-memory', true)
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'github-create', {
+      name: 'mnemon-memory', private: true, sessionId: 'session-1', workspaceId: 'workspace-1',
+    })
+  })
+
   it('routes provider service settings independently from Memory Spaces', async () => {
     const call = vi.fn(async () => ({ ok: true as const, value: { providerId: 'mem0', configured: true, settings: { endpoint: 'http://127.0.0.1:8888' }, configuredSecrets: [] } }))
     const client = new MnemonClient({ rpc: { call }, isLoopback: true } as ClientConnectionHandle, 'session-1', 'workspace-1')

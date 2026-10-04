@@ -53,7 +53,7 @@ describe('Mnemon sync configuration', () => {
     const { settings } = store()
     settings.write(settings.patch({ repoUrl: '/srv/memory.git', token: 'ghp_secret' }))
     const view = settings.view(settings.read())
-    expect(view).toEqual({ repoUrl: '/srv/memory.git', branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR, hasToken: true, authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL })
+    expect(view).toEqual({ repoUrl: '/srv/memory.git', branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR, hasToken: true, credentialSource: 'token', authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL })
     expect(JSON.stringify(view)).not.toContain('ghp_secret')
   })
 

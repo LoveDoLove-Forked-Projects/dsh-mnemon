@@ -14,11 +14,12 @@ import { resolveConfig, type Config } from '../../src/host/config.ts'
 import { createRuntimeGraph, LiveMnemonRuntime } from '../../src/host/runtime.ts'
 import type { HostWorkspaceRegistry, HostAgentsService } from '../../src/host/dsh.ts'
 import { provideMemoryRuntime } from '../../src/core/runtime.ts'
+import type { MnemonGitHubAuth } from '../../src/host/github-auth.ts'
 
 /** Compose real, public Cordis modules. No Source controller or Host business binding. */
 export async function compositionFixture(options: Config = {}, host: {
   workspaceRegistry?: HostWorkspaceRegistry; agents?: Pick<HostAgentsService, 'get'>; providers?: MemorySpaceProviderEntry[]
-  entryPrefix?: string
+  entryPrefix?: string; githubAuth?: MnemonGitHubAuth
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'mnemon-composition-'))
   const workspace = join(root, 'workspace')
@@ -60,6 +61,9 @@ export async function compositionFixture(options: Config = {}, host: {
     get: (id: string) => id === 'workspace' ? { id, title: 'Fixture', path: workspace } : undefined,
   }
   const live = new LiveMnemonRuntime(graph, workspaceRegistry, host.agents, extensions)
+  // A Host that mounts a credentials store hands the graph its sign-in seam; one
+  // that mounts none leaves the channel reporting the login as unavailable.
+  if (host.githubAuth !== undefined) live.useGitHubAuth(host.githubAuth)
   async function memorySpace() {
     const source = graph.source('memory-spaces')
     await source.mutate('provider-service-update', {

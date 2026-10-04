@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MnemonSettingsCard } from '../src/client/MnemonSettingsCard.tsx'
 import { translateEn } from '../src/client/locales.ts'
 import { settingsScope } from './helpers/settings-scope.ts'
-import type { ClientConnectionHandle, Config, MemoryPluginEntryView, MemoryViewConfigurationRequest, MemoryViewDashboard } from '../src/host/protocol.ts'
+import type { ClientConnectionHandle, Config, MemoryPluginEntryView, MemoryViewConfigurationRequest, MemoryViewDashboard, MnemonSyncGitHubStatus } from '../src/host/protocol.ts'
 
 afterEach(cleanup)
 
@@ -42,7 +42,7 @@ const THREE_TIER: MemoryPluginEntryView = {
   enabled: true, active: true, writable: true, config: {},
 }
 
-function fixture(options: { writable?: boolean; failApply?: boolean; failRefreshAfterApply?: boolean; unavailable?: boolean } = {}) {
+function fixture(options: { writable?: boolean; failApply?: boolean; failRefreshAfterApply?: boolean; unavailable?: boolean; github?: MnemonSyncGitHubStatus } = {}) {
   let applied = false
   let dashboard: MemoryViewDashboard = {
     revision: 'view-1', writable: options.writable !== false, strategyTypeId: 'default-three-tier',
@@ -76,10 +76,23 @@ function fixture(options: { writable?: boolean; failApply?: boolean; failRefresh
       ok: true as const,
       value: {
         configured: false,
-        config: { branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost' },
+        config: {
+          branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, credentialSource: 'none' as const,
+          authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost',
+        },
         configPath: '/root/.mnemon/state/sync-git.json', mirrorPath: '/root/.mnemon/state/sync/git',
         git: { available: true, required: '2.20' }, remote: { reachable: false, branchExists: false },
       },
+    }
+    // The sign-in block reads its own endpoint; a Host with no store reports it as unavailable.
+    if (channel === '/dsh-mnemon-sync' && endpoint === 'github-status') return {
+      ok: true as const,
+      value: options.github ?? { available: false, signedIn: false, writable: false },
+    }
+    // A signed-in account offers its repositories; the picker stays empty here.
+    if (channel === '/dsh-mnemon-sync' && endpoint === 'github-repositories') return {
+      ok: true as const,
+      value: { login: 'octocat', repositories: [] },
     }
     return { ok: false as const, error: { code: 'internal' as const, message: `unsupported ${channel} ${endpoint}`, details: {} } }
   })
@@ -151,6 +164,25 @@ describe('Memory enhancement settings', () => {
       expect((screen.getByRole('switch', { name: label }) as HTMLButtonElement).disabled).toBe(true)
     }
     expect(screen.queryByText(/dsh-mnemon-strategy-/u)).toBeNull()
+  })
+
+  it('stops showing a leftover device code once the account is signed in', async () => {
+    const { connection, call } = fixture({
+      github: {
+        available: true, signedIn: true, writable: true, login: 'octocat',
+        // A flow this page started earlier is still live on the Host; signing in ends its purpose.
+        flow: { userCode: '2654-9D74', verificationUri: 'https://github.com/login/device', expiresAt: new Date(Date.now() + 600_000).toISOString(), intervalMs: 5_000 },
+      },
+    })
+    render(<MnemonSettingsCard scope={readyScope()} connection={connection} />)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '配置' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+
+    expect(await screen.findByText('已登录 @octocat')).toBeTruthy()
+    expect(screen.queryByText('2654-9D74')).toBeNull()
+    expect(screen.queryByText('在 GitHub 输入此设备码：')).toBeNull()
+    await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-sync', 'github-repositories', {}))
   })
 
   it('hides the enhancements and keeps the other settings when the View dashboard fails', async () => {
