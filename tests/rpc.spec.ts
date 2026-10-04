@@ -457,6 +457,9 @@ describe('Host assistance and channels', () => {
     expect(f.graph.sync.status).toHaveBeenCalledWith(undefined)
     expect(await handler('configure', { repoUrl: 'https://example.test/owner/repo.git', token: 'ghp_secret' })).toMatchObject({ ok: true })
     expect(f.graph.sync.configure).toHaveBeenCalledWith({ repoUrl: 'https://example.test/owner/repo.git', token: 'ghp_secret' })
+    // The page scopes every call; those two routing keys are the Host's and never reach the store.
+    expect(await handler('configure', { repoUrl: 'https://example.test/owner/repo.git', sessionId: 'session-1', workspaceId: 'workspace-1' })).toMatchObject({ ok: true })
+    expect(f.graph.sync.configure).toHaveBeenLastCalledWith({ repoUrl: 'https://example.test/owner/repo.git' })
     expect(await handler('preview', {})).toMatchObject({ ok: true })
     expect(f.graph.sync.preview).toHaveBeenCalledWith(undefined)
     // The page cannot publish or import without naming the operation as confirmed.

@@ -120,6 +120,25 @@ describe.skipIf(!available)('Mnemon Git sync over RPC', { timeout: 90_000 }, () 
     expect(await host.sync('nope', {})).toMatchObject({ ok: false, error: { code: 'bad-request', message: 'unknown sync endpoint: nope' } })
   })
 
+  it('accepts the scope keys the page sends and keeps them out of the stored configuration', async () => {
+    const remote = await origin('sync-rpc-scope')
+    const host = await machine()
+
+    // The page scopes every call: the routing key travels beside the settings patch.
+    // The real workspace registry rejects invented ids, so the scope here is the session only.
+    const configured = await host.sync('configure', { repoUrl: remote, token: TOKEN, sessionId: 'session-1' })
+    expect(configured).toMatchObject({ ok: true, value: { repoUrl: remote, hasToken: true } })
+
+    const stored = JSON.parse(readFileSync(join(host.data, 'state', 'sync-git.json'), 'utf8')) as Record<string, unknown>
+    expect(stored).toMatchObject({ repoUrl: remote, branch: 'mnemon-sync', subdir: 'mnemon/' })
+    expect(Object.keys(stored)).not.toContain('sessionId')
+    expect(Object.keys(stored)).not.toContain('workspaceId')
+
+    // Routing keys are stripped, not waved through: a real typo is still refused.
+    expect(await host.sync('configure', { repoUrl: remote, components: ['runtime'] }))
+      .toMatchObject({ ok: false, error: { message: 'unknown sync setting: components' } })
+  })
+
   it('keeps reads available and every write gated while the Host is read-only', async () => {
     const host = await compositionFixture({ writeEnabled: false })
     releases.push(host.dispose)

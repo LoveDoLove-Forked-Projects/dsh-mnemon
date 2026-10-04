@@ -25,6 +25,13 @@ function requestedScope(payload: Record<string, unknown>): { workspaceId?: strin
     return value.trim() === '' ? [] : [[key, value.trim()]]
   }))
 }
+/** Settings writes keep their own fields only: the routing keys are the Host's, not the store's. */
+function withoutScope(payload: Record<string, unknown>): Record<string, unknown> {
+  const patch = { ...payload }
+  delete patch.sessionId
+  delete patch.workspaceId
+  return patch
+}
 function scoped(runtime: LiveMnemonRuntime, payload: Record<string, unknown>, lifecycle?: MnemonLifecycle) {
   const requested = requestedScope(payload)
   const route = runtime.route(requested)
@@ -423,7 +430,7 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
       if (endpoint === 'status') return success(await sync.status(signal))
       if (endpoint === 'configure') {
         requireWritable(runtime)
-        return success(sync.configure(payload))
+        return success(sync.configure(withoutScope(payload)))
       }
       if (endpoint === 'push') {
         requireWritable(runtime)
