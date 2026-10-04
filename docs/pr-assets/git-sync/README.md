@@ -99,6 +99,14 @@ The run reported:
 Git sync end-to-end verification passed.
 ```
 
+The same channel through the real WebUI, rather than the harness: a real `dsh web` instance served the storage page, the repository was configured through the form, one entry was written through the normal write path, and the branch was published with the button. Both images come from that session, and neither shows a credential or a personal path.
+
+| Save and push from the storage page | Reading the remote back before importing anything |
+|---|---|
+| ![The repository sync row with the published commit and its notice](./sync-pushed-zh.png) | ![The preview line naming the remote commit, its components and the file deltas](./sync-preview-zh.png) |
+
+The page reported `已推送 0df94229（7 个文件，2.0 KB）。` after the push, and the branch held `mnemon/payload/runtime/USER.md` with the entry that had been written a moment earlier. `检查远端` then reported `远端 0df94229 · 3 个组件 · 1.9 KB`, `0/3 个组件与本地不同` and `新增 0 · 丢失 0 · 不同 1` without importing anything: the merge happens only after `拉取并合并`. The fixture runs in Chinese, which is why the copy in the images is Chinese.
+
 What the run establishes, beyond the unit suites:
 
 - One real instance wrote the working memory and the user profile through `/dsh-mnemon-write`, pushed through `/dsh-mnemon-sync/push`, and the bare repository then held `mnemon/manifest.json`, `mnemon/checksums.json` and `mnemon/payload/runtime/{memories.json,USER.md,MEMORY.md}` on `mnemon-sync`, with the entry readable in `git show mnemon-sync:mnemon/payload/runtime/MEMORY.md`.

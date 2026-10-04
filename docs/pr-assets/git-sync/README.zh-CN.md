@@ -99,6 +99,14 @@ pnpm run e2e:sync
 Git sync end-to-end verification passed.
 ```
 
+同一通道在真实 WebUI 中的表现（不是验收脚本）：真实 `dsh web` 实例提供存储页，仓库经表单配置，一条记忆经常规写入路径写入，分支用按钮发布。两张图都来自这次会话，且都不含凭据与个人路径。
+
+| 在存储页保存并推送 | 导入之前读回的远端 |
+|---|---|
+| ![仓库同步行显示已推送的提交与提示](./sync-pushed-zh.png) | ![预览行给出远端提交、组件与文件差异](./sync-preview-zh.png) |
+
+推送后页面提示 `已推送 0df94229（7 个文件，2.0 KB）。`，分支上的 `mnemon/payload/runtime/USER.md` 持有片刻之前写入的条目。随后 `检查远端` 报告 `远端 0df94229 · 3 个组件 · 1.9 KB`、`0/3 个组件与本地不同` 与 `新增 0 · 丢失 0 · 不同 1`，且没有导入任何内容：只有点击 `拉取并合并` 才会合并。验收实例的界面语言是中文，因此图中的文案为中文。
+
 这次运行在单元测试之外确立的事实：
 
 - 一个真实实例通过 `/dsh-mnemon-write` 写入工作记忆与用户画像，再通过 `/dsh-mnemon-sync/push` 推送；随后裸仓库在 `mnemon-sync` 分支上确实持有 `mnemon/manifest.json`、`mnemon/checksums.json` 与 `mnemon/payload/runtime/{memories.json,USER.md,MEMORY.md}`，且该条目可在 `git show mnemon-sync:mnemon/payload/runtime/MEMORY.md` 中读到。
