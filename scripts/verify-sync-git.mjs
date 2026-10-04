@@ -190,21 +190,33 @@ try {
   await install(homes.a, workspaces.a, { ...env, DSH_HOME: homes.a })
   await install(homes.b, workspaces.b, { ...env, DSH_HOME: homes.b })
 
+  // A blank author falls back to the identity Git already has. These variables
+  // stand in for the machine's own user.name/user.email, so the run can assert
+  // the fallback without reading or writing the runner's Git configuration.
+  const localIdentity = {
+    GIT_AUTHOR_NAME: 'Mnemon Local', GIT_AUTHOR_EMAIL: 'local@localhost',
+    GIT_COMMITTER_NAME: 'Mnemon Local', GIT_COMMITTER_EMAIL: 'local@localhost',
+  }
+
   console.log('\n1. One instance publishes the whole pack to a real repository')
-  a = await launch('instance A', homes.a, data.a, workspaces.a, env)
+  a = await launch('instance A', homes.a, data.a, workspaces.a, { ...env, ...localIdentity })
   const fresh = expectOk(await sync(a, 'status'), 'status')
   check('a fresh storage root reports Git and an unconfigured remote',
     fresh.configured === false && fresh.git.available === true && fresh.git.required === '2.20'
     && fresh.remote.reachable === false && fresh.remote.branchExists === false, JSON.stringify(fresh))
   check('the configuration path lives inside the storage root', fresh.configPath === join(data.a, 'state', 'sync-git.json'), fresh.configPath)
-  const configured = expectOk(await sync(a, 'configure', {
-    repoUrl: origin, branch: 'mnemon-sync', subdir: 'mnemon/',
-    authorName: 'Mnemon Sync E2E', authorEmail: 'sync-e2e@localhost',
-  }), 'configure')
-  check('configure echoes the effective settings without a token',
-    configured.repoUrl === origin && configured.branch === 'mnemon-sync' && configured.subdir === 'mnemon/'
-    && configured.hasToken === false && configured.credentialSource === 'none'
-    && configured.authorName === 'Mnemon Sync E2E', JSON.stringify(configured))
+  const defaults = expectOk(await sync(a, 'configure', { repoUrl: origin }), 'configure')
+  check('a repository alone is enough: branch, directory and author keep their defaults',
+    defaults.repoUrl === origin && defaults.branch === 'mnemon-sync' && defaults.subdir === 'mnemon/'
+    && defaults.authorName === 'dsh-mnemon sync' && defaults.authorEmail === 'mnemon@localhost'
+    && defaults.hasToken === false && defaults.credentialSource === 'none', JSON.stringify(defaults))
+  const configured = expectOk(await sync(a, 'configure', { authorName: '', authorEmail: '' }), 'configure')
+  check('an empty author clears the identity so Git uses the one on this machine',
+    configured.authorName === '' && configured.authorEmail === '' && configured.repoUrl === origin
+    && configured.branch === 'mnemon-sync' && configured.subdir === 'mnemon/', JSON.stringify(configured))
+  const reset = expectOk(await sync(a, 'configure', { branch: '', subdir: '' }), 'configure')
+  check('an empty branch and directory fall back to the defaults',
+    reset.branch === 'mnemon-sync' && reset.subdir === 'mnemon/', JSON.stringify(reset))
   const added = expectOk(await call(a, '/dsh-mnemon-write', 'runtime-memory', { action: 'add', target: 'memory', content: MARKER }), 'runtime-memory')
   check('the working memory accepted one entry through the write channel', added.success === true && added.entryCount === 1, JSON.stringify(added))
   expectOk(await call(a, '/dsh-mnemon-write', 'runtime-memory', { action: 'add', target: 'user', content: PROFILE }), 'runtime-memory user')
@@ -220,6 +232,9 @@ try {
   check('push committed and published one pack', pushed.committed === true && pushed.pushed === true
     && /^[0-9a-f]{40}$/u.test(pushed.commit) && pushed.branch === 'mnemon-sync' && pushed.subdir === 'mnemon/', JSON.stringify(pushed))
   check('the pack holds every component', JSON.stringify(pushed.summary.map(entry => entry.component)) === '["runtime","documents","memory-spaces"]', JSON.stringify(pushed.summary))
+  const authored = await git(['log', '-1', '--format=%an <%ae>|%cn <%ce>', 'mnemon-sync'], origin)
+  check('the commit carries the identity Git was left with',
+    authored === 'Mnemon Local <local@localhost>|Mnemon Local <local@localhost>', authored)
   const tree = await git(['ls-tree', '-r', '--name-only', 'mnemon-sync'], origin)
   check('the branch holds the manifest, the checksums and the payload',
     tree.includes('mnemon/manifest.json') && tree.includes('mnemon/checksums.json')
@@ -242,7 +257,9 @@ try {
 
   console.log('\n2. A second instance previews and imports the same branch')
   b = await launch('instance B', homes.b, data.b, workspaces.b, env)
-  expectOk(await sync(b, 'configure', { repoUrl: origin }), 'configure')
+  const defaultsB = expectOk(await sync(b, 'configure', { repoUrl: origin }), 'configure')
+  check('the second instance reaches the same defaults from a repository alone',
+    defaultsB.branch === 'mnemon-sync' && defaultsB.subdir === 'mnemon/', JSON.stringify(defaultsB))
   const preview = expectOk(await sync(b, 'preview'), 'preview')
   check('preview reports the published commit and its manifest',
     preview.commit === pushed.commit && preview.branch === 'mnemon-sync' && preview.subdir === 'mnemon/'

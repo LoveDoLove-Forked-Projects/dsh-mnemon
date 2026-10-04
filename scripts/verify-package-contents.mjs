@@ -104,7 +104,12 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // (+44,173). Keep less than 1 KB of headroom; the device endpoints, the client
 // ID and every access token stay in the Host bundle, and lib/client.js still
 // carries neither of them.
-const maximumUnpackedBytes = 1_637_500
+// Showing the repository entry before a sign-in, filling the form with the
+// Host's own defaults and letting the commit author stay empty bring the
+// measured package to 1,639,792 bytes (+2,911). Keep less than 1 KB of
+// headroom; the optional author is one branch in the Host bundle and adds no
+// credential, payload or endpoint to either half.
+const maximumUnpackedBytes = 1_640_500
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)
