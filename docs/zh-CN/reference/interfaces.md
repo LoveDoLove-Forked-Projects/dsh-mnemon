@@ -140,11 +140,14 @@ RPC 是 DSH Host 与插件客户端之间的内部桥，不是稳定外部 HTTP 
 | `/dsh-mnemon-activation` | 开关单个记忆空间 | 允许 |
 | `/dsh-mnemon-write` | 其余所有 mutation | 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-pack` | 备份导出与导入 | 需要 `remoteAccess: trusted-host` |
+| `/dsh-mnemon-sync` | Git 仓库同步：配置、推送、预览与拉取 | 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-settings` | Host 与界面设置 | `get` 允许；`mutate` 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-view` | 记忆组合读取 | 允许 |
 | `/dsh-mnemon-view-settings` | 保存记忆组合、安装组件 | 需要 `remoteAccess: trusted-host` |
 
-回环页面直接调用这些通道，由 DSH 浏览器会话认证。远程页面经 DSH API Gateway 到达同一组处理器：通道 `/api`，endpoint 为 `dshMnemon/read`、`dshMnemon/activation`、`dshMnemon/write`、`dshMnemon/pack`、`dshMnemon/settings`、`dshMnemon/view` 与 `dshMnemon/viewWrite`。Gateway 负责 Host/Origin 校验、浏览器配对与响应封装；Mnemon 只额外施加上表中的 `remoteAccess` 授权，并在启动时确定。见[远程管理](../guides/operations.md#远程管理)。
+回环页面直接调用这些通道，由 DSH 浏览器会话认证。远程页面经 DSH API Gateway 到达同一组处理器：通道 `/api`，endpoint 为 `dshMnemon/read`、`dshMnemon/activation`、`dshMnemon/write`、`dshMnemon/pack`、`dshMnemon/settings`、`dshMnemon/view`、`dshMnemon/viewWrite` 与 `dshMnemon/sync`。Gateway 负责 Host/Origin 校验、浏览器配对与响应封装；Mnemon 只额外施加上表中的 `remoteAccess` 授权，并在启动时确定。见[远程管理](../guides/operations.md#远程管理)。
+
+Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert 服务到达这些处理器，其命名远程方法为 `read`、`activation`、`write`、`pack`、`settings`、`view`、`viewWrite` 与 `sync`。缺少该授权时，`write`、`pack`、`sync`、`viewWrite` 与 `settings` 的 `mutate` 会返回 `remote Mnemon management requires remoteAccess: trusted-host`；`read`、`activation`、`view` 与 `settings` 的 `get` 不需要。
 
 ### 读通道
 
@@ -198,6 +201,20 @@ RPC 是 DSH Host 与插件客户端之间的内部桥，不是稳定外部 HTTP 
 | `import` | 把 ZIP 安全合并到当前有效根；只读模式拒绝 |
 
 备份包含私有记忆；调用方必须把已认证 DSH 浏览器会话视为完整 Host 权限，并单独保护导出的归档。
+
+### 同步通道
+
+| Endpoint | 行为 |
+|---|---|
+| `status` | 镜像路径、已配置的仓库、分支、远端目录、`hasToken`、远端可达性与最后一次提交；只读 |
+| `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` |
+| `push` | 把完整的 Mnemon Pack 载荷导出到镜像，提交并推送分支；需要 `confirmed: true` |
+| `preview` | 读取远端 manifest 与 SHA-256 清单，报告哪些组件与本地不同；只读 |
+| `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` |
+
+同步载荷始终是完整的 Mnemon Pack：Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择，组件筛选只作为 `pull` 的一次性参数存在。`configure`、`push` 与 `pull` 都要求 `writeEnabled: true`，否则返回与 pack 导入相同的只读拒绝。token 不会出现在任何响应或错误信息中：`state/sync-git.json`（权限 `0600`）与环境变量 `MNEMON_SYNC_GIT_TOKEN` 在每次网络操作时读取，两者都存在时以环境变量为准。
+
+配置、凭据与失败语义见[备份与恢复](../guides/operations.md#git-仓库同步)。
 
 ### 设置通道
 

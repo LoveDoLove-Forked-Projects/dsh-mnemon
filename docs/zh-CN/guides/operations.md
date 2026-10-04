@@ -109,6 +109,35 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
 
 ![安全导入前经过校验的备份预览](../../assets/webui-v0.5.19/zh-CN/plugin-backup-preview.jpg)
 
+### Git 仓库同步
+
+**存储 → Git 同步**把与 ZIP 备份完全相同的载荷发布到 Git 仓库，供另一台机器拉取。远端存放可读文件；存储根永远不会被变成 Git 工作树。
+
+远端位于所配置的分支与目录下（默认分支 `mnemon-sync`、目录 `mnemon/`）：
+
+```text
+<branch>:<subdir>/
++-- manifest.json       # Mnemon Pack manifest 加同步扩展字段
++-- checksums.json      # 与 ZIP 相同的逐文件 SHA-256 清单
++-- payload/
+    +-- runtime/{memories.json,USER.md,MEMORY.md}
+    +-- documents/{index.json,active/<id>.md,archived/<id>.md}
+    +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
+```
+
+- **Push**：把完整包导出到 `<storageRoot>/state/sync/git`，在其中提交并推送分支。必须显式确认，不会有任何定时推送。
+- **Pull**：先读取远端 manifest 与 SHA-256 清单，预览将要发生的变更，确认后走与“导入 ZIP”相同的路径合并。manifest 或校验和不匹配属于硬失败，不会导入任何内容。
+- 载荷就是既有的 Mnemon Pack 载荷：同一个收集器、同一个校验器、同一个导入器。包内包含 `manifest.json`、SHA-256 清单与组件摘要，同步扩展字段记录通道、分支、目录与推送时间；不认识同步的读取方仍能读到合法的 Mnemon Pack manifest。
+- 载荷始终是完整包：runtime、documents 与 memory-spaces，用户画像包含在 runtime 中。Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择；组件筛选只作为 pull 的一次性可选参数 `components` 存在。
+- `state/sync/git` 下的镜像是可丢弃的，且不属于任何数据组件，因此镜像不会同步自己；删除它只多一次 fetch。
+- 双向操作都要求 `writeEnabled`；只读部署会以与“导入 ZIP”相同的提示拒绝 push 与 pull。
+
+凭据不进入载荷、配置文件与日志：
+
+- token 每次操作时从环境变量 `MNEMON_SYNC_GIT_TOKEN` 或 `state/sync-git.json`（权限 `0600`）读取，不会写入载荷，也不会出现在错误信息里。
+- 状态与配置响应只描述 token（`hasToken`），不回传其值。
+- 远端不可达或没有凭据时仍会本地提交，并报告推送被跳过，不会丢失数据；拿到凭据后再执行一次 push 即可。
+
 ### 恢复演练
 
 1. 在“存储”中将“数据目录”设为“自定义”，填写一个隔离目录并应用。

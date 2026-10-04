@@ -55,9 +55,12 @@ follow an exact cold reference when full text is required
 |       +-- mnemon.db
 +-- state/
     +-- memory-providers.json     # 第三方连接控制面，0600，不进入 Mnemon Pack
+    +-- sync-git.json             # Git 同步配置；含 token 时 0600；不进入 Mnemon Pack
+    +-- sync/
+        +-- git/                  # 同步分支的可丢弃 Git 镜像；不属于任何数据组件
 ```
 
-`storageScope` 决定整个根，而不只是 Mnemon 数据库。`workspace` 范围会为每个已登记 DSH 工作区解析独立的 `<workspace>/.mnemon`。显式启用的 `runtimeUserScope=global` 是唯一的分根例外：Runtime 从全局根读取 USER.md，MEMORY.md 与其他所有组件仍留在所选根。工作台任务使用查看工作区；对话工具与生命周期使用所属会话的 cwd 和已固定的 View。`state/memory-providers.json` 保存第三方 endpoint、目标 URI、身份和可选凭据；文件权限为 `0600`，Host 只返回已配置字段名，不回传凭据值。
+`storageScope` 决定整个根，而不只是 Mnemon 数据库。`workspace` 范围会为每个已登记 DSH 工作区解析独立的 `<workspace>/.mnemon`。显式启用的 `runtimeUserScope=global` 是唯一的分根例外：Runtime 从全局根读取 USER.md，MEMORY.md 与其他所有组件仍留在所选根。工作台任务使用查看工作区；对话工具与生命周期使用所属会话的 cwd 和已固定的 View。`state/memory-providers.json` 保存第三方 endpoint、目标 URI、身份和可选凭据；文件权限为 `0600`，Host 只返回已配置字段名，不回传凭据值。`state/sync-git.json` 保存 Git 同步配置：仓库地址、分支、远端目录、组件选择、提交身份，以及供 HTTPS 远端使用的可选 token。它遵循同样的 `0600` 权限与脱敏规则，既不属于 Config，也不进入 Mnemon Pack。`state/sync/git` 下的镜像是同步分支的可丢弃 Git 工作树：push 与 pull 都在其中工作，存储根本身永远不会成为 Git 工作树；删除镜像只多一次 fetch，不会丢数据。
 
 `workspaces` 布局把四个 area 集中在 `<集中根>/workspaces/<工作区路径哈希>/`；Host 解析目录时不创建文件或修改旧根。只有显式 `runtimeUserScope: global` 会把 USER.md 放在该工作区子目录之外。
 
@@ -225,5 +228,6 @@ Mnemon Native 保留 `temporal`、`semantic`、`causal` 和 `entity` 关系；Hi
 | Documents | `documents/index.json` + 托管 Markdown | excerpt、搜索排序、状态聚合 |
 | Mnemon Native 目录 | `data/.dsh-memory-bodies.json` + 磁盘 Store | Web 状态聚合 |
 | 第三方 Provider 连接 | `state/memory-providers.json` | 脱敏的 Provider 能力与状态 |
+| Git 同步配置 | `state/sync-git.json` | `state/sync/git` 镜像与所配置的远端分支 |
 | 长期记忆 | Mnemon `mnemon.db` 或远程 Provider | 图谱投影、跨 Provider 排名融合 |
 | 审查水位 | Host 进程内存 | 状态页快照；尚未持久化 |

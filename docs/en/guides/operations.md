@@ -109,6 +109,35 @@ Import is governed by `writeEnabled` and is rejected in read-only deployments. A
 
 ![A verified backup preview before Safe import](../../assets/webui-v0.5.19/en/plugin-backup-preview.jpg)
 
+### Git repository sync
+
+**Storage → Git sync** publishes the same payload as ZIP backup to a Git repository, so another machine can pull it. The remote holds readable files; the storage root is never made a Git work tree.
+
+On the configured branch and remote directory (defaults `mnemon-sync` and `mnemon/`):
+
+```text
+<branch>:<subdir>/
++-- manifest.json       # Mnemon Pack manifest plus the sync extension
++-- checksums.json      # SHA-256 per payload file, as in the ZIP
++-- payload/
+    +-- runtime/{memories.json,USER.md,MEMORY.md}
+    +-- documents/{index.json,active/<id>.md,archived/<id>.md}
+    +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
+```
+
+- **Push** exports the complete pack into `<storageRoot>/state/sync/git`, commits it there and pushes the branch. It requires explicit confirmation; nothing pushes on a timer.
+- **Pull** reads the remote manifest and its SHA-256 inventory, previews what would change and, after confirmation, merges through the same path as Import ZIP. A manifest or checksum mismatch is a hard failure that imports nothing.
+- The payload is the existing Mnemon Pack payload: one collector, one validator, one importer. Packs carry `manifest.json`, the SHA-256 inventory and component summaries, and the sync extension records the channel, branch, directory and push time. A reader that does not know sync still reads a valid Mnemon Pack manifest.
+- The payload is always a complete pack: runtime, documents and memory-spaces, with the user profile inside runtime. A pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional one-off `components` parameter on pull.
+- The mirror under `state/sync/git` is disposable and never a pack component, so it cannot sync itself; deleting it costs one fetch.
+- Both directions require `writeEnabled`; a read-only deployment refuses push and pull with the same message Import ZIP uses.
+
+Credentials stay out of the payload, the configuration file and the logs:
+
+- The token is read per operation from the `MNEMON_SYNC_GIT_TOKEN` environment variable or from `state/sync-git.json` (mode `0600`), and is never written into the payload or printed in an error message.
+- Status and configuration responses describe the token (`hasToken`), never its value.
+- An unreachable remote, or a push without credentials, still commits locally and reports that the push was skipped; nothing is lost. Run push again once credentials are available.
+
 ### Recovery rehearsal
 
 1. Under **Storage**, set **Data directory** to **Custom**, enter an isolated directory and apply.

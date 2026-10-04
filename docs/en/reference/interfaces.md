@@ -140,11 +140,14 @@ RPC is an internal Host-to-client bridge, not a stable external HTTP API. Pages 
 | `/dsh-mnemon-activation` | Turning one Memory Space on or off | Allowed |
 | `/dsh-mnemon-write` | Every other mutation | Needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-pack` | Backup export and import | Needs `remoteAccess: trusted-host` |
+| `/dsh-mnemon-sync` | Git repository sync: configuration, push, preview and pull | Needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-settings` | Host and interface settings | `get` allowed; `mutate` needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-view` | Memory composition reads | Allowed |
 | `/dsh-mnemon-view-settings` | Saving memory composition, installing a component | Needs `remoteAccess: trusted-host` |
 
-Loopback pages call these channels directly, authenticated by the DSH browser session. Remote pages reach the same handlers through DSH's API Gateway: channel `/api`, endpoints `dshMnemon/read`, `dshMnemon/activation`, `dshMnemon/write`, `dshMnemon/pack`, `dshMnemon/settings`, `dshMnemon/view` and `dshMnemon/viewWrite`. The Gateway owns Host/Origin validation, browser pairing and the response envelope; Mnemon adds only the `remoteAccess` grant shown above, captured at startup. See [Remote management](../guides/operations.md#remote-management).
+Loopback pages call these channels directly, authenticated by the DSH browser session. Remote pages reach the same handlers through DSH's API Gateway: channel `/api`, endpoints `dshMnemon/read`, `dshMnemon/activation`, `dshMnemon/write`, `dshMnemon/pack`, `dshMnemon/settings`, `dshMnemon/view`, `dshMnemon/viewWrite` and `dshMnemon/sync`. The Gateway owns Host/Origin validation, browser pairing and the response envelope; Mnemon adds only the `remoteAccess` grant shown above, captured at startup. See [Remote management](../guides/operations.md#remote-management).
+
+The Gateway reaches these handlers through Mnemon's `mnemonRemote` Typert service in the `dshMnemon` namespace; its named remote methods are `read`, `activation`, `write`, `pack`, `settings`, `view`, `viewWrite` and `sync`. `write`, `pack`, `sync`, `viewWrite` and the `settings` `mutate` endpoint answer `remote Mnemon management requires remoteAccess: trusted-host` without the grant; `read`, `activation`, `view` and the `settings` `get` endpoint do not need it.
 
 ### Read channel
 
@@ -198,6 +201,20 @@ With `writeEnabled=false`, the activation and write channels stay registered but
 | `import` | Safely merge into the effective root; rejected in read-only mode |
 
 Backups contain private memory, so callers must treat the authenticated DSH browser session as a full Host authority and protect exported archives separately.
+
+### Sync channel
+
+| Endpoint | Behavior |
+|---|---|
+| `status` | Mirror path, configured repository, branch, remote directory, `hasToken`, remote reachability and the last commit; read-only |
+| `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` |
+| `push` | Export the full Mnemon Pack payload into the mirror, commit it and push the branch; requires `confirmed: true` |
+| `preview` | Read the remote manifest and its SHA-256 inventory and report which components differ from local; read-only |
+| `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts an optional one-off `components` parameter |
+
+The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional `pull` parameter. `configure`, `push` and `pull` require `writeEnabled: true` and otherwise answer the same read-only refusal pack import uses. Tokens never appear in a response or an error message: `state/sync-git.json` (mode `0600`) and `MNEMON_SYNC_GIT_TOKEN` are read per network operation, and the environment variable wins when both are set.
+
+Configuration, credentials and the failure semantics are described under [Backup and recovery](../guides/operations.md#git-repository-sync).
 
 ### Settings channel
 
