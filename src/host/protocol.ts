@@ -39,6 +39,16 @@ export const MNEMON_SYNC_CHANNEL = '/dsh-mnemon-sync'
  * which variable wins; the value never does.
  */
 export const MNEMON_SYNC_TOKEN_ENV = 'MNEMON_SYNC_GIT_TOKEN'
+/**
+ * What a storage root publishes before anyone configures it: the branch, the
+ * directory inside it, and the commit identity used when no author is set. They
+ * are declared with the wire constants because the settings form shows the same
+ * defaults the Host would apply to an empty field.
+ */
+export const MNEMON_SYNC_DEFAULT_BRANCH = 'mnemon-sync'
+export const MNEMON_SYNC_DEFAULT_SUBDIR = 'mnemon/'
+export const MNEMON_SYNC_DEFAULT_AUTHOR_NAME = 'dsh-mnemon sync'
+export const MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL = 'mnemon@localhost'
 export const MNEMON_SETTINGS_CHANNEL = '/dsh-mnemon-settings'
 /** DSH API Gateway endpoints used by paired remote Web clients. */
 export const MNEMON_REMOTE_CHANNEL = '/api'

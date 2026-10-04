@@ -330,8 +330,15 @@ export class MnemonGitSync {
       const changed = await this.git(['status', '--porcelain', '--', settings.subdir], { cwd: this.store.mirror(), signal: input.signal })
       const committed = changed.stdout.trim() !== ''
       if (committed) {
+        // An author the user cleared is not passed at all: Git then records the
+        // commit with the identity this machine already has, which is what an
+        // optional field promises.
+        const identity = [
+          ...(settings.authorName === '' ? [] : ['-c', 'user.name=' + settings.authorName]),
+          ...(settings.authorEmail === '' ? [] : ['-c', 'user.email=' + settings.authorEmail]),
+        ]
         const result = await this.git(
-          ['-c', 'user.name=' + settings.authorName, '-c', 'user.email=' + settings.authorEmail, 'commit', '--quiet', '-m', message, '--', settings.subdir],
+          [...identity, 'commit', '--quiet', '-m', message, '--', settings.subdir],
           { cwd: this.store.mirror(), signal: input.signal },
         )
         if (result.exitCode !== 0) throw new Error('git commit failed: ' + tail(result.stderr || result.stdout))

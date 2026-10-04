@@ -1,15 +1,19 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
-import { MNEMON_SYNC_TOKEN_ENV, type MnemonSyncConfigView } from './protocol.ts'
+import {
+  MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL, MNEMON_SYNC_DEFAULT_AUTHOR_NAME,
+  MNEMON_SYNC_DEFAULT_BRANCH, MNEMON_SYNC_DEFAULT_SUBDIR,
+  MNEMON_SYNC_TOKEN_ENV, type MnemonSyncConfigView,
+} from './protocol.ts'
 import type { StorageRoot } from './storage-root.ts'
 
 // The environment variable that overrides the stored token for one operation
-// is declared with the other wire constants, because the settings form names it.
-export { MNEMON_SYNC_TOKEN_ENV }
-export const MNEMON_SYNC_DEFAULT_BRANCH = 'mnemon-sync'
-export const MNEMON_SYNC_DEFAULT_SUBDIR = 'mnemon/'
-export const MNEMON_SYNC_DEFAULT_AUTHOR_NAME = 'dsh-mnemon sync'
-export const MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL = 'mnemon@localhost'
+// and the defaults the settings form shows are declared with the other wire
+// constants, because the browser names both.
+export {
+  MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL, MNEMON_SYNC_DEFAULT_AUTHOR_NAME,
+  MNEMON_SYNC_DEFAULT_BRANCH, MNEMON_SYNC_DEFAULT_SUBDIR, MNEMON_SYNC_TOKEN_ENV,
+}
 export const MNEMON_SYNC_CONFIG_FILE = 'sync-git.json'
 
 const STATE_DIRECTORY = 'state'
@@ -74,14 +78,22 @@ export function syncToken(value: unknown): string {
   return token
 }
 
+/**
+ * The commit author, empty when the commit should use the Git identity the
+ * machine already has: the field is optional, so an empty value is a choice
+ * rather than a mistake.
+ */
 export function syncAuthorName(value: unknown): string {
   const name = String(value ?? '').trim()
-  if (name === '' || name.length > 200 || /[\r\n\0<>]/u.test(name)) throw new Error('sync author name must be one line without angle brackets')
+  if (name === '') return ''
+  if (name.length > 200 || /[\r\n\0<>]/u.test(name)) throw new Error('sync author name must be one line without angle brackets')
   return name
 }
 
+/** The commit author address, empty when the local Git identity supplies both halves. */
 export function syncAuthorEmail(value: unknown): string {
   const email = String(value ?? '').trim()
+  if (email === '') return ''
   if (email.length > 320 || !EMAIL.test(email)) throw new Error('sync author email must be an email address')
   return email
 }
@@ -172,7 +184,12 @@ export class MnemonSyncSettingsStore {
     }
   }
 
-  /** Apply one browser patch; a null or empty value clears the field it names. */
+  /**
+   * Apply one browser patch. An empty value means what the field's own hint
+   * says: the repository and the token are cleared, the branch and the
+   * directory go back to the defaults, and an empty commit author falls back to
+   * the Git identity of the machine running the sync.
+   */
   patch(patch: unknown): MnemonSyncSettings {
     const fields = record(patch)
     if (fields === undefined) throw new Error('sync configuration must be an object')
@@ -182,8 +199,8 @@ export class MnemonSyncSettingsStore {
       if (fields.repoUrl === null || fields.repoUrl === '') delete next.repoUrl
       else next.repoUrl = syncRepositoryUrl(fields.repoUrl)
     }
-    if ('branch' in fields) next.branch = syncBranch(fields.branch)
-    if ('subdir' in fields) next.subdir = syncSubdirectory(fields.subdir)
+    if ('branch' in fields) next.branch = fields.branch === null || fields.branch === '' ? MNEMON_SYNC_DEFAULT_BRANCH : syncBranch(fields.branch)
+    if ('subdir' in fields) next.subdir = fields.subdir === null || fields.subdir === '' ? MNEMON_SYNC_DEFAULT_SUBDIR : syncSubdirectory(fields.subdir)
     if ('token' in fields) {
       if (fields.token === null || fields.token === '') delete next.token
       else next.token = syncToken(fields.token)
