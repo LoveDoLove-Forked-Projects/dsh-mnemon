@@ -38,22 +38,22 @@ dsh-mnemon 可以把记忆发布到 Git 仓库，并在另一台机器上恢复�
 
 | 字段 | 默认值 | 说明 |
 |---|---|---|
-| `repoUrl` | - | `https://`、`ssh://`、`git@host:path` 或本地绝对路径；token 不会写进该地址 |
-| `branch` | `mnemon-sync` | 按 Git 分支名规则校验 |
-| `subdir` | `mnemon/` | 相对路径，不含 `..`，不能是绝对路径 |
+| `repoUrl` | - | `https://`、`ssh://`、`git@host:path` 或本地绝对路径；token 不会写进该地址。唯一没有默认值的字段 |
+| `branch` | `mnemon-sync` | 按 Git 分支名规则校验；留空恢复该默认值 |
+| `subdir` | `mnemon/` | 相对路径，不含 `..`，不能是绝对路径；留空恢复该默认值 |
 | `token` | - | 可选回退，仅 HTTPS 远端；`MNEMON_SYNC_GIT_TOKEN` 优先，且永不经 RPC 返回。GitHub 登录是首选凭据，保存在本文件之外 |
-| `authorName` | `dsh-mnemon sync` | 同步分支的提交身份 |
-| `authorEmail` | `mnemon@localhost` | 同步分支的提交身份 |
+| `authorName` | `dsh-mnemon sync` | 同步分支的提交身份，选填；留空则使用本机 Git 的 `user.name` |
+| `authorEmail` | `mnemon@localhost` | 同步分支的提交身份，选填；留空则使用本机 Git 的 `user.email` |
 
 配置中没有 `components` 字段。Mnemon Pack 校验 manifest 的 `scope` 只能是 `full` 或恰好一个组件，任意子集在格式中无法表示，因此同步载荷始终是完整包；唯一的组件筛选是 pull 上的一次性可选参数 `components`。`<storageRoot>/state/sync/git` 下的镜像是可丢弃的 Git 工作树；存储根本身永远不会成为 Git 工作树，`state/` 也不属于任何数据组件，因此镜像不会同步自己。Git 通过 Host 既有的 `runProcess` 以参数数组和 `shell: false` 运行；不引入新依赖，也不拼接 shell 字符串。
 
 ## 验证
 
-本节是验收运行的记录，不是计划。运行环境为 Windows 11、Node 26.0.0、Git 2.55.0.windows.5，被测对象就是本 PR 携带的 revision。验收工具是 `scripts/verify-sync-git.mjs`，以 `pnpm run e2e:sync` 运行；它会创建两个一次性存储根，把插件安装进两个一次性 `DSH_HOME` profile，启动两个真实的 `dsh web` 实例，用各自的启动 token 换取浏览器 cookie，并以浏览器使用的同一套信封经 loopback HTTP 驱动 `/dsh-mnemon-sync` 与 `/dsh-mnemon-write`。唯一的替身是模型 endpoint，而它从未收到任何请求。
+本节是验收运行的记录，不是计划。运行环境为 Windows 11、Node 26.0.0、Git 2.55.0.windows.5，被测对象就是本 PR 携带的 revision。验收工具是 `scripts/verify-sync-git.mjs`，以 `node scripts/verify-sync-git.mjs` 运行（`pnpm run e2e:sync` 运行的是同一个脚本；本机上 pnpm 包装层会受跨盘符 `TEMP` 影响，直接用 Node 运行则不会）；它会创建两个一次性存储根，把插件安装进两个一次性 `DSH_HOME` profile，启动两个真实的 `dsh web` 实例，用各自的启动 token 换取浏览器 cookie，并以浏览器使用的同一套信封经 loopback HTTP 驱动 `/dsh-mnemon-sync` 与 `/dsh-mnemon-write`。唯一的替身是模型 endpoint，而它从未收到任何请求。
 
 ```sh
 pnpm run build && pnpm --workspace-concurrency=4 -r build
-pnpm run e2e:sync
+node scripts/verify-sync-git.mjs
 ```
 
 运行结果：
@@ -62,12 +62,15 @@ pnpm run e2e:sync
 1. One instance publishes the whole pack to a real repository
   ok   a fresh storage root reports Git and an unconfigured remote
   ok   the configuration path lives inside the storage root
-  ok   configure names the credential without carrying it
+  ok   a repository alone is enough: branch, directory and author keep their defaults
+  ok   an empty author clears the identity so Git uses the one on this machine
+  ok   an empty branch and directory fall back to the defaults
   ok   the working memory accepted one entry through the write channel
   ok   the configured remote is reachable and still has no branch
   ok   an unconfirmed push is refused
   ok   push committed and published one pack
   ok   the pack holds every component
+  ok   the commit carries the identity Git was left with
   ok   the branch holds the manifest, the checksums and the payload
   ok   the published working memory carries the entry
   ok   the manifest declares the pack and its channel
@@ -76,6 +79,7 @@ pnpm run e2e:sync
   ok   the branch holds exactly one commit
 
 2. A second instance previews and imports the same branch
+  ok   the second instance reaches the same defaults from a repository alone
   ok   preview reports the published commit and its manifest
   ok   preview reports the working memory as changed against an empty root
   ok   preview imported nothing
@@ -101,20 +105,20 @@ pnpm run e2e:sync
   ok   the sign-in surface reports what this Host can do
   ok   the store is mounted and the account is still signed out
   ok   cancelling a flow that never started leaves the account signed out
-
-7. The channel shuts down
   ok   both instances shut down on the polite signal
 
 Git sync end-to-end verification passed.
 ```
 
-同一通道在真实 WebUI 中的表现（不是验收脚本）：真实 `dsh web` 实例提供存储页，仓库经表单配置，一条记忆经常规写入路径写入，分支用按钮发布。三张图都来自这次会话，且都不含凭据、个人路径、账号名与仓库名。
+同一通道在真实 WebUI 中的表现（不是验收脚本）：真实 `dsh web` 实例提供存储页，仓库经表单配置，一条记忆经常规写入路径写入，分支用按钮发布。四张图都来自这次会话，且都不含凭据、账号名与仓库名；图里的绝对路径来自一次性验收实例的临时存储根。
 
-| 在存储页保存并推送 | 导入之前读回的远端 | 在同一页面上登录 GitHub |
-|---|---|---|
-| ![仓库同步行显示已推送的提交与提示](./sync-pushed-zh.png) | ![预览行给出远端提交、组件与文件差异](./sync-preview-zh.png) | ![GitHub 账号区块显示设备码、复制按钮与授权链接](./sync-github-zh.png) |
+| 在存储页保存并推送 | 导入之前读回的远端 | 在同一页面上登录 GitHub | 未登录时的默认值与选填字段 |
+|---|---|---|---|
+| ![仓库同步行显示已推送的提交与提示](./sync-pushed-zh.png) | ![预览行给出远端提交、组件与文件差异](./sync-preview-zh.png) | ![GitHub 账号区块显示设备码、复制按钮与授权链接](./sync-github-zh.png) | ![未登录时选择仓库区块的说明、预填的分支与远端目录，以及提交者字段的「可选」占位](./sync-defaults-zh.png) |
 
 推送后页面提示 `已推送 0df94229（7 个文件，2.0 KB）。`，分支上的 `mnemon/payload/runtime/USER.md` 持有片刻之前写入的条目。随后 `检查远端` 报告 `远端 0df94229 · 3 个组件 · 1.9 KB`、`0/3 个组件与本地不同` 与 `新增 0 · 丢失 0 · 不同 1`，且没有导入任何内容：只有点击 `拉取并合并` 才会合并。验收实例的界面语言是中文，因此图中的文案为中文。
+
+第四张图是未登录状态下的同一表单：`选择仓库` 区块仍然可见，并写明「登录后这里会列出你的仓库，可直接选用或新建；不登录也可以在手填表单里填写地址」；`分支` 与 `远端目录` 已预填 `mnemon-sync` 与 `mnemon/`，下方分别写明「默认 mnemon-sync」与「仓库内存放 payload 的目录，默认 mnemon/」；`提交者姓名` 与 `提交者邮箱` 都显示「可选」占位，姓名下方写明「留空则使用本机 Git 身份」。
 
 这次运行在单元测试之外确立的事实：
 
@@ -126,6 +130,8 @@ Git sync end-to-end verification passed.
 - 设备码流程在 `tests/sync-rpc.spec.ts` 中以桩化的 GitHub 端到端驱动：`github-start` 返回设备码与验证地址，`github-poll` 返回带登录名的 `success`，而生成的访问令牌没有出现在任何响应里——只有 `credentialSource: 'github'` 与 `credentialLogin: 'octocat'` 出现。
 - 未确认的 push 与 pull 分别以 `Publishing the sync branch requires confirmation` 与 `Importing the remote Mnemon payload requires confirmation` 被拒；未知 endpoint 返回 `bad-request` 与 `unknown sync endpoint: nope`。
 - 登录区块随后在真实页面上被驱动，而非验收脚本：`github-start` 返回真实设备码与授权链接，页面在 32 秒内发出 7 次 `github-poll`，相邻间隔为 5.39 s、5.38 s、5.40 s、5.38 s、5.41 s 与 5.38 s，即 GitHub 要求的 5 秒间隔加上往返耗时。任何响应都不携带令牌。
+- 表单在未登录时也给出 `选择仓库` 区块：`github-status` 报告登录可用时该区块即渲染，未登录只是把列表与新建按钮换成一句说明，手填表单始终可用。
+- 只填仓库地址即可完成配置：`configure` 只带 `repoUrl` 时，`branch`、`subdir`、`authorName` 与 `authorEmail` 都取默认值；`branch` 或 `subdir` 传空串会恢复默认值，`authorName` 与 `authorEmail` 传空串则让 Git 使用本机身份。提交作者因此等于 `git var GIT_AUTHOR_IDENT` 报出的身份，因为 Git 会拒绝 `-c user.name=` 这样的空值参数。
 - 账号登录后，该区块列出该账号的仓库，标记私有仓库、禁用无推送权限的仓库，选中其一会把地址写入仓库字段。上一次会话遗留的设备码在登录后不再显示，区块改为报告 `已登录 @…`，并有回归测试守住这一情形。
 
 运行记录到的两种行为不是缺陷，但在读取真实远端之前值得了解：

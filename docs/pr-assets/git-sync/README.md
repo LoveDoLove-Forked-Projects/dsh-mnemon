@@ -38,22 +38,22 @@ Configuration lives in `<storageRoot>/state/sync-git.json` with mode `0600`. It 
 
 | Field | Default | Notes |
 |---|---|---|
-| `repoUrl` | - | `https://`, `ssh://`, `git@host:path` or an absolute local path; the token is never embedded in it |
-| `branch` | `mnemon-sync` | validated as a Git branch name |
-| `subdir` | `mnemon/` | relative, no `..`, no absolute path |
+| `repoUrl` | - | `https://`, `ssh://`, `git@host:path` or an absolute local path; the token is never embedded in it. The only field without a default |
+| `branch` | `mnemon-sync` | validated as a Git branch name; an empty value restores this default |
+| `subdir` | `mnemon/` | relative, no `..`, no absolute path; an empty value restores this default |
 | `token` | - | optional fallback, HTTPS remotes only; `MNEMON_SYNC_GIT_TOKEN` overrides it and it is never returned by RPC. GitHub sign-in is the preferred credential and lives outside this file |
-| `authorName` | `dsh-mnemon sync` | commit identity for the sync branch |
-| `authorEmail` | `mnemon@localhost` | commit identity for the sync branch |
+| `authorName` | `dsh-mnemon sync` | commit identity for the sync branch, optional; empty means the `user.name` of this machine |
+| `authorEmail` | `mnemon@localhost` | commit identity for the sync branch, optional; empty means the `user.email` of this machine |
 
 There is no `components` field. Mnemon Pack validates a manifest `scope` as `full` or exactly one component, so an arbitrary subset has no representation in the format and the sync payload is always the full pack; the only component filter is the optional one-off `components` parameter on pull. The mirror under `<storageRoot>/state/sync/git` is a disposable Git work tree; the storage root is never made a Git work tree, and `state/` is not part of any pack component, so the mirror cannot sync itself. Git runs through the Host's existing `runProcess` with an argument array and `shell: false`; no new dependency and no shell string interpolation.
 
 ## Verification
 
-This section is the record of the acceptance run, not a plan. It was run on Windows 11 with Node 26.0.0 and Git 2.55.0.windows.5, against the revision the pull request carries. The harness is `scripts/verify-sync-git.mjs`, run with `pnpm run e2e:sync`; it builds two disposable storage roots, installs the plugin into two disposable `DSH_HOME` profiles, starts two real `dsh web` instances, exchanges each launch token for its browser cookie, and drives `/dsh-mnemon-sync` and `/dsh-mnemon-write` over loopback HTTP with the same envelopes the browser sends. The only stand-in is the model endpoint, which never receives a request.
+This section is the record of the acceptance run, not a plan. It was run on Windows 11 with Node 26.0.0 and Git 2.55.0.windows.5, against the revision the pull request carries. The harness is `scripts/verify-sync-git.mjs`, run as `node scripts/verify-sync-git.mjs` (`pnpm run e2e:sync` runs the same script; on this machine the pnpm wrapper is affected by a `TEMP` on another drive, while running it through Node is not); it builds two disposable storage roots, installs the plugin into two disposable `DSH_HOME` profiles, starts two real `dsh web` instances, exchanges each launch token for its browser cookie, and drives `/dsh-mnemon-sync` and `/dsh-mnemon-write` over loopback HTTP with the same envelopes the browser sends. The only stand-in is the model endpoint, which never receives a request.
 
 ```sh
 pnpm run build && pnpm --workspace-concurrency=4 -r build
-pnpm run e2e:sync
+node scripts/verify-sync-git.mjs
 ```
 
 The run reported:
@@ -62,12 +62,15 @@ The run reported:
 1. One instance publishes the whole pack to a real repository
   ok   a fresh storage root reports Git and an unconfigured remote
   ok   the configuration path lives inside the storage root
-  ok   configure names the credential without carrying it
+  ok   a repository alone is enough: branch, directory and author keep their defaults
+  ok   an empty author clears the identity so Git uses the one on this machine
+  ok   an empty branch and directory fall back to the defaults
   ok   the working memory accepted one entry through the write channel
   ok   the configured remote is reachable and still has no branch
   ok   an unconfirmed push is refused
   ok   push committed and published one pack
   ok   the pack holds every component
+  ok   the commit carries the identity Git was left with
   ok   the branch holds the manifest, the checksums and the payload
   ok   the published working memory carries the entry
   ok   the manifest declares the pack and its channel
@@ -76,6 +79,7 @@ The run reported:
   ok   the branch holds exactly one commit
 
 2. A second instance previews and imports the same branch
+  ok   the second instance reaches the same defaults from a repository alone
   ok   preview reports the published commit and its manifest
   ok   preview reports the working memory as changed against an empty root
   ok   preview imported nothing
@@ -101,20 +105,20 @@ The run reported:
   ok   the sign-in surface reports what this Host can do
   ok   the store is mounted and the account is still signed out
   ok   cancelling a flow that never started leaves the account signed out
-
-7. The channel shuts down
   ok   both instances shut down on the polite signal
 
 Git sync end-to-end verification passed.
 ```
 
-The same channel through the real WebUI, rather than the harness: a real `dsh web` instance served the storage page, the repository was configured through the form, one entry was written through the normal write path, and the branch was published with the button. All three images come from that session, and none of them shows a credential, a personal path, an account name or a repository name.
+The same channel through the real WebUI, rather than the harness: a real `dsh web` instance served the storage page, the repository was configured through the form, one entry was written through the normal write path, and the branch was published with the button. All four images come from that session, and none of them shows a credential, an account name or a repository name; the absolute paths in them belong to the disposable storage roots of one acceptance instance.
 
-| Save and push from the storage page | Reading the remote back before importing anything | Signing in to GitHub from the same page |
-|---|---|---|
-| ![The repository sync row with the published commit and its notice](./sync-pushed-zh.png) | ![The preview line naming the remote commit, its components and the file deltas](./sync-preview-zh.png) | ![The GitHub account block showing the device code, the copy button and the verification link](./sync-github-zh.png) |
+| Save and push from the storage page | Reading the remote back before importing anything | Signing in to GitHub from the same page | The defaults and the optional fields while signed out |
+|---|---|---|---|
+| ![The repository sync row with the published commit and its notice](./sync-pushed-zh.png) | ![The preview line naming the remote commit, its components and the file deltas](./sync-preview-zh.png) | ![The GitHub account block showing the device code, the copy button and the verification link](./sync-github-zh.png) | ![The repository block's note, the prefilled branch and directory, and the optional placeholders of the author fields](./sync-defaults-zh.png) |
 
 The page reported `已推送 0df94229（7 个文件，2.0 KB）。` after the push, and the branch held `mnemon/payload/runtime/USER.md` with the entry that had been written a moment earlier. `检查远端` then reported `远端 0df94229 · 3 个组件 · 1.9 KB`, `0/3 个组件与本地不同` and `新增 0 · 丢失 0 · 不同 1` without importing anything: the merge happens only after `拉取并合并`. The fixture runs in Chinese, which is why the copy in the images is Chinese.
+
+The fourth image is the same form while signed out: the `选择仓库` block is still visible and says that a sign-in lists the repositories while an address typed below works without one; `分支` and `远端目录` are prefilled with `mnemon-sync` and `mnemon/` and say `默认 mnemon-sync` and `仓库内存放 payload 的目录，默认 mnemon/` under them; `提交者姓名` and `提交者邮箱` both show the `可选` placeholder, and the name carries `留空则使用本机 Git 身份`.
 
 What the run establishes, beyond the unit suites:
 
@@ -126,6 +130,8 @@ What the run establishes, beyond the unit suites:
 - The device flow was driven end to end over the channel in `tests/sync-rpc.spec.ts` with a stubbed GitHub: `github-start` returned the user code and the verification URL, `github-poll` returned `success` with the login, and the resulting access token appeared in no answer — only `credentialSource: 'github'` and `credentialLogin: 'octocat'` did.
 - Unconfirmed push and pull were refused with `Publishing the sync branch requires confirmation` and `Importing the remote Mnemon payload requires confirmation`, and an unknown endpoint returned `bad-request` with `unknown sync endpoint: nope`.
 - The sign-in block was then driven through the real page rather than the harness: `github-start` answered with a live device code and the verification link, and the page repeated `github-poll` seven times in thirty-two seconds, 5.39 s, 5.38 s, 5.40 s, 5.38 s, 5.41 s and 5.38 s apart, which is GitHub's five-second interval plus the round trip. No answer carried a token.
+- The form shows the `选择仓库` block while signed out too: it renders as soon as `github-status` reports sign-in available, and without a sign-in it replaces the list and the create button with one sentence while the hand-typed form stays usable.
+- A repository address alone configures the sync: `configure` carrying only `repoUrl` leaves `branch`, `subdir`, `authorName` and `authorEmail` at their defaults; an empty `branch` or `subdir` restores the default, and an empty `authorName` or `authorEmail` lets Git use the identity of the machine. The commit author is therefore exactly what `git var GIT_AUTHOR_IDENT` reports, because Git rejects an empty `-c user.name=` value.
 - With an account signed in, the block listed that account's repositories, marked the private ones and disabled the ones without push access, and choosing one wrote its URL into the repository field. A device code left over from an earlier session is not shown once the account is signed in; the block reports `Signed in as @…` instead, and a regression test holds that case.
 
 Two behaviors the run recorded that are not defects, and are worth knowing before reading a real remote:
