@@ -203,7 +203,8 @@ try {
   }), 'configure')
   check('configure echoes the effective settings without a token',
     configured.repoUrl === origin && configured.branch === 'mnemon-sync' && configured.subdir === 'mnemon/'
-    && configured.hasToken === false && configured.authorName === 'Mnemon Sync E2E', JSON.stringify(configured))
+    && configured.hasToken === false && configured.credentialSource === 'none'
+    && configured.authorName === 'Mnemon Sync E2E', JSON.stringify(configured))
   const added = expectOk(await call(a, '/dsh-mnemon-write', 'runtime-memory', { action: 'add', target: 'memory', content: MARKER }), 'runtime-memory')
   check('the working memory accepted one entry through the write channel', added.success === true && added.entryCount === 1, JSON.stringify(added))
   expectOk(await call(a, '/dsh-mnemon-write', 'runtime-memory', { action: 'add', target: 'user', content: PROFILE }), 'runtime-memory user')
@@ -281,9 +282,13 @@ try {
 
   console.log('\n4. A token never reaches a response, a file, or the mirror')
   const withToken = expectOk(await sync(a, 'configure', { token: TOKEN }), 'configure')
-  check('configure answers with hasToken only', withToken.hasToken === true && JSON.stringify(withToken).includes(TOKEN) === false, JSON.stringify(withToken))
+  check('configure names the credential without carrying it',
+    withToken.hasToken === true && withToken.credentialSource === 'token'
+    && JSON.stringify(withToken).includes(TOKEN) === false, JSON.stringify(withToken))
   const tokenStatus = expectOk(await sync(a, 'status'), 'status')
-  check('status answers with hasToken only', tokenStatus.config.hasToken === true && JSON.stringify(tokenStatus).includes(TOKEN) === false)
+  check('status names the credential without carrying it',
+    tokenStatus.config.hasToken === true && tokenStatus.config.credentialSource === 'token'
+    && JSON.stringify(tokenStatus).includes(TOKEN) === false)
   const stateFile = await readFile(join(data.a, 'state', 'sync-git.json'), 'utf8')
   check('the token is stored in the 0600 state file', stateFile.includes(TOKEN))
   const masked = await sync(a, 'configure', { repoUrl: 'https://127.0.0.1:1/owner/repo.git' })
@@ -302,6 +307,28 @@ try {
   const unknown = await sync(a, 'nope', {})
   expectFailure(unknown, /unknown sync endpoint: nope/u, 'an unknown endpoint')
   check('an unknown endpoint is a bad request', unknown.error.code === 'bad-request')
+
+  console.log('\n6. GitHub sign-in answers over the channel without a browser')
+  const signIn = expectOk(await sync(a, 'github-status'), 'github-status')
+  check('the sign-in surface reports what this Host can do',
+    typeof signIn.available === 'boolean' && typeof signIn.signedIn === 'boolean' && typeof signIn.writable === 'boolean'
+    && signIn.flow === undefined, JSON.stringify(signIn))
+  if (signIn.available === true) {
+    // No browser step runs here, so the account stays signed out; the picker
+    // must refuse by name instead of reaching GitHub with no token.
+    check('the store is mounted and the account is still signed out', signIn.signedIn === false, JSON.stringify(signIn))
+    const anonymous = await sync(a, 'github-repositories')
+    expectFailure(anonymous, /sign in to GitHub before choosing a repository/u, 'listing repositories while signed out')
+    const cancelled = expectOk(await sync(a, 'github-cancel'), 'github-cancel')
+    check('cancelling a flow that never started leaves the account signed out',
+      cancelled.available === true && cancelled.signedIn === false && cancelled.flow === undefined, JSON.stringify(cancelled))
+  } else {
+    check('a Host without the store reports the login as unavailable', signIn.writable === false, JSON.stringify(signIn))
+    const refused = await sync(a, 'github-start')
+    expectFailure(refused, /no credentials store/u, 'starting a sign-in without a store')
+  }
+  const unknownGitHub = await sync(a, 'github-nope')
+  expectFailure(unknownGitHub, /unknown sync endpoint: github-nope/u, 'an unknown GitHub endpoint')
 
   await stop(a)
   await stop(b)

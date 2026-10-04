@@ -30,7 +30,8 @@ const allowedRootFiles = new Set(['package.json', 'cordis.patch.yml', 'LICENSE',
 const missing = required.filter(path => !paths.includes(path))
 const unexpected = paths.filter(path => !allowedRootFiles.has(path) && !executables.includes(path) && !locales.includes(path) && !(/^lib\/.+\.(?:js|d\.ts)$/.test(path)))
 const clientBundle = readFileSync(new URL('../lib/client.js', import.meta.url), 'utf8')
-const hostLeaks = ['require("node:', "require('node:", '#region src/host/version-updates.ts', '#region src/host/rpc.ts']
+const hostLeaks = ['require("node:', "require('node:", '#region src/host/version-updates.ts', '#region src/host/rpc.ts',
+  'login/device/code', 'login/oauth/access_token', 'api.github.com', 'Ov23liq4i7n8UsylGRfb']
   .filter(pattern => clientBundle.includes(pattern))
 const readmeFiles = ['README.md', 'README.zh-CN.md']
 const relativeReadmeImages = readmeFiles.flatMap((path) => {
@@ -98,7 +99,12 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // page's section in both languages bring the measured package to 1,592,708 bytes
 // (+67,477 over the 1,525,231 measured on main). Keep less than 1 KB of headroom;
 // no credential, payload or Git implementation enters the artifact.
-const maximumUnpackedBytes = 1_593_500
+// GitHub sign-in's device flow, its credential port and the account/repository
+// blocks in both languages bring the measured package to 1,636,881 bytes
+// (+44,173). Keep less than 1 KB of headroom; the device endpoints, the client
+// ID and every access token stay in the Host bundle, and lib/client.js still
+// carries neither of them.
+const maximumUnpackedBytes = 1_637_500
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)
