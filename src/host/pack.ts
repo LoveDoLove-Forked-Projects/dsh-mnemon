@@ -334,9 +334,12 @@ function acquireLock(path: string): () => void {
       sleepSync(LOCK_RETRY_MS)
     }
   }
+  // The lock is the lock file's existence, not its descriptor. Windows refuses
+  // to rename a directory that holds an open handle, and an import replaces the
+  // runtime and documents directories that carry these very lock files.
   const identity = fstatSync(descriptor)
+  closeSync(descriptor)
   return () => {
-    closeSync(descriptor!)
     try {
       const current = lstatSync(path)
       if (current.dev === identity.dev && current.ino === identity.ino) rmSync(path, { force: true })
