@@ -107,6 +107,20 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     expect(await git(['status', '--porcelain'], join(machineA.root, 'state', 'sync', 'git'))).toBe('')
   })
 
+  it('commits under the identity of this machine when the author is blank', async () => {
+    // The identity Git would use on its own, as Git itself reports it.
+    const identity = (await git(['var', 'GIT_AUTHOR_IDENT'])).trim()
+    const expected = identity.slice(0, identity.indexOf('>') + 1)
+    const origin = await repository('sync-author-remote')
+    const machineA = await machine('sync-author', origin)
+    const cleared = await machineA.sync.configure({ authorName: '', authorEmail: '' })
+    expect(cleared).toMatchObject({ authorName: '', authorEmail: '', branch: 'mnemon-sync', subdir: 'mnemon/' })
+
+    const pushed = await machineA.sync.push({ message: 'Sync without an author' })
+    expect(pushed).toMatchObject({ committed: true, pushed: true })
+    expect(await git(['log', '-1', '--format=%an <%ae>', 'mnemon-sync'], origin)).toBe(expected + '\n')
+  })
+
   it('records the channel on the manifest without breaking the Mnemon Pack reader', async () => {
     const origin = await repository('sync-manifest-remote')
     const machineA = await machine('sync-manifest', origin)

@@ -185,6 +185,34 @@ describe('Memory enhancement settings', () => {
     await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-sync', 'github-repositories', {}))
   })
 
+  it('offers the repository entry before a sign-in and marks the author as optional', async () => {
+    const { connection } = fixture({ github: { available: true, signedIn: false, writable: true } })
+    render(<MnemonSettingsCard scope={readyScope()} connection={connection} />)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: '配置' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+
+    // Signed out, the block still explains what a sign-in adds instead of hiding itself.
+    expect(await screen.findByText('登录后这里会列出你的仓库，可直接选用或新建；不登录也可以在手填表单里填写地址')).toBeTruthy()
+    expect(screen.queryByLabelText('新建仓库')).toBeNull()
+    // Branch and directory arrive filled in, and the author is optional.
+    expect((screen.getByLabelText('分支') as HTMLInputElement).value).toBe('mnemon-sync')
+    expect((screen.getByLabelText('远端目录') as HTMLInputElement).value).toBe('mnemon/')
+    expect((screen.getByLabelText('提交者姓名') as HTMLInputElement).placeholder).toBe('可选')
+    expect((screen.getByLabelText('提交者邮箱') as HTMLInputElement).placeholder).toBe('可选')
+    expect(screen.getByText('留空则使用本机 Git 身份')).toBeTruthy()
+    cleanup()
+
+    const signedIn = fixture({ github: { available: true, signedIn: true, writable: true, login: 'octocat' } })
+    render(<MnemonSettingsCard scope={readyScope()} connection={signedIn.connection} />)
+    await waitFor(() => expect(screen.getByRole('button', { name: '配置' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+
+    // The same entry turns into a real picker and a create form once signed in.
+    expect((await screen.findByLabelText('新建仓库') as HTMLInputElement).placeholder).toBe('mnemon-memory')
+    expect(screen.getByText('账号下还没有仓库，可以在下面新建')).toBeTruthy()
+  })
+
   it('hides the enhancements and keeps the other settings when the View dashboard fails', async () => {
     const { connection, call } = fixture({ unavailable: true })
     render(<MnemonSettingsCard scope={readyScope()} connection={connection} />)

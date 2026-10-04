@@ -77,6 +77,22 @@ describe('Mnemon sync configuration', () => {
     expect(cleared.authorName).toBe('Memory Bot')
   })
 
+  it('falls back to the defaults and to the machine identity for an empty value', () => {
+    const { settings } = store()
+    settings.write(settings.patch({ branch: 'user/mnemon-sync', subdir: 'nested/memory/', authorName: 'Memory Bot', authorEmail: 'bot@localhost' }))
+    const reset = settings.patch({ branch: '', subdir: '' })
+    expect(reset.branch).toBe(MNEMON_SYNC_DEFAULT_BRANCH)
+    expect(reset.subdir).toBe(MNEMON_SYNC_DEFAULT_SUBDIR)
+    // A blank author is a choice rather than a missing value: the commit falls
+    // back to the Git identity this machine already has.
+    const identity = settings.patch({ authorName: '', authorEmail: '' })
+    expect(identity.authorName).toBe('')
+    expect(identity.authorEmail).toBe('')
+    // Only the fields a patch names move; the branch on disk stays where the
+    // earlier patch left it.
+    expect(identity.branch).toBe('user/mnemon-sync')
+  })
+
   it('rejects an unknown field, a malformed file and an unsafe directory', () => {
     const { root, settings } = store()
     expect(() => settings.patch({ components: ['runtime'] })).toThrow('unknown sync setting: components')
