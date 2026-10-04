@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveConfig, type Config } from '../src/host/config.ts'
 import type { HostConnectionHandle, HostRpcHandler } from '../src/host/dsh.ts'
 import type { MnemonLifecycle } from '../src/host/lifecycle.ts'
-import { createActivationHandler, createPackHandler, createReadHandler, createWriteHandler, MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_WRITE_CHANNEL, registerRpc } from '../src/host/rpc.ts'
+import { createActivationHandler, createPackHandler, createReadHandler, createSyncHandler, createWriteHandler, MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL, registerRpc } from '../src/host/rpc.ts'
 import type { LiveMnemonRuntime, MnemonRuntimeGraph } from '../src/host/runtime.ts'
 import { MnemonSubagentCoordinator } from '../src/host/subagent.ts'
 import type { VersionUpdateManager } from '../src/host/version-updates.ts'
@@ -52,6 +52,18 @@ function protocolFixture(options: Config = {}) {
       exportPack: vi.fn(async () => ({ fileName: 'backup.zip', base64: 'eA==' })),
       inspectPack: vi.fn(() => ({ archiveBytes: 1 })),
       importPack: vi.fn(async () => ({ imported: true })),
+    },
+    sync: {
+      status: vi.fn(async () => ({
+        configured: false,
+        config: { branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost' },
+        configPath: '/fixture/data/state/sync-git.json', mirrorPath: '/fixture/data/state/sync/git',
+        git: { available: true, required: '2.20' }, remote: { reachable: false, branchExists: false },
+      })),
+      configure: vi.fn(() => ({ branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost' })),
+      push: vi.fn(async () => ({ pushed: false })),
+      preview: vi.fn(async () => ({ commit: 'a'.repeat(40) })),
+      pull: vi.fn(async () => ({ imported: true })),
     },
   }
   const route = {
@@ -412,8 +424,8 @@ describe('Host assistance and channels', () => {
     const f = protocolFixture({ writeEnabled: false })
     const handle = vi.fn()
     registerRpc({ rpc: { handle } } as unknown as HostConnectionHandle, f.runtime)
-    expect(handle).toHaveBeenCalledTimes(4)
-    for (const channel of [MNEMON_READ_CHANNEL, MNEMON_ACTIVATION_CHANNEL, MNEMON_WRITE_CHANNEL, MNEMON_PACK_CHANNEL]) {
+    expect(handle).toHaveBeenCalledTimes(5)
+    for (const channel of [MNEMON_READ_CHANNEL, MNEMON_ACTIVATION_CHANNEL, MNEMON_WRITE_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_SYNC_CHANNEL]) {
       expect(handle).toHaveBeenCalledWith(channel, expect.any(Function))
     }
     for (const channel of [MNEMON_WRITE_CHANNEL, MNEMON_ACTIVATION_CHANNEL]) {
@@ -436,6 +448,43 @@ describe('Host assistance and channels', () => {
     const readonly = protocolFixture({ writeEnabled: false })
     expect(await createPackHandler(readonly.runtime)('import', { base64: 'eA==' })).toMatchObject({ ok: false })
     expect(readonly.graph.packs.importPack).not.toHaveBeenCalled()
+  })
+
+  it('keeps Git sync authenticated, selected-root scoped, and confirmed in both directions', async () => {
+    const f = protocolFixture()
+    const handler = createSyncHandler(f.runtime)
+    expect(await handler('status', {})).toMatchObject({ ok: true, value: { configured: false, git: { available: true } } })
+    expect(f.graph.sync.status).toHaveBeenCalledWith(undefined)
+    expect(await handler('configure', { repoUrl: 'https://example.test/owner/repo.git', token: 'ghp_secret' })).toMatchObject({ ok: true })
+    expect(f.graph.sync.configure).toHaveBeenCalledWith({ repoUrl: 'https://example.test/owner/repo.git', token: 'ghp_secret' })
+    expect(await handler('preview', {})).toMatchObject({ ok: true })
+    expect(f.graph.sync.preview).toHaveBeenCalledWith(undefined)
+    // The page cannot publish or import without naming the operation as confirmed.
+    expect(await handler('push', { message: 'Sync memory' })).toMatchObject({ ok: false, error: { message: 'Publishing the sync branch requires confirmation' } })
+    expect(f.graph.sync.push).not.toHaveBeenCalled()
+    expect(await handler('push', { message: 'Sync memory', confirmed: true })).toMatchObject({ ok: true })
+    expect(f.graph.sync.push).toHaveBeenCalledWith({ message: 'Sync memory' })
+    expect(await handler('pull', {})).toMatchObject({ ok: false, error: { message: 'Importing the remote Mnemon payload requires confirmation' } })
+    expect(f.graph.sync.pull).not.toHaveBeenCalled()
+    expect(await handler('pull', { components: ['documents'], confirmed: true })).toMatchObject({ ok: true })
+    expect(f.graph.sync.pull).toHaveBeenCalledWith({ mode: 'merge', components: ['documents'] })
+    expect(f.sources['memory-spaces']!.mutate).toHaveBeenCalledWith('reload', {})
+    expect(await handler('pull', { components: [], confirmed: true })).toMatchObject({ ok: false, error: { message: 'components must be a non-empty array' } })
+    expect(await handler('pull', { components: ['unknown'], confirmed: true })).toMatchObject({ ok: false, error: { message: 'components must be runtime, documents, or memory-spaces' } })
+    expect(await handler('nope', {})).toMatchObject({ ok: false, error: { code: 'bad-request', message: 'unknown sync endpoint: nope' } })
+
+    const readonly = protocolFixture({ writeEnabled: false })
+    const blocked = createSyncHandler(readonly.runtime)
+    const readOnly = { ok: false, error: { message: expect.stringContaining('read-only') } }
+    expect(await blocked('configure', { repoUrl: 'https://example.test/owner/repo.git' })).toMatchObject(readOnly)
+    expect(await blocked('push', { confirmed: true })).toMatchObject(readOnly)
+    expect(await blocked('pull', { confirmed: true })).toMatchObject(readOnly)
+    expect(readonly.graph.sync.configure).not.toHaveBeenCalled()
+    expect(readonly.graph.sync.push).not.toHaveBeenCalled()
+    expect(readonly.graph.sync.pull).not.toHaveBeenCalled()
+    // Inspection keeps working while the Host is read-only.
+    expect(await blocked('status', {})).toMatchObject({ ok: true })
+    expect(await blocked('preview', {})).toMatchObject({ ok: true })
   })
 
   it('checks versions on read and performs explicit updates only on management', async () => {

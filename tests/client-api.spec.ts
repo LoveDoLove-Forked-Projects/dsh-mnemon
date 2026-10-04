@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ClientConnectionHandle } from "../src/host/dsh.ts"
 import { MnemonClient } from '../src/client/api.ts'
-import { MNEMON_READ_CHANNEL } from '../src/host/protocol.ts'
+import { MNEMON_READ_CHANNEL, MNEMON_SYNC_CHANNEL } from '../src/host/protocol.ts'
 
 describe('MnemonClient product transport', () => {
   it('keeps Source management scoped to its instance, workspace and revision', async () => {
@@ -137,6 +137,39 @@ describe('MnemonClient product transport', () => {
     await client.packTarget()
 
     expect(call).toHaveBeenCalledWith(expect.any(String), 'target', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+  })
+
+  it('routes repository sync through its own channel and confirms both directions', async () => {
+    const call = vi.fn(async () => ({ ok: true as const, value: {} }))
+    const client = new MnemonClient({ rpc: { call }, isLoopback: true } as ClientConnectionHandle, 'session-1', 'workspace-1')
+
+    await client.syncStatus()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'status', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.configureSync({ repoUrl: 'https://example.test/owner/repo.git', token: 'ghp_secret' })
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'configure', {
+      repoUrl: 'https://example.test/owner/repo.git', token: 'ghp_secret', sessionId: 'session-1', workspaceId: 'workspace-1',
+    })
+    // A null token clears the stored credential instead of writing one.
+    await client.configureSync({ token: null })
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'configure', { token: null, sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.pushSync()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'push', { confirmed: true, sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.pushSync('Sync memory')
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'push', { message: 'Sync memory', confirmed: true, sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.previewSync()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'preview', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.pullSync()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'pull', { confirmed: true, sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.pullSync(['runtime'])
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'pull', {
+      components: ['runtime'], confirmed: true, sessionId: 'session-1', workspaceId: 'workspace-1',
+    })
   })
 
   it('routes provider service settings independently from Memory Spaces', async () => {

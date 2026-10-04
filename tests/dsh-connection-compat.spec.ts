@@ -75,6 +75,7 @@ describe('DSH Connection contract', () => {
       activation: unavailable,
       write: unavailable,
       pack: unavailable,
+      sync: unavailable,
       settings: unavailable,
       view: unavailable,
       viewWrite: unavailable,
