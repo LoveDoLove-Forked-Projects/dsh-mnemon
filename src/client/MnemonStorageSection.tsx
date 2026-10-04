@@ -8,6 +8,7 @@ import { GlobalLocationSetting } from './GlobalLocationSetting.tsx'
 import type { MnemonTranslate } from './locales.ts'
 import css from './MnemonSettingsCard.module.css'
 import { MnemonPackSection, type PackTarget } from './MnemonPackSection.tsx'
+import { MnemonSyncSection } from './MnemonSyncSection.tsx'
 import { SelectRow, SettingRow } from './settings-controls.tsx'
 import { PanelActions, useStaged } from './settings-panel.tsx'
 
@@ -175,6 +176,8 @@ export function MnemonStorageSection(props: MnemonStorageSectionProps): JSX.Elem
         note={t('storage.moveNote')} t={t} onDiscard={storage.discard} onApply={() => { void storage.apply() }} />
       <MnemonPackSection {...(props.connection === undefined ? {} : { connection: props.connection })} {...(props.sessionId === undefined ? {} : { sessionId: props.sessionId })}
         {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} target={props.target} t={t} />
+      <MnemonSyncSection {...(props.connection === undefined ? {} : { connection: props.connection })} {...(props.sessionId === undefined ? {} : { sessionId: props.sessionId })}
+        {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} disabled={props.disabled} t={t} />
     </div>
   </section>
 }

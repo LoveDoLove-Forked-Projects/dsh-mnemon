@@ -2,6 +2,7 @@ import {
   MNEMON_ACTIVATION_CHANNEL,
   MNEMON_PACK_CHANNEL,
   MNEMON_READ_CHANNEL,
+  MNEMON_SYNC_CHANNEL,
   MNEMON_WRITE_CHANNEL,
   MNEMON_VIEW_CHANNEL,
   MNEMON_VIEW_WRITE_CHANNEL,
@@ -15,10 +16,16 @@ import {
   type MemoryCompositionStatus,
   type MemorySourceManagementCatalog,
   type MemorySourceManagementResult,
+  type MnemonPackComponent,
   type MnemonPackExport,
   type MnemonPackImportResult,
   type MnemonPackPreview,
   type MnemonPackTarget,
+  type MnemonSyncConfigView,
+  type MnemonSyncPreview,
+  type MnemonSyncPullResult,
+  type MnemonSyncPushResult,
+  type MnemonSyncStatus,
   type MnemonEmbeddingStatus,
   type StatusView,
   type TaskAgentModelCatalog,
@@ -173,5 +180,26 @@ export class MnemonClient {
 
   importPack(base64: string): Promise<MnemonPackImportResult> {
     return this.call(MNEMON_PACK_CHANNEL, 'import', this.scoped({ base64 }))
+  }
+
+  syncStatus(): Promise<MnemonSyncStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'status', this.scoped())
+  }
+
+  /** Saves a patch; the answer never carries the token back. */
+  configureSync(patch: { repoUrl?: string | null; branch?: string; subdir?: string; token?: string | null; authorName?: string; authorEmail?: string }): Promise<MnemonSyncConfigView> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'configure', this.scoped(patch))
+  }
+
+  pushSync(message?: string): Promise<MnemonSyncPushResult> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'push', this.scoped({ ...(message === undefined ? {} : { message }), confirmed: true }))
+  }
+
+  previewSync(): Promise<MnemonSyncPreview> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'preview', this.scoped())
+  }
+
+  pullSync(components?: MnemonPackComponent[]): Promise<MnemonSyncPullResult> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'pull', this.scoped({ ...(components === undefined ? {} : { components }), confirmed: true }))
   }
 }

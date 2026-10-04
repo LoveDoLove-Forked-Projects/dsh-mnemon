@@ -455,6 +455,34 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .readOnlyNotice { margin: 0 0 -20px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 .packSuccess { color: var(--dsw-alias-state-success-primary); }
 
+/* Git repository sync: the same shape as the ZIP row, with a configuration
+   form under it that only opens when the user asks for it. */
+.syncRow { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding-bottom: 14px; }
+.syncRow > .settingRow { padding-bottom: 6px; border-bottom: 0; }
+.syncRow:has(> .syncFeedback:empty):not(:has(> .syncForm)):not(:has(> .syncBar)) > .settingRow { padding-bottom: 0; }
+.rows > .syncRow:not(:last-child) { border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.syncState { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.syncState > span { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncForm { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; border-radius: var(--dsw-radius-md); padding: 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncField { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.syncField > label { color: var(--dsw-alias-label-primary); font-size: 13px; font-weight: 500; line-height: 20px; }
+.syncField > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncField > input { width: 100%; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.syncField > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
+.syncField > input[aria-invalid='true'] { border-color: var(--dsw-alias-state-error-primary); }
+.syncField > input:disabled { cursor: default; opacity: .5; }
+.syncCheck { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
+.syncCheck input { width: 16px; height: 16px; margin: 0; accent-color: var(--dsw-alias-brand-primary); }
+.syncFormActions { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; }
+.syncBar { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncBar > div { display: grid; min-width: 0; }
+.syncBar strong { overflow: hidden; font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.syncBar small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncFeedback { display: grid; gap: 4px; }
+.syncFeedback:empty { display: none; }
+.syncFeedback p { margin: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncSuccess { color: var(--dsw-alias-state-success-primary); }
+
 .selector:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
@@ -466,6 +494,10 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
   .rowActions button { flex: 1; }
   .importBar { grid-template-columns: minmax(0, 1fr) auto; }
   .importBar > button:last-child { grid-column: 1 / -1; }
+  .syncBar { grid-template-columns: minmax(0, 1fr) auto; }
+  .syncBar > button:last-child { grid-column: 1 / -1; }
+  .syncFormActions { flex-wrap: wrap; }
+  .syncFormActions button { flex: 1; }
   .inlineChoices { width: 100%; }
   .inlineChoices label { flex: 1; }
   .inlineChoices span { width: 100%; justify-content: center; }
