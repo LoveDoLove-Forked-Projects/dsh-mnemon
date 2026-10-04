@@ -6,13 +6,15 @@ dsh-mnemon can publish its memory to a Git repository and restore it on another 
 
 ## What the channel adds
 
-- Channel `/dsh-mnemon-sync` with five endpoints: `status`, `configure`, `push`, `preview` and `pull`.
+- Channel `/dsh-mnemon-sync` with twelve endpoints: `status`, `configure`, `push`, `preview`, `pull`, `github-status`, `github-start`, `github-poll`, `github-cancel`, `github-signout`, `github-repositories` and `github-create`.
 - `push` exports the complete pack, commits it in the local mirror and pushes the branch. It requires `confirmed: true`; nothing pushes on a timer.
 - `pull` reads the remote manifest and its SHA-256 inventory, previews the differences and, after confirmation, merges through the same importer Import ZIP uses. A manifest or checksum mismatch fails hard and imports nothing.
 - The payload is the existing Mnemon Pack payload: one collector, one validator, one importer. The sync extension on `manifest.json` records the channel, branch, directory and push time, and a reader that does not know sync still reads a valid Mnemon Pack manifest.
 - The payload is always a full Mnemon Pack: runtime, documents and memory-spaces, with the user profile inside runtime. A pack manifest's `scope` is `full` or exactly one component, so a persistent component selection cannot be represented and none is stored. Component filtering is a one-off, optional `components` parameter on pull.
 - Both directions require `writeEnabled`; a read-only deployment refuses push and pull with the same message Import ZIP uses.
-- The token stays out of the payload, the configuration file and the logs. Status and configuration responses describe it (`hasToken`) and never return its value, and a failure message is masked.
+- **Sign in with GitHub** is the primary credential. The form runs GitHub's OAuth device flow: it shows the one-time code, links to `https://github.com/login/device`, and polls at the interval GitHub returns. The grant is stored through DSH's credentials service under the record key `dsh-mnemon/github` and never reaches the browser. The service is read with `ctx.get('credentials')`, not `inject`, so a profile that mounts no provider still loads the plugin and reports the login as unavailable.
+- **Your repositories** lists what the signed-in account may push to (private marked, no-push disabled) and **Create repository** makes a new one, private by default and with an initial commit so the first push has a branch to publish to. Selecting either writes the clone URL into the same `repoUrl` field the manual form edits.
+- The token field stays as the fallback and is optional. Status and configuration responses describe the credential (`hasToken`, `credentialSource`, `credentialLogin`) and never return its value, and a failure message is masked.
 
 ## Remote layout
 
@@ -39,7 +41,7 @@ Configuration lives in `<storageRoot>/state/sync-git.json` with mode `0600`. It 
 | `repoUrl` | - | `https://`, `ssh://`, `git@host:path` or an absolute local path; the token is never embedded in it |
 | `branch` | `mnemon-sync` | validated as a Git branch name |
 | `subdir` | `mnemon/` | relative, no `..`, no absolute path |
-| `token` | - | optional, HTTPS remotes only; `MNEMON_SYNC_GIT_TOKEN` overrides it and it is never returned by RPC |
+| `token` | - | optional fallback, HTTPS remotes only; `MNEMON_SYNC_GIT_TOKEN` overrides it and it is never returned by RPC. GitHub sign-in is the preferred credential and lives outside this file |
 | `authorName` | `dsh-mnemon sync` | commit identity for the sync branch |
 | `authorEmail` | `mnemon@localhost` | commit identity for the sync branch |
 
@@ -60,7 +62,7 @@ The run reported:
 1. One instance publishes the whole pack to a real repository
   ok   a fresh storage root reports Git and an unconfigured remote
   ok   the configuration path lives inside the storage root
-  ok   configure echoes the effective settings without a token
+  ok   configure names the credential without carrying it
   ok   the working memory accepted one entry through the write channel
   ok   the configured remote is reachable and still has no branch
   ok   an unconfirmed push is refused
@@ -85,8 +87,8 @@ The run reported:
   ok   the tampered payload was not imported
 
 4. A token never reaches a response, a file, or the mirror
-  ok   configure answers with hasToken only
-  ok   status answers with hasToken only
+  ok   configure names the credential without carrying it
+  ok   status names the credential without carrying it
   ok   the token is stored in the 0600 state file
   ok   an unreachable remote is reported without leaking the token
   ok   a failed push never echoes the token
@@ -94,16 +96,23 @@ The run reported:
 
 5. Read-only work still answers while every write stays gated
   ok   an unknown endpoint is a bad request
+
+6. GitHub sign-in answers over the channel without a browser
+  ok   the sign-in surface reports what this Host can do
+  ok   the store is mounted and the account is still signed out
+  ok   cancelling a flow that never started leaves the account signed out
+
+7. The channel shuts down
   ok   both instances shut down on the polite signal
 
 Git sync end-to-end verification passed.
 ```
 
-The same channel through the real WebUI, rather than the harness: a real `dsh web` instance served the storage page, the repository was configured through the form, one entry was written through the normal write path, and the branch was published with the button. Both images come from that session, and neither shows a credential or a personal path.
+The same channel through the real WebUI, rather than the harness: a real `dsh web` instance served the storage page, the repository was configured through the form, one entry was written through the normal write path, and the branch was published with the button. All three images come from that session, and none of them shows a credential, a personal path, an account name or a repository name.
 
-| Save and push from the storage page | Reading the remote back before importing anything |
-|---|---|
-| ![The repository sync row with the published commit and its notice](./sync-pushed-zh.png) | ![The preview line naming the remote commit, its components and the file deltas](./sync-preview-zh.png) |
+| Save and push from the storage page | Reading the remote back before importing anything | Signing in to GitHub from the same page |
+|---|---|---|
+| ![The repository sync row with the published commit and its notice](./sync-pushed-zh.png) | ![The preview line naming the remote commit, its components and the file deltas](./sync-preview-zh.png) | ![The GitHub account block showing the device code, the copy button and the verification link](./sync-github-zh.png) |
 
 The page reported `已推送 0df94229（7 个文件，2.0 KB）。` after the push, and the branch held `mnemon/payload/runtime/USER.md` with the entry that had been written a moment earlier. `检查远端` then reported `远端 0df94229 · 3 个组件 · 1.9 KB`, `0/3 个组件与本地不同` and `新增 0 · 丢失 0 · 不同 1` without importing anything: the merge happens only after `拉取并合并`. The fixture runs in Chinese, which is why the copy in the images is Chinese.
 
@@ -114,14 +123,17 @@ What the run establishes, beyond the unit suites:
 - Repeating the same push reported `committed: false`, `pushed: false` and `the branch already holds this payload`, and the branch stayed at one commit. This is the case a fixed test clock used to hide; the acceptance run uses the real clock.
 - Tampering with one payload file made both preview and pull fail with `the remote Mnemon payload failed its checksum: payload/runtime/MEMORY.md` and left the second machine's files untouched.
 - The token appeared only in the `0600` state file. Responses, failure messages and the mirror's Git configuration never contained it.
+- The device flow was driven end to end over the channel in `tests/sync-rpc.spec.ts` with a stubbed GitHub: `github-start` returned the user code and the verification URL, `github-poll` returned `success` with the login, and the resulting access token appeared in no answer — only `credentialSource: 'github'` and `credentialLogin: 'octocat'` did.
 - Unconfirmed push and pull were refused with `Publishing the sync branch requires confirmation` and `Importing the remote Mnemon payload requires confirmation`, and an unknown endpoint returned `bad-request` with `unknown sync endpoint: nope`.
+- The sign-in block was then driven through the real page rather than the harness: `github-start` answered with a live device code and the verification link, and the page repeated `github-poll` seven times in thirty-two seconds, 5.39 s, 5.38 s, 5.40 s, 5.38 s, 5.41 s and 5.38 s apart, which is GitHub's five-second interval plus the round trip. No answer carried a token.
+- With an account signed in, the block listed that account's repositories, marked the private ones and disabled the ones without push access, and choosing one wrote its URL into the repository field. A device code left over from an earlier session is not shown once the account is signed in; the block reports `Signed in as @…` instead, and a regression test holds that case.
 
 Two behaviors the run recorded that are not defects, and are worth knowing before reading a real remote:
 
 - A fresh storage root still exports an empty `documents/index.json` and an empty `payload/data/.dsh-memory-bodies.json`, so those two components can report `changed: false` against an empty root while runtime reports `changed: true`. Preview compares bytes, and two empty indexes are the same bytes.
 - The importer rebuilds `memories.json` with its own key order, so a machine that pulled a branch and then pushes it again can produce a commit whose bytes differ while its content does not. The payload comparison ignores only the two manifest timestamps, not field order.
 
-The automated coverage runs in `pnpm test`: `tests/sync-config.spec.ts` for reading, writing, mode `0600`, redaction and validation; `tests/git-sync.spec.ts` for init, push, a second-machine pull, manifest and checksum rejection, subdir and branch validation, the no-silent-empty-payload case and the repeat-push case on a moving clock, skipped when Git is absent; and `tests/sync-rpc.spec.ts` for endpoint validation, the `writeEnabled` gate, token redaction, error masking and the denied remote projection.
+The automated coverage runs in `pnpm test`: `tests/sync-config.spec.ts` for reading, writing, mode `0600`, redaction and validation; `tests/git-sync.spec.ts` for init, push, a second-machine pull, manifest and checksum rejection, subdir and branch validation, the no-silent-empty-payload case and the repeat-push case on a moving clock, skipped when Git is absent; `tests/github-auth.spec.ts` for the device flow against a stub credentials port and a queued stub `fetch` (start, pending, `slow_down`, success, expiry, denial, error, cancel, sign-out, listing and creation validation); and `tests/sync-rpc.spec.ts` for endpoint validation, the `writeEnabled` gate, token redaction, error masking, a full sign-in whose token appears in no answer, and the denied remote projection.
 
 ## Limits
 
@@ -129,4 +141,4 @@ The automated coverage runs in `pnpm test`: `tests/sync-config.spec.ts` for read
 - Encrypted snapshots, WebDAV and snapshot directories with a retention window are out of scope.
 - Only memory travels: the payload carries no DSH configuration, no credentials and no session history.
 - A push without remote credentials still commits locally and reports that the push was skipped; the branch reaches the remote on the next push with credentials.
-- Credentials are read from the environment or from `state/sync-git.json` at mode `0600`, following the Provider-credential precedent. Moving them to a DSH-native credential service is a maintainer decision recorded in the plan.
+- Credentials resolve in this order: `MNEMON_SYNC_GIT_TOKEN`, the token in `state/sync-git.json` at mode `0600`, then the grant GitHub sign-in wrote into DSH's credentials service. Whether the local token field should be dropped now that the service is wired is a maintainer decision recorded in the plan.
