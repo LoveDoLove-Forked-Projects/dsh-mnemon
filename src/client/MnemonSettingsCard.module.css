@@ -471,6 +471,20 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .syncField > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
 .syncField > input[aria-invalid='true'] { border-color: var(--dsw-alias-state-error-primary); }
 .syncField > input:disabled { cursor: default; opacity: .5; }
+/* The account and the repository list span the field grid, above the addresses they fill in. */
+.syncBlock { display: flex; grid-column: 1 / -1; min-width: 0; flex-direction: column; gap: 8px; border-radius: var(--dsw-radius-md); padding: 12px; background: var(--dsw-alias-bg-layer-3); }
+.syncBlock > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncBlock > header strong { font-size: 13px; font-weight: 500; line-height: 20px; }
+.syncBlock > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncBlock p { margin: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncBlock .syncFormActions { grid-column: auto; }
+.syncBlock .syncField > select { width: 100%; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.syncBlock .syncField > select:disabled { cursor: default; opacity: .5; }
+.syncAccount { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.syncAccount > span { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncCode { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+.syncCode > code { border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); padding: 6px 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font-family: var(--dsw-font-mono, ui-monospace, monospace); font-size: 14px; font-weight: 500; letter-spacing: .08em; }
+.syncCode > a { color: var(--dsw-alias-state-business-primary); font-size: 12px; line-height: 18px; }
 .syncCheck { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
 .syncCheck input { width: 16px; height: 16px; margin: 0; accent-color: var(--dsw-alias-brand-primary); }
 .syncFormActions { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; }

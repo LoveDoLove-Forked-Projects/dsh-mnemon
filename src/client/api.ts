@@ -22,6 +22,10 @@ import {
   type MnemonPackPreview,
   type MnemonPackTarget,
   type MnemonSyncConfigView,
+  type MnemonSyncGitHubPoll,
+  type MnemonSyncGitHubRepository,
+  type MnemonSyncGitHubRepositoryList,
+  type MnemonSyncGitHubStatus,
   type MnemonSyncPreview,
   type MnemonSyncPullResult,
   type MnemonSyncPushResult,
@@ -201,5 +205,38 @@ export class MnemonClient {
 
   pullSync(components?: MnemonPackComponent[]): Promise<MnemonSyncPullResult> {
     return this.call(MNEMON_SYNC_CHANNEL, 'pull', this.scoped({ ...(components === undefined ? {} : { components }), confirmed: true }))
+  }
+
+  /** Whether GitHub sign-in is possible here, and how far it has come. */
+  githubStatus(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-status', this.scoped())
+  }
+
+  /** Ask GitHub for the code the user types into the browser. */
+  githubStart(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-start', this.scoped())
+  }
+
+  /** Ask once whether the browser step happened; the Host keeps the cadence. */
+  githubPoll(): Promise<MnemonSyncGitHubPoll> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-poll', this.scoped())
+  }
+
+  githubCancel(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-cancel', this.scoped())
+  }
+
+  /** Forgets the stored grant; the next push asks for a sign-in again. */
+  githubSignOut(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-signout', this.scoped())
+  }
+
+  githubRepositories(): Promise<MnemonSyncGitHubRepositoryList> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-repositories', this.scoped())
+  }
+
+  /** Creates a repository under the signed-in account and answers with it. */
+  githubCreateRepository(name: string, isPrivate: boolean): Promise<MnemonSyncGitHubRepository> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-create', this.scoped({ name, private: isPrivate }))
   }
 }

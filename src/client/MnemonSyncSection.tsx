@@ -1,6 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
-import { MNEMON_SYNC_TOKEN_ENV, type ClientConnectionHandle, type MnemonSyncConfigView, type MnemonSyncPreview, type MnemonSyncStatus } from '../host/protocol.ts'
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
+import { Button, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  MNEMON_SYNC_TOKEN_ENV,
+  type ClientConnectionHandle,
+  type MnemonSyncConfigView,
+  type MnemonSyncGitHubRepository,
+  type MnemonSyncGitHubStatus,
+  type MnemonSyncPreview,
+  type MnemonSyncStatus,
+} from '../host/protocol.ts'
 import { MnemonClient } from './api.ts'
 import type { MnemonTranslate } from './locales.ts'
 import { humanBytes, message } from './page-kit.tsx'
@@ -46,10 +54,14 @@ interface MnemonSyncSectionProps {
 
 /**
  * Git repository sync: the repository this root publishes its Mnemon Pack to,
- * the token that authenticates the push, and the two operations that move the
- * payload. The form reads the Host's status first, so a repository the Host
+ * the credential that authenticates the push, and the two operations that move
+ * the payload. The form reads the Host's status first, so a repository the Host
  * cannot reach, a missing Git, or a read-only Host is visible before anything
  * runs.
+ *
+ * The credential is optional: signing in to GitHub stores a grant the Host reads
+ * per operation, and the repository then comes from the account instead of being
+ * typed. The access token field stays as the fallback for every other host.
  */
 export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled, t }: MnemonSyncSectionProps): JSX.Element {
   const client = useMemo(() => connection === undefined ? null : new MnemonClient(connection, sessionId, workspaceId), [connection, sessionId, workspaceId])
@@ -58,9 +70,19 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SyncDraft>(() => draftOf(undefined))
   const [pending, setPending] = useState<MnemonSyncPreview | null>(null)
-  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'github' | 'repos' | 'create' | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [github, setGithub] = useState<MnemonSyncGitHubStatus | null>(null)
+  const [githubFailed, setGithubFailed] = useState<string | null>(null)
+  const [repositories, setRepositories] = useState<MnemonSyncGitHubRepository[] | null>(null)
+  const [repositoryName, setRepositoryName] = useState('')
+  const [repositoryPrivate, setRepositoryPrivate] = useState(true)
+  const [copied, setCopied] = useState(false)
+  // The sign-in poll reschedules itself; a counter re-runs the effect after each answer.
+  const [pollTick, setPollTick] = useState(0)
+  const [pollMs, setPollMs] = useState(5_000)
+  const askedRepositories = useRef(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (client === null) return
@@ -71,6 +93,11 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     } finally {
       setLoaded(true)
     }
+    try {
+      setGithub(await client.githubStatus())
+    } catch {
+      // The sign-in block reports its own failures; the repository row works without it.
+    }
   }, [client])
 
   useEffect(() => {
@@ -79,6 +106,10 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     void client.syncStatus().then(
       next => { if (active) { setStatus(next); setLoaded(true) } },
       reason => { if (active) { setFailed(message(reason)); setLoaded(true) } },
+    )
+    void client.githubStatus().then(
+      next => { if (active) setGithub(next) },
+      () => { if (active) setGithub(null) },
     )
     return () => { active = false }
   }, [client])
@@ -145,6 +176,131 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     } finally { setBusy(null) }
   }
 
+  /** Choosing a repository is the whole configuration step, so it is saved at once. */
+  const choose = async (repository: MnemonSyncGitHubRepository): Promise<void> => {
+    if (client === null || busy !== null || !editable) return
+    setBusy('save'); setFailed(null); setNotice(null)
+    try {
+      await client.configureSync({ repoUrl: repository.url })
+      setNotice(t('config.syncSaved'))
+      await refresh()
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  const loadRepositories = useCallback(async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('repos'); setGithubFailed(null)
+    try {
+      const answer = await client.githubRepositories()
+      setRepositories(answer.repositories)
+    } catch (reason) {
+      setGithubFailed(message(reason))
+    } finally { setBusy(null) }
+  }, [client, busy])
+
+  const signIn = async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('github'); setGithubFailed(null); setNotice(null)
+    try {
+      const next = await client.githubStart()
+      setGithub(next)
+      setPollMs(next.flow?.intervalMs ?? 5_000)
+      setPollTick(0)
+    } catch (reason) {
+      setGithubFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  const cancelSignIn = async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('github'); setGithubFailed(null)
+    try {
+      setGithub(await client.githubCancel())
+    } catch (reason) {
+      setGithubFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  const signOut = async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('github'); setGithubFailed(null); setNotice(null)
+    try {
+      setGithub(await client.githubSignOut())
+      askedRepositories.current = false
+      setRepositories(null)
+      await refresh()
+    } catch (reason) {
+      setGithubFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  const createRepository = async (): Promise<void> => {
+    if (client === null || busy !== null || repositoryName.trim() === '') return
+    setBusy('create'); setFailed(null); setGithubFailed(null); setNotice(null)
+    try {
+      const created = await client.githubCreateRepository(repositoryName.trim(), repositoryPrivate)
+      setNotice(t('config.syncRepositoryCreated', { name: created.fullName }))
+      setRepositoryName('')
+      askedRepositories.current = false
+      await loadRepositories()
+      await choose(created)
+    } catch (reason) {
+      setGithubFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  const copyCode = async (code: string): Promise<void> => {
+    try {
+      setCopied(await writeClipboard(code))
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  const flow = github?.flow
+  const signedIn = github?.signedIn === true
+
+  // The device flow is polled on the cadence GitHub asked for, and only while the form is open.
+  useEffect(() => {
+    if (client === null || !open || flow === undefined) return
+    let active = true
+    const timer = setTimeout(() => {
+      void (async (): Promise<void> => {
+        try {
+          const answer = await client.githubPoll()
+          if (!active) return
+          if (answer.status === 'pending') {
+            if (answer.intervalMs !== undefined) setPollMs(answer.intervalMs)
+            setPollTick(current => current + 1)
+            return
+          }
+          const next = await client.githubStatus()
+          if (!active) return
+          setGithub(next)
+          if (answer.status === 'success') {
+            askedRepositories.current = false
+            setRepositories(null)
+            setNotice(next.login === undefined ? t('config.syncTokenGitHub') : t('config.syncGitHubSignedIn', { login: next.login }))
+          } else if (answer.status === 'expired') setGithubFailed(t('config.syncGitHubExpired'))
+          else if (answer.status === 'denied') setGithubFailed(t('config.syncGitHubDenied'))
+          else if (answer.message !== undefined) setGithubFailed(answer.message)
+        } catch (reason) {
+          if (active) setGithubFailed(message(reason))
+        }
+      })()
+    }, Math.max(pollMs, 1_000))
+    return () => { active = false; clearTimeout(timer) }
+  }, [client, open, flow?.userCode, pollMs, pollTick, t])
+
+  // A signed-in account offers its repositories as soon as the form opens, once per sign-in.
+  useEffect(() => {
+    if (!open || !signedIn || repositories !== null || askedRepositories.current) return
+    askedRepositories.current = true
+    void loadRepositories()
+  }, [open, signedIn, repositories, loadRepositories])
+
   // One line of state: the repository, then whatever the Host says about it.
   const states: string[] = []
   if (!loaded) states.push(t('config.syncLoading'))
@@ -157,11 +313,16 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       else if (!status.remote.branchExists) states.push(t('config.syncRemoteBranchMissing', { branch: status.config.branch }))
       else if (status.remote.commit !== undefined) states.push(t('config.syncRemoteCommit', { commit: status.remote.commit.slice(0, 8) }))
     }
-    states.push(status.config.hasToken ? t('config.syncTokenSaved') : t('config.syncTokenNone'))
+    const credential = status.config.credentialSource
+    if (credential === 'github') states.push(status.config.credentialLogin === undefined ? t('config.syncTokenGitHub') : t('config.syncGitHubSignedIn', { login: status.config.credentialLogin }))
+    else if (credential === 'environment') states.push(t('config.syncTokenEnvironment'))
+    else if (credential === 'token') states.push(t('config.syncTokenSaved'))
+    else states.push(t('config.syncTokenNone'))
   }
   const ready = client !== null && status !== null && status.configured && status.git.available
   const editable = !disabled && client !== null
   const changed = pending?.components.filter(component => component.changed).length ?? 0
+  const selected = repositories?.some(repository => repository.url === draft.repoUrl) === true ? draft.repoUrl : ''
 
   return <div className={css.syncRow} role="group" aria-labelledby="mnemon-sync-heading">
     <SettingRow title={t('config.syncTitle')} titleId="mnemon-sync-heading" hint={t('config.syncSimpleDescription')}>
@@ -173,6 +334,74 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     </SettingRow>
     <div className={css.syncState} aria-live="polite">{states.map(state => <span key={state}>{state}</span>)}</div>
     {open && <div className={css.syncForm}>
+      <div className={css.syncBlock}>
+        <header>
+          <strong>{t('config.syncGitHub')}</strong>
+          {signedIn && <div className={css.syncAccount}>
+            <span>{github?.login === undefined ? t('config.syncTokenGitHub') : t('config.syncGitHubSignedIn', { login: github.login })}</span>
+            <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void signOut()}>{t('config.syncGitHubSignOut')}</Button>
+          </div>}
+        </header>
+        {github === null && <small>{t('config.syncLoading')}</small>}
+        {github !== null && !github.available && <small>{t('config.syncGitHubUnavailable')}</small>}
+        {github !== null && github.available && !signedIn && flow === undefined && <>
+          <small>{t('config.syncGitHubHint')}</small>
+          {github.writable
+            ? <div className={css.syncFormActions}>
+              <Button variant="outline" size="sm" disabled={!editable || busy !== null} onClick={() => void signIn()}>{busy === 'github' ? t('config.syncGitHubStarting') : t('config.syncGitHubSignIn')}</Button>
+            </div>
+            : <small>{t('config.syncGitHubReadOnly')}</small>}
+        </>}
+        {flow !== undefined && !signedIn && <>
+          <small>{t('config.syncGitHubCode')}</small>
+          <div className={css.syncCode}>
+            <code>{flow.userCode}</code>
+            <Button variant="outline" size="sm" onClick={() => void copyCode(flow.userCode)}>{copied ? t('config.syncGitHubCopied') : t('config.syncGitHubCopy')}</Button>
+            <a href={flow.verificationUri} target="_blank" rel="noreferrer noopener">{t('config.syncGitHubOpen')}</a>
+          </div>
+          <small>{t('config.syncGitHubWaiting')}</small>
+          <div className={css.syncFormActions}>
+            <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void cancelSignIn()}>{t('common.cancel')}</Button>
+          </div>
+        </>}
+        {githubFailed !== null && <p className={css.error}>{t('config.syncGitHubFailed', { error: githubFailed })}</p>}
+      </div>
+      {signedIn && <div className={css.syncBlock}>
+        <header>
+          <strong>{t('config.syncRepositories')}</strong>
+          {repositories !== null && <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void loadRepositories()}>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesLoad')}</Button>}
+        </header>
+        {repositories === null && <small>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesHint')}</small>}
+        {repositories !== null && repositories.length === 0 && <small>{t('config.syncRepositoriesEmpty')}</small>}
+        {repositories !== null && repositories.length > 0 && <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-repository">{t('config.syncRepositories')}</label>
+          <select id="mnemon-sync-repository" value={selected} disabled={!editable || busy !== null}
+            onChange={event => {
+              const repository = repositories.find(candidate => candidate.url === event.target.value)
+              if (repository !== undefined) void choose(repository)
+            }}>
+            <option value="">{t('config.syncRepositoriesChoose')}</option>
+            {repositories.map(repository => <option key={repository.fullName} value={repository.url} disabled={!repository.push}>
+              {repository.fullName + (repository.private ? ' · ' + t('config.syncRepositoriesPrivate') : '') + (repository.push ? '' : ' · ' + t('config.syncRepositoriesNoPush'))}
+            </option>)}
+          </select>
+          <small>{t('config.syncRepoUrlHint')}</small>
+        </div>}
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-repository-name">{t('config.syncRepositoryName')}</label>
+          <input id="mnemon-sync-repository-name" type="text" value={repositoryName} placeholder="mnemon-memory"
+            disabled={!editable || busy !== null} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+            onChange={event => setRepositoryName(event.target.value)} />
+          <label className={css.syncCheck}>
+            <input type="checkbox" checked={repositoryPrivate} disabled={!editable || busy !== null}
+              onChange={event => setRepositoryPrivate(event.target.checked)} />
+            <span>{t('config.syncRepositoryPrivate')}</span>
+          </label>
+        </div>
+        <div className={css.syncFormActions}>
+          <Button variant="outline" size="sm" disabled={!editable || busy !== null || repositoryName.trim() === ''} onClick={() => void createRepository()}>{busy === 'create' ? t('config.syncRepositoryCreating') : t('config.syncRepositoryCreate')}</Button>
+        </div>
+      </div>}
       <div className={css.syncField}>
         <label htmlFor="mnemon-sync-repo">{t('config.syncRepoUrl')}</label>
         <input id="mnemon-sync-repo" type="text" value={draft.repoUrl} placeholder="https://github.com/owner/repository.git"
@@ -200,6 +429,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
           placeholder={saved?.hasToken ? t('config.syncTokenSaved') : t('config.syncTokenNone')}
           autoComplete="new-password" spellCheck={false}
           onChange={event => setDraft(current => ({ ...current, token: event.target.value }))} />
+        <small>{t('config.syncTokenOptional')}</small>
         <small>{t('config.syncTokenHint', { path: status?.configPath ?? '', env: MNEMON_SYNC_TOKEN_ENV })}</small>
         <small>{t('config.syncTokenKeep')}</small>
         <label className={css.syncCheck}>
