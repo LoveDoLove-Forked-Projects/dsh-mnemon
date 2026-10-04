@@ -207,7 +207,7 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 | Endpoint | 行为 |
 |---|---|
 | `status` | 镜像路径、已配置的仓库、分支、远端目录、`hasToken`、`credentialSource`、`credentialLogin`、远端可达性与最后一次提交；只读 |
-| `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` 与 `credentialSource` |
+| `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` 与 `credentialSource`。分支或远端目录传空会恢复该字段的默认值，提交者传空则使用本机 Git 身份 |
 | `push` | 把完整的 Mnemon Pack 载荷导出到镜像，提交并推送分支；需要 `confirmed: true` |
 | `preview` | 读取远端 manifest 与 SHA-256 清单，报告哪些组件与本地不同；只读 |
 | `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` |
@@ -219,7 +219,7 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 | `github-repositories` | 列出已登录账号可推送的仓库，最近更新的在前；只读 |
 | `github-create` | 在已登录账号下新建公开或私有仓库并回读；需要 `writeEnabled: true` |
 
-同步载荷始终是完整的 Mnemon Pack：Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择，组件筛选只作为 `pull` 的一次性参数存在。`configure`、`push`、`pull` 以及每个会改动状态的 `github-` endpoint 都要求 `writeEnabled: true`，否则返回与 pack 导入相同的只读拒绝。
+同步载荷始终是完整的 Mnemon Pack：Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择，组件筛选只作为 `pull` 的一次性参数存在。仓库地址是唯一没有默认值的配置项：分支、远端目录、提交者姓名或邮箱留空时，分别回落到默认分支、默认目录，或本机 Git 已有的提交身份。`configure`、`push`、`pull` 以及每个会改动状态的 `github-` endpoint 都要求 `writeEnabled: true`，否则返回与 pack 导入相同的只读拒绝。
 
 token 不会出现在任何响应或错误信息中。通道在每次网络操作时解析一个凭据，顺序为：环境变量 `MNEMON_SYNC_GIT_TOKEN`、`state/sync-git.json`（权限 `0600`）中保存的 token，最后是 GitHub 登录写入 DSH 凭据存储（键 `dsh-mnemon/github`）的凭据。`credentialSource` 指出生效的那一个——`environment`、`token`、`github` 或 `none`——前三者都让 `hasToken` 为 `true`，因此已登录的账号完全不需要填 token。GitHub 请求走环境自带的 `fetch`（与版本检查相同的接缝），启动器配置的代理策略对它同样生效；失败只报告 GitHub 的错误码与 HTTP 状态，绝不回显响应体。
 

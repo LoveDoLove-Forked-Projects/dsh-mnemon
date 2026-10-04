@@ -78,7 +78,15 @@ history already provides retention, review and restore, so the Git channel does 
     lists the repositories the account may push to and `github-create` makes a new one (private by
     default, with an initial commit so the first push has a branch to publish to). Selecting one
     writes its clone URL into the same `repoUrl` field the manual form edits, so there is one
-    configuration value and one validation path.
+    configuration value and one validation path. The block is rendered whenever the Host offers a
+    credentials store, not only after a sign-in: signed out it explains what a sign-in adds and
+    points at the URL field, so the picker is never hidden behind a step a user has not taken.
+12. **Only the repository has no default.** The branch, the remote directory and the commit identity
+    all arrive pre-filled - the form shows the same defaults the Host would apply - and a blank
+    branch or directory in a patch is read as "go back to the default". A blank author is a choice
+    rather than a missing value: the commit omits `-c user.name`/`-c user.email` so Git uses the
+    identity this machine already has, which is the only reliable fallback, because `-c` loses to
+    `GIT_AUTHOR_*` and an empty `-c user.name=` makes Git refuse the commit outright.
 
 ## Remote layout
 
@@ -120,11 +128,11 @@ RPC or a profile patch.
 
 | Field | Default | Notes |
 |---|---|---|
-| `repoUrl` | - | `https://`, `ssh://`, `git@host:path` or an absolute local path; the token is never embedded in it |
-| `branch` | `mnemon-sync` | validated as a Git branch name |
-| `subdir` | `mnemon/` | relative, no `..`, no absolute path |
+| `repoUrl` | - | `https://`, `ssh://`, `git@host:path` or an absolute local path; the token is never embedded in it. The only field with no default |
+| `branch` | `mnemon-sync` | validated as a Git branch name; an empty value restores the default |
+| `subdir` | `mnemon/` | relative, no `..`, no absolute path; an empty value restores the default |
 | `token` | - | optional fallback; HTTPS remotes only; never returned by RPC. GitHub sign-in is the preferred credential and is stored outside this file |
-| `authorName` / `authorEmail` | `dsh-mnemon sync` / `mnemon@localhost` | commit identity for the sync branch |
+| `authorName` / `authorEmail` | `dsh-mnemon sync` / `mnemon@localhost` | commit identity for the sync branch; an empty value means the commit uses the identity this machine's Git already has |
 
 ## RPC surface
 
@@ -161,9 +169,13 @@ form opens with a **GitHub** block - `Sign in with GitHub`, the one-time code wi
 and a link to `https://github.com/login/device`, a cancel button while the flow runs, and
 `Sign out` once it holds a login - followed by a **Your repositories** block that lists the
 account's repositories (private ones marked, ones without push permission disabled) and a
-`Create repository` field with a private checkbox. Both blocks write into the same repository URL
+`Create repository` field with a private checkbox. That block is rendered whenever the Host offers
+a credentials store; signed out it explains what a sign-in adds and leaves the URL field below as
+the path that needs no sign-in at all. Both blocks write into the same repository URL
 field the manual form edits, which stays visible with the branch, remote directory, token, author
-name and author email fields; the token field shows `saved` rather than the value, with an
+name and author email fields. The branch and the remote directory show their defaults as real
+values rather than placeholders, and both author fields are marked optional with the machine
+identity named as the fallback. The token field shows `saved` rather than the value, with an
 explicit clear checkbox, and reads as the optional fallback. `Pull and merge` appears only after
 a preview, with the same preview-then-confirm shape the ZIP import already uses. Every string goes
 into both dictionaries in `src/client/locales.ts`.
@@ -183,10 +195,12 @@ into both dictionaries in `src/client/locales.ts`.
 
 Landed:
 
-- `tests/sync-config.spec.ts`: read/write, `0600`, redaction, branch/subdir/URL validation, clear-token.
+- `tests/sync-config.spec.ts`: read/write, `0600`, redaction, branch/subdir/URL validation, clear-token,
+  the empty-value semantics (defaults for branch/subdir, a blank author for the machine identity).
 - `tests/git-sync.spec.ts`: a real `git` in a temporary bare repository (skipped when git is
   absent) covering init, push, second-machine pull, manifest/checksum rejection, subdir and branch
-  validation, and the "no silent empty payload" rule.
+  validation, the "no silent empty payload" rule, and a commit made under the identity of the
+  machine when the author is blank.
 - `tests/sync-rpc.spec.ts`: the channel over the real runtime graph - a push from one machine and a
   preview plus merge on a second machine, the unconfirmed and unconfigured refusals, an unreachable
   remote reported without the token, the read-only gate, a full device-flow sign-in whose token

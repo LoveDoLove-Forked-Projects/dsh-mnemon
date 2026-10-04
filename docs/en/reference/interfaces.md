@@ -207,7 +207,7 @@ Backups contain private memory, so callers must treat the authenticated DSH brow
 | Endpoint | Behavior |
 |---|---|
 | `status` | Mirror path, configured repository, branch, remote directory, `hasToken`, `credentialSource`, `credentialLogin`, remote reachability and the last commit; read-only |
-| `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` and `credentialSource` |
+| `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` and `credentialSource`. An empty `branch` or `subdir` restores that field's default, and an empty author falls back to the Git identity of the machine |
 | `push` | Export the full Mnemon Pack payload into the mirror, commit it and push the branch; requires `confirmed: true` |
 | `preview` | Read the remote manifest and its SHA-256 inventory and report which components differ from local; read-only |
 | `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts an optional one-off `components` parameter |
@@ -219,7 +219,7 @@ Backups contain private memory, so callers must treat the authenticated DSH brow
 | `github-repositories` | List the repositories the signed-in account may push to, most recently updated first; read-only |
 | `github-create` | Create one public or private repository under the signed-in account and read it back; requires `writeEnabled: true` |
 
-The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional `pull` parameter. `configure`, `push`, `pull` and every `github-` endpoint that changes something require `writeEnabled: true` and otherwise answer the same read-only refusal pack import uses.
+The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional `pull` parameter. A repository URL is the only configuration value without a default: a blank `branch`, `subdir`, `authorName` or `authorEmail` is answered with the default branch, the default directory, or the commit identity this machine's Git already carries. `configure`, `push`, `pull` and every `github-` endpoint that changes something require `writeEnabled: true` and otherwise answer the same read-only refusal pack import uses.
 
 Tokens never appear in a response or an error message. The channel resolves one credential per network operation, in this order: `MNEMON_SYNC_GIT_TOKEN`, the token stored in `state/sync-git.json` (mode `0600`), then the grant GitHub sign-in wrote into DSH's credentials store under the key `dsh-mnemon/github`. `credentialSource` names the winner — `environment`, `token`, `github` or `none` — and `hasToken` is `true` for the first three, so a signed-in account needs no token field at all. GitHub calls use the ambient `fetch`, the same seam the version check uses, so a launcher's proxy policy applies to them; a failure reports GitHub's error code and the HTTP status only, never a response body.
 
