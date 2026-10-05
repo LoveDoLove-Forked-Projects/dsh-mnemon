@@ -20,6 +20,7 @@ import { reopenAfterStarterUpdate } from './starter-update.ts'
 import { MnemonChangeSignal } from './change-signal.ts'
 import { en, zh, type MnemonKey } from './locales.ts'
 import { MnemonSettingsScope } from './settings.ts'
+import { directoryPicker } from './picker.ts'
 import type { MnemonClientContext } from "./dsh-context.ts"
 import {
   createMemorySourcePageDirectory,
@@ -366,6 +367,9 @@ export function apply(rawContext: unknown): void {
     localeRuntime: ctx.locale,
     componentChanges: seats.components,
     t: translate,
+    // Where memory lives is the one setting a picker serves; the shell owns
+    // the chooser, and a Host without one still types the directory.
+    pickDirectory: directoryPicker(ctx),
   })
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
     name: 'plugins.bundle.config',

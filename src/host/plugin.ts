@@ -17,6 +17,7 @@ import { registerViewRpc } from './view-rpc.ts'
 import { MemoryPluginInstallation } from './plugin-installation.ts'
 import { MnemonRemoteService } from './remote-rpc.ts'
 import { plainHostConfig, type LiveHostConfig } from './live-config.ts'
+import { MnemonProfileSettingsBridge } from './settings-bridge.ts'
 import { ProfileMnemonSettings } from './settings-service.ts'
 import { VersionUpdateManager, type DshBundleInstaller } from './version-updates.ts'
 
@@ -95,6 +96,7 @@ export function apply(rawContext: unknown, rawConfig: MnemonConfig | LiveHostCon
   })
   const runtime = new LiveMnemonRuntime(createRuntimeGraph(effectiveConfig(settings.get()), undefined, extensions), optionalWorkspaceRegistry(ctx), ctx.agents, extensions)
   runtime.useGitHubAuth(optionalGitHubAuth(ctx))
+  runtime.useSettingsBridge(new MnemonProfileSettingsBridge(hostSettings))
   const resolved = runtime.config
   ctx.effect(() => hostSettings.onUpdated((namespace, value) => {
     if (namespace === memoryPlugins.settingsNamespace) {

@@ -12,6 +12,7 @@ import type {
 } from './protocol.ts'
 import { MNEMON_PACK_COMPONENTS, MNEMON_SYNC_TOKEN_ENV } from './protocol.ts'
 import { MnemonGitHubAuth } from './github-auth.ts'
+import { MnemonMachineStore } from './machine-identity.ts'
 import type { StorageRoot } from './storage-root.ts'
 import { MnemonSyncSettingsStore, type MnemonSyncSettings } from './sync-config.ts'
 
@@ -81,7 +82,20 @@ function versionAtLeast(version: string, minimum: string): boolean {
 function componentDirectory(component: MnemonPackComponent): string {
   if (component === 'runtime') return 'payload/runtime/'
   if (component === 'documents') return 'payload/documents/'
-  return 'payload/data/'
+  if (component === 'memory-spaces') return 'payload/data/'
+  return 'payload/settings/'
+}
+
+/** How many deletions the payload carries; a merge reports them so a push is not silent about them. */
+function tombstoneCount(entries: Record<string, Uint8Array>): number {
+  const bytes = entries['payload/runtime/tombstones.json']
+  if (bytes === undefined) return 0
+  try {
+    const value = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown)
+    return Array.isArray(value?.tombstones) ? value.tombstones.length : 0
+  } catch {
+    return 0
+  }
 }
 
 /** Whether the payload of one component differs between two sets of files. */
@@ -221,6 +235,7 @@ function unpack(archive: Uint8Array): Unzipped {
 export class MnemonGitSync {
   private readonly root: string
   private readonly store: MnemonSyncSettingsStore
+  private readonly machine: MnemonMachineStore
   private sequence = 0
   private auth: MnemonGitHubAuth | undefined
 
@@ -233,6 +248,7 @@ export class MnemonGitSync {
   ) {
     this.root = resolve(runner.effectiveDataDir())
     this.store = new MnemonSyncSettingsStore(runner)
+    this.machine = new MnemonMachineStore(runner)
   }
 
   /** Where the channel keeps its configuration and its disposable mirror. */
@@ -297,6 +313,7 @@ export class MnemonGitSync {
       mirrorPath: this.store.mirror(),
       git,
       remote,
+      machine: this.machine.read(),
       ...(commit === undefined ? {} : { lastCommit: commit }),
     }
   }
@@ -307,20 +324,35 @@ export class MnemonGitSync {
     return this.credentialView(next)
   }
 
-  /** Collect the full pack, write it into the mirror when it changed, and publish the difference. */
+  /**
+   * Fold the branch into this machine, then collect the full pack, write it into
+   * the mirror when it changed, and publish the difference. A push therefore never
+   * overwrites what another machine published: the remote payload is merged first,
+   * and the merged result is what the new commit holds.
+   */
   async push(input: { message?: unknown; signal?: AbortSignal } = {}): Promise<MnemonSyncPushResult> {
     const settings = this.requireRepository()
     await this.requireGit(input.signal)
     const message = commitMessage(input.message, this.now())
-    const exported = await this.packs.exportPack('full')
-    const entries = unpack(Buffer.from(exported.base64, 'base64'))
-    const extension: MnemonSyncRemoteExtension = {
-      channel: 'git', branch: settings.branch, subdir: settings.subdir, pushedAt: exported.manifest.exportedAt,
-    }
-    entries[MANIFEST] = new TextEncoder().encode(JSON.stringify({ ...exported.manifest, [SYNC_EXTENSION]: extension }, null, 2) + '\n')
-
     return this.lock(async () => {
       const prepared = await this.ensureMirror(settings, input.signal)
+      const remote = await this.readRemote(settings, input.signal)
+      let merged: MnemonSyncPushResult['merged']
+      if (remote !== undefined) {
+        const imported = await this.packs.importPack(Buffer.from(remote.archive).toString('base64'), { mode: 'merge' })
+        merged = {
+          commit: remote.commit,
+          ...(remote.manifest.machine === undefined ? {} : { machine: { id: remote.manifest.machine.id, label: remote.manifest.machine.label } }),
+          components: imported.components, summary: imported.summary,
+          tombstones: tombstoneCount(remote.files),
+        }
+      }
+      const exported = await this.packs.exportPack('full')
+      const entries = unpack(Buffer.from(exported.base64, 'base64'))
+      const extension: MnemonSyncRemoteExtension = {
+        channel: 'git', branch: settings.branch, subdir: settings.subdir, pushedAt: exported.manifest.exportedAt,
+      }
+      entries[MANIFEST] = new TextEncoder().encode(JSON.stringify({ ...exported.manifest, [SYNC_EXTENSION]: extension }, null, 2) + '\n')
       const before = readFiles(this.payloadRoot(settings.subdir))
       // A payload the branch already holds is left untouched: the work tree
       // stays clean, so Git records no second commit for the same bytes.
@@ -353,7 +385,9 @@ export class MnemonGitSync {
         commit: head, committed, message,
         files: Object.keys(entries).length,
         bytes: Object.values(entries).reduce((total, bytes) => total + bytes.byteLength, 0),
-        summary, pushed: published.pushed, ...(published.reason === undefined ? {} : { reason: published.reason }),
+        summary, pushed: published.pushed,
+        ...(merged === undefined ? {} : { merged }),
+        ...(published.reason === undefined ? {} : { reason: published.reason }),
       }
     })
   }

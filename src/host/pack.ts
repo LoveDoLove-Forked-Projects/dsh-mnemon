@@ -21,7 +21,8 @@ import type { ResolvedConfig } from './config.ts'
 import { DOCUMENTS_ACTIVE_LIMIT_BYTES, DOCUMENTS_VERSION, type DocumentRecord } from 'dsh-mnemon-source-documents/contracts'
 import { RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_MEMORY_VERSION, type RuntimeMemoryEntry, type RuntimeMemoryLimits, type RuntimeMemoryTarget } from 'dsh-mnemon-source-runtime/contracts'
 import { createStorageRoot, type StorageRoot } from './storage-root.ts'
-import { MNEMON_PACK_COMPONENTS, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget } from "./protocol.ts"
+import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonSettingsPayload, type MnemonSettingsNamespaceSnapshot, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
+import { MnemonMachineStore } from './machine-identity.ts'
 
 export type { MnemonPackComponent, MnemonPackComponentSummary, MnemonPackExport, MnemonPackImportMode, MnemonPackImportResult, MnemonPackManifest, MnemonPackPreview, MnemonPackScope } from "./protocol.ts"
 
@@ -36,7 +37,11 @@ const MAX_FILES = 4096
 const LOCK_TIMEOUT_MS = 5_000
 const LOCK_STALE_MS = 30_000
 const LOCK_RETRY_MS = 20
-const COMPONENT_DIRECTORIES = { runtime: 'runtime', documents: 'documents', 'memory-spaces': 'data' } as const
+const COMPONENT_DIRECTORIES = { runtime: 'runtime', documents: 'documents', 'memory-spaces': 'data', settings: 'settings' } as const
+const RUNTIME_TOMBSTONE_PATH = 'payload/runtime/tombstones.json'
+const SETTINGS_PAYLOAD_PATH = 'payload/settings/mnemon.json'
+const STATE_TOMBSTONE_FILE = 'tombstones.json'
+const STATE_RUNTIME_INDEX_FILE = 'runtime-index.json'
 const COMPONENT_ORDER = MNEMON_PACK_COMPONENTS
 const BODY_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
 const SQLITE_HEADER = Buffer.from('SQLite format 3\0', 'binary')
@@ -53,9 +58,15 @@ interface ParsedPack {
   manifest: MnemonPackManifest
 }
 
+/**
+ * A stored entry may carry fields this Host does not own: the machine that wrote it,
+ * and whatever a newer version adds. They round-trip through the Pack untouched.
+ */
+type StoredRuntimeEntry = RuntimeMemoryEntry & { origin?: MnemonEntryOrigin }
+
 interface RuntimeFile {
   version: 1
-  entries: RuntimeMemoryEntry[]
+  entries: StoredRuntimeEntry[]
 }
 
 interface DocumentIndex {
@@ -114,11 +125,14 @@ function payloadComponent(path: string): MnemonPackComponent | undefined {
   if (path.startsWith('payload/runtime/')) return 'runtime'
   if (path.startsWith('payload/documents/')) return 'documents'
   if (path.startsWith('payload/data/')) return 'memory-spaces'
+  if (path.startsWith('payload/settings/')) return 'settings'
   return undefined
 }
 
 function allowedPayloadPath(path: string): boolean {
   if (path === 'payload/runtime/memories.json' || path === 'payload/runtime/USER.md' || path === 'payload/runtime/MEMORY.md') return true
+  if (path === RUNTIME_TOMBSTONE_PATH) return true
+  if (path === SETTINGS_PAYLOAD_PATH) return true
   if (path === 'payload/documents/index.json') return true
   if (/^payload\/documents\/(active|archived)\/[a-zA-Z0-9._-]+\.md$/u.test(path)) return true
   if (path === 'payload/data/.dsh-memory-bodies.json') return true
@@ -127,7 +141,7 @@ function allowedPayloadPath(path: string): boolean {
 
 function componentsForScope(scope: MnemonPackScope): MnemonPackComponent[] {
   if (scope === 'full') return [...COMPONENT_ORDER]
-  if (!COMPONENT_ORDER.includes(scope)) throw new Error('Mnemon Pack scope must be full, runtime, documents, or memory-spaces')
+  if (!COMPONENT_ORDER.includes(scope)) throw new Error('Mnemon Pack scope must be full, runtime, documents, memory-spaces, or settings')
   return [scope]
 }
 
@@ -155,15 +169,33 @@ function parseManifest(value: unknown): MnemonPackManifest {
     }
     return { component, files: Number(item!.files), bytes: Number(item!.bytes), items: Number(item!.items) }
   })
+  const machine = parseMachineIdentity(manifest.machine)
   return {
     format: MNEMON_PACK_FORMAT,
     version: MNEMON_PACK_VERSION,
     scope: manifest.scope as MnemonPackScope,
     exportedAt: manifest.exportedAt,
     source: { plugin: 'dsh-mnemon', pluginVersion: source.pluginVersion },
+    ...(machine === undefined ? {} : { machine }),
     components,
     summary,
   }
+}
+
+function parseMachineIdentity(value: unknown): MnemonMachineIdentity | undefined {
+  if (value === undefined || value === null) return undefined
+  const machine = record(value)
+  if (typeof machine?.id !== 'string' || machine.id.trim() === '' || typeof machine.label !== 'string' || typeof machine.createdAt !== 'string') {
+    throw new Error('Mnemon Pack machine identity is invalid')
+  }
+  return { id: machine.id, label: machine.label, createdAt: machine.createdAt }
+}
+
+function parseEntryOrigin(value: unknown): MnemonEntryOrigin | undefined {
+  if (value === undefined || value === null) return undefined
+  const origin = record(value)
+  if (typeof origin?.machine !== 'string' || typeof origin.label !== 'string' || typeof origin.at !== 'string') return undefined
+  return { machine: origin.machine, label: origin.label, at: origin.at }
 }
 
 function decodeArchive(base64: string): Buffer {
@@ -223,7 +255,13 @@ function parseRuntime(value: unknown, limits: RuntimeMemoryLimits = RUNTIME_MEMO
     if (typeof entry.created_at !== 'string' || typeof entry.updated_at !== 'string') throw new Error('runtime memories.json contains invalid timestamps')
     const content = entry.content.trim().replace(/\s+/gu, ' ')
     if (content === '' || content.includes('§') || Buffer.byteLength(content, 'utf8') > 8 * 1024) throw new Error('runtime memories.json contains invalid content')
-    return { content, target: entry.target, importance: entry.importance as RuntimeMemoryEntry['importance'], created_at: entry.created_at, updated_at: entry.updated_at }
+    // A Pack carries provenance, not only text: spreading the raw entry first keeps
+    // fields this Host does not own (the writing machine, branch scoping) intact.
+    return {
+      ...(raw as RuntimeMemoryEntry),
+      content, target: entry.target, importance: entry.importance as RuntimeMemoryEntry['importance'],
+      created_at: entry.created_at, updated_at: entry.updated_at,
+    }
   })
   for (const target of ['user', 'memory'] as const) {
     const used = runtimeBytes(entries, target)
@@ -232,11 +270,48 @@ function parseRuntime(value: unknown, limits: RuntimeMemoryLimits = RUNTIME_MEMO
   return { version: 1, entries }
 }
 
-function runtimeBytes(entries: RuntimeMemoryEntry[], target: RuntimeMemoryTarget): number {
+function emptyTombstones(): MnemonTombstoneFile {
+  return { version: 1, tombstones: [] }
+}
+
+function parseTombstones(value: unknown): MnemonTombstoneFile {
+  const source = record(value)
+  if (source?.version !== 1 || !Array.isArray(source.tombstones)) throw new Error('runtime tombstones.json is invalid')
+  const tombstones = source.tombstones.map((raw): MnemonTombstone => {
+    const tombstone = record(raw)
+    if (tombstone?.target !== 'memory' && tombstone?.target !== 'user') throw new Error('runtime tombstones.json contains an invalid entry')
+    if (typeof tombstone.contentHash !== 'string' || !/^[a-f0-9]{64}$/u.test(tombstone.contentHash) || typeof tombstone.deletedAt !== 'string') {
+      throw new Error('runtime tombstones.json contains an invalid entry')
+    }
+    return {
+      target: tombstone.target,
+      contentHash: tombstone.contentHash,
+      deletedAt: tombstone.deletedAt,
+      ...(typeof tombstone.machine === 'string' ? { machine: tombstone.machine } : {}),
+    }
+  })
+  return { version: 1, tombstones }
+}
+
+function parseSettingsPayload(value: unknown): MnemonSettingsPayload {
+  const source = record(value)
+  if (source?.version !== 1 || !Array.isArray(source.namespaces)) throw new Error('settings mnemon.json is invalid')
+  const namespaces = source.namespaces.map((raw): MnemonSettingsNamespaceSnapshot => {
+    const entry = record(raw)
+    if (typeof entry?.ns !== 'string' || entry.ns.trim() === '' || typeof entry.updatedAt !== 'string' || entry.user === undefined) {
+      throw new Error('settings mnemon.json contains an invalid namespace')
+    }
+    return { ns: entry.ns, user: entry.user as MnemonSettingsPayload['namespaces'][number]['user'], updatedAt: entry.updatedAt }
+  })
+  if (typeof source.exportedAt !== 'string') throw new Error('settings mnemon.json is invalid')
+  return { version: 1, exportedAt: source.exportedAt, namespaces }
+}
+
+function runtimeBytes(entries: StoredRuntimeEntry[], target: RuntimeMemoryTarget): number {
   return Buffer.byteLength(entries.filter(entry => entry.target === target).map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER), 'utf8')
 }
 
-function runtimeProjection(entries: RuntimeMemoryEntry[], target: RuntimeMemoryTarget): string {
+function runtimeProjection(entries: StoredRuntimeEntry[], target: RuntimeMemoryTarget): string {
   const content = entries.filter(entry => entry.target === target).map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER)
   return content === '' ? '' : `${content}\n`
 }
@@ -314,6 +389,10 @@ function validatePackPayload(files: Unzipped, components: MnemonPackComponent[],
     const databases = Object.keys(files).filter(path => /^payload\/data\/[^/]+\/mnemon\.db$/u.test(path))
     if (databases.length !== registry.bodies.length) throw new Error('Memory Space registry does not match the database payload')
   }
+  if (components.includes('runtime') && files[RUNTIME_TOMBSTONE_PATH] !== undefined) {
+    parseTombstones(json(files[RUNTIME_TOMBSTONE_PATH]!, RUNTIME_TOMBSTONE_PATH))
+  }
+  if (components.includes('settings')) parseSettingsPayload(json(files[SETTINGS_PAYLOAD_PATH] ?? new Uint8Array(), SETTINGS_PAYLOAD_PATH))
 }
 
 function sleepSync(milliseconds: number): void {
@@ -467,7 +546,8 @@ function writeRegistry(directory: string, registry: BodyRegistry, databases: Map
 function componentItems(component: MnemonPackComponent, files: Record<string, Uint8Array>, runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): number {
   if (component === 'runtime') return parseRuntime(json(files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits).entries.length
   if (component === 'documents') return parseDocumentIndex(json(files['payload/documents/index.json']!, 'payload/documents/index.json')).documents.length
-  return parseRegistry(json(files['payload/data/.dsh-memory-bodies.json']!, 'payload/data/.dsh-memory-bodies.json')).bodies.length
+  if (component === 'memory-spaces') return parseRegistry(json(files['payload/data/.dsh-memory-bodies.json']!, 'payload/data/.dsh-memory-bodies.json')).bodies.length
+  return parseSettingsPayload(json(files[SETTINGS_PAYLOAD_PATH]!, SETTINGS_PAYLOAD_PATH)).namespaces.length
 }
 
 function summaryFor(components: MnemonPackComponent[], files: Record<string, Uint8Array>, runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): MnemonPackComponentSummary[] {
@@ -478,13 +558,18 @@ function summaryFor(components: MnemonPackComponent[], files: Record<string, Uin
   })
 }
 
-function collectExport(root: string, components: MnemonPackComponent[], runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): Record<string, Uint8Array> {
+function collectExport(root: string, components: MnemonPackComponent[], runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS, stamp?: { machine: MnemonMachineIdentity; at: string }): Record<string, Uint8Array> {
   const files: Record<string, Uint8Array> = {}
   if (components.includes('runtime')) {
     const runtime = readCurrentRuntime(root, runtimeLimits)
-    files['payload/runtime/memories.json'] = strToU8(`${JSON.stringify(runtime, null, 2)}\n`)
-    files['payload/runtime/USER.md'] = strToU8(runtimeProjection(runtime.entries, 'user'))
-    files['payload/runtime/MEMORY.md'] = strToU8(runtimeProjection(runtime.entries, 'memory'))
+    const entries = stamp === undefined ? runtime.entries : stampedEntries(runtime.entries, stamp.machine, stamp.at)
+    // Recording this export is what makes a later deletion visible to the merge, so the
+    // tombstones written here are the ones this Pack carries.
+    const tombstones = stamp === undefined ? readCurrentTombstones(root) : advanceTombstones(root, runtime.entries, stamp.machine, stamp.at)
+    files['payload/runtime/memories.json'] = strToU8(`${JSON.stringify({ ...runtime, entries }, null, 2)}\n`)
+    files['payload/runtime/USER.md'] = strToU8(runtimeProjection(entries, 'user'))
+    files['payload/runtime/MEMORY.md'] = strToU8(runtimeProjection(entries, 'memory'))
+    files[RUNTIME_TOMBSTONE_PATH] = strToU8(`${JSON.stringify(tombstones, null, 2)}\n`)
   }
   if (components.includes('documents')) {
     const current = readCurrentDocuments(root)
@@ -496,19 +581,165 @@ function collectExport(root: string, components: MnemonPackComponent[], runtimeL
     files['payload/data/.dsh-memory-bodies.json'] = strToU8(`${JSON.stringify(current.registry, null, 2)}\n`)
     for (const body of current.registry.bodies) files[`payload/data/${body.id}/mnemon.db`] = current.databases.get(body.id)!
   }
+  if (components.includes('settings')) files[SETTINGS_PAYLOAD_PATH] = strToU8(`${JSON.stringify(readSettingsPayload(root, stamp?.at), null, 2)}\n`)
   return files
+}
+
+/**
+ * The settings the Host staged for the next export. The profile itself is never read here.
+ * Without a staged file the payload is empty, and its stamp comes from the caller so that two
+ * exports of the same data stay byte-identical.
+ */
+function readSettingsPayload(root: string, fallbackExportedAt?: string): MnemonSettingsPayload {
+  const path = join(root, 'settings', 'mnemon.json')
+  if (!existsSync(path)) return { version: 1, exportedAt: fallbackExportedAt ?? new Date().toISOString(), namespaces: [] }
+  return parseSettingsPayload(JSON.parse(readFileSync(path, 'utf8')) as unknown)
+}
+
+function readCurrentTombstones(root: string): MnemonTombstoneFile {
+  const path = join(root, 'state', STATE_TOMBSTONE_FILE)
+  return existsSync(path) ? parseTombstones(JSON.parse(readFileSync(path, 'utf8')) as unknown) : emptyTombstones()
+}
+
+function writeTombstones(directory: string, file: MnemonTombstoneFile): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  writeFileSync(join(directory, STATE_TOMBSTONE_FILE), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
+}
+
+function writeSettingsPayload(directory: string, payload: MnemonSettingsPayload): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  writeFileSync(join(directory, 'mnemon.json'), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 })
+}
+
+/**
+ * The entries the last export carried. A removal leaves no trace in the data itself,
+ * so this index is what lets a later export notice one and publish it as a tombstone.
+ */
+interface RuntimeIndexFile {
+  version: 1
+  entries: Array<{ target: RuntimeMemoryTarget; contentHash: string }>
+}
+
+function emptyRuntimeIndex(): RuntimeIndexFile {
+  return { version: 1, entries: [] }
+}
+
+/** A damaged index only costs forgotten deletions, so it degrades instead of failing an export. */
+function parseRuntimeIndex(value: unknown): RuntimeIndexFile {
+  const source = record(value)
+  if (source?.version !== 1 || !Array.isArray(source.entries)) return emptyRuntimeIndex()
+  const entries: RuntimeIndexFile['entries'] = []
+  for (const raw of source.entries) {
+    const entry = record(raw)
+    if (entry?.target !== 'memory' && entry?.target !== 'user') continue
+    if (typeof entry.contentHash !== 'string' || !/^[a-f0-9]{64}$/u.test(entry.contentHash)) continue
+    entries.push({ target: entry.target, contentHash: entry.contentHash })
+  }
+  return { version: 1, entries }
+}
+
+function readRuntimeIndex(root: string): RuntimeIndexFile {
+  const path = join(root, 'state', STATE_RUNTIME_INDEX_FILE)
+  if (!existsSync(path)) return emptyRuntimeIndex()
+  try {
+    return parseRuntimeIndex(JSON.parse(readFileSync(path, 'utf8')) as unknown)
+  } catch {
+    return emptyRuntimeIndex()
+  }
+}
+
+function writeRuntimeIndex(directory: string, file: RuntimeIndexFile): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  writeFileSync(join(directory, STATE_RUNTIME_INDEX_FILE), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
+}
+
+/**
+ * Every entry the last export carried that the data directory no longer holds was deleted
+ * here. Publishing that deletion as a tombstone is what stops another machine from writing
+ * the entry back during the next merge.
+ */
+function deletedSince(root: string, entries: StoredRuntimeEntry[], machine: MnemonMachineIdentity, at: string): MnemonTombstone[] {
+  const present = new Set(entries.map(entry => `${entry.target}\0${tombstoneHash(entry)}`))
+  return readRuntimeIndex(root).entries
+    .filter(entry => !present.has(`${entry.target}\0${entry.contentHash}`))
+    .map(entry => ({ target: entry.target, contentHash: entry.contentHash, deletedAt: at, machine: machine.id }))
+}
+
+/** Record this export's entries and fold the deletions it revealed into the local tombstones. */
+function advanceTombstones(root: string, entries: StoredRuntimeEntry[], machine: MnemonMachineIdentity, at: string): MnemonTombstoneFile {
+  const file = mergeTombstoneFiles(readCurrentTombstones(root), { version: 1, tombstones: deletedSince(root, entries, machine, at) })
+  writeTombstones(join(root, 'state'), file)
+  writeRuntimeIndex(join(root, 'state'), { version: 1, entries: entries.map(entry => ({ target: entry.target, contentHash: tombstoneHash(entry) })) })
+  return file
+}
+
+/** One entry's identity across machines: its target plus its exact text. */
+function entryKey(entry: StoredRuntimeEntry): string {
+  return `${entry.target}\0${entry.content}`
+}
+
+/** A deletion is a tombstone over that same identity, so it travels as data instead of as a diff. */
+function tombstoneHash(entry: { target: RuntimeMemoryTarget; content: string }): string {
+  return sha256(`${entry.target}\0${entry.content}`)
+}
+
+/** A tombstone hides an entry until that entry is written again later than the deletion. */
+function tombstoneCovers(tombstone: MnemonTombstone, entry: StoredRuntimeEntry): boolean {
+  if (tombstone.target !== entry.target || tombstone.contentHash !== tombstoneHash(entry)) return false
+  const deletedAt = Date.parse(tombstone.deletedAt)
+  const updatedAt = Date.parse(entry.updated_at)
+  if (Number.isNaN(deletedAt) || Number.isNaN(updatedAt)) return tombstone.deletedAt >= entry.updated_at
+  return deletedAt >= updatedAt
+}
+
+/** Entries this machine writes carry no origin until they leave it; an export stamps them. */
+function stampedEntries(entries: StoredRuntimeEntry[], machine: MnemonMachineIdentity | undefined, at: string): StoredRuntimeEntry[] {
+  if (machine === undefined) return entries
+  return entries.map(entry => parseEntryOrigin(entry.origin) === undefined
+    ? { ...entry, origin: { machine: machine.id, label: machine.label, at } }
+    : entry)
 }
 
 function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemoryLimits): RuntimeFile {
   const current = readCurrentRuntime(root, runtimeLimits)
   const incoming = parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits)
-  const keys = new Set(current.entries.map(entry => `${entry.target}\0${entry.content}`))
-  const entries = [...current.entries]
+  const tombstones = mergeTombstones(root, pack).tombstones
+  const keys = new Set(current.entries.map(entryKey))
+  const entries = current.entries.filter(entry => !tombstones.some(tombstone => tombstoneCovers(tombstone, entry)))
   for (const entry of incoming.entries) {
-    const key = `${entry.target}\0${entry.content}`
+    const key = entryKey(entry)
+    if (tombstones.some(tombstone => tombstoneCovers(tombstone, entry))) continue
     if (!keys.has(key)) { keys.add(key); entries.push(entry) }
   }
   return parseRuntime({ version: 1, entries }, runtimeLimits)
+}
+
+/** Tombstones only ever grow: the newest deletion of one entry wins, and neither side forgets one. */
+function mergeTombstoneFiles(current: MnemonTombstoneFile, incoming: MnemonTombstoneFile): MnemonTombstoneFile {
+  const byKey = new Map<string, MnemonTombstone>()
+  for (const tombstone of [...current.tombstones, ...incoming.tombstones]) {
+    const key = `${tombstone.target}\0${tombstone.contentHash}`
+    const existing = byKey.get(key)
+    if (existing === undefined || tombstone.deletedAt > existing.deletedAt) byKey.set(key, tombstone)
+  }
+  return { version: 1, tombstones: [...byKey.values()].sort((left, right) => left.deletedAt < right.deletedAt ? -1 : left.deletedAt > right.deletedAt ? 1 : 0) }
+}
+
+/** The tombstones this data directory and one Pack agree on. */
+function mergeTombstones(root: string, pack: ParsedPack): MnemonTombstoneFile {
+  const bytes = pack.files[RUNTIME_TOMBSTONE_PATH]
+  const incoming = bytes === undefined ? emptyTombstones() : parseTombstones(json(bytes, RUNTIME_TOMBSTONE_PATH))
+  return mergeTombstoneFiles(readCurrentTombstones(root), incoming)
+}
+
+/** Settings merge at namespace granularity: the newer snapshot of one namespace wins, both sides keep the rest. */
+function mergeSettings(current: MnemonSettingsPayload, incoming: MnemonSettingsPayload): MnemonSettingsPayload {
+  const byNamespace = new Map(current.namespaces.map(entry => [entry.ns, entry]))
+  for (const entry of incoming.namespaces) {
+    const existing = byNamespace.get(entry.ns)
+    if (existing === undefined || entry.updatedAt >= existing.updatedAt) byNamespace.set(entry.ns, entry)
+  }
+  return { version: 1, exportedAt: incoming.exportedAt, namespaces: [...byNamespace.values()] }
 }
 
 function mergeDocuments(root: string, pack: ParsedPack): { index: DocumentIndex; files: Map<string, Uint8Array> } {
@@ -586,10 +817,15 @@ function stageImport(root: string, pack: ParsedPack, components: MnemonPackCompo
     if (components.includes('runtime')) {
       const runtime = mode === 'merge' ? mergeRuntime(root, pack, runtimeLimits) : parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits)
       writeRuntime(join(staging, 'runtime'), runtime)
+      writeTombstones(join(staging, 'state'), mergeTombstones(root, pack))
     }
     if (components.includes('documents')) {
       const documents = mode === 'merge' ? mergeDocuments(root, pack) : archiveDocuments(pack)
       writeDocuments(join(staging, 'documents'), documents.index, documents.files)
+    }
+    if (components.includes('settings')) {
+      const incoming = parseSettingsPayload(json(pack.files[SETTINGS_PAYLOAD_PATH]!, SETTINGS_PAYLOAD_PATH))
+      writeSettingsPayload(join(staging, 'settings'), mode === 'merge' ? mergeSettings(readSettingsPayload(root), incoming) : incoming)
     }
     if (components.includes('memory-spaces')) {
       const memory = mode === 'merge' ? mergeRegistry(root, pack) : archiveRegistry(pack)
@@ -614,6 +850,7 @@ function commitStaging(root: string, staging: string, components: MnemonPackComp
     : component === 'documents' ? [join(staging, 'documents', '.index.lock')] : [])
   const activePath = join(root, 'active')
   const previousActive = existsSync(activePath) ? readFileSync(activePath) : undefined
+  let tombstoneSwap: { hadPrevious: boolean } | undefined
   try {
     for (const lock of replacementLocks) writeFileSync(lock, 'pack-import\n', { mode: 0o600 })
     for (const component of components) {
@@ -630,6 +867,18 @@ function commitStaging(root: string, staging: string, components: MnemonPackComp
       }
       committed.push({ directory, hadPrevious })
     }
+    // Tombstones live beside the other machine-local state files, so they are swapped
+    // file by file instead of by replacing the whole state directory.
+    if (components.includes('runtime')) {
+      const directory = join(root, 'state')
+      mkdirSync(directory, { recursive: true, mode: 0o700 })
+      const target = join(directory, STATE_TOMBSTONE_FILE)
+      const previous = join(backup, STATE_TOMBSTONE_FILE)
+      const hadPrevious = existsSync(target)
+      if (hadPrevious) renameSync(target, previous)
+      renameSync(join(staging, 'state', STATE_TOMBSTONE_FILE), target)
+      tombstoneSwap = { hadPrevious }
+    }
     if (components.includes('memory-spaces')) reconcilePersistedStore(root)
     if (components.includes('runtime')) rmSync(join(root, 'runtime', '.memories.lock'), { force: true })
     if (components.includes('documents')) rmSync(join(root, 'documents', '.index.lock'), { force: true })
@@ -638,6 +887,11 @@ function commitStaging(root: string, staging: string, components: MnemonPackComp
       const target = join(root, entry.directory)
       rmSync(target, { recursive: true, force: true })
       if (entry.hadPrevious) renameSync(join(backup, entry.directory), target)
+    }
+    if (tombstoneSwap !== undefined) {
+      const target = join(root, 'state', STATE_TOMBSTONE_FILE)
+      rmSync(target, { force: true })
+      if (tombstoneSwap.hadPrevious) renameSync(join(backup, STATE_TOMBSTONE_FILE), target)
     }
     if (components.includes('memory-spaces')) {
       if (previousActive === undefined) rmSync(activePath, { force: true })
@@ -651,6 +905,7 @@ function commitStaging(root: string, staging: string, components: MnemonPackComp
 }
 
 function occupied(root: string, component: MnemonPackComponent): boolean {
+  if (component === 'settings') return existsSync(join(root, 'settings', 'mnemon.json'))
   const directory = join(root, COMPONENT_DIRECTORIES[component])
   if (!existsSync(directory)) return false
   try { return readdirSync(directory).some(name => !name.startsWith('.')) } catch { return true }
@@ -662,22 +917,55 @@ function safeName(value: string | undefined): string | undefined {
   return name === '' ? undefined : name.slice(0, 160)
 }
 
+/**
+ * Settings belong to the DSH profile rather than to the Mnemon data directory, so the
+ * Pack carries a snapshot of the Mnemon namespaces the Host collects and writes back.
+ */
+export interface MnemonSettingsBridge {
+  collect(): Promise<MnemonSettingsPayload>
+  apply(payload: MnemonSettingsPayload): Promise<void>
+}
+
 /** Native, checksummed import/export for the one currently effective Mnemon root. */
 export class MnemonPackManager {
   private readonly root: string
   private readonly runtimeLimits: RuntimeMemoryLimits
+  private readonly machine: MnemonMachineStore
+  private settings: MnemonSettingsBridge | undefined
 
   constructor(
     private readonly runner: StorageRoot,
     private readonly config: Pick<ResolvedConfig, 'storageScope' | 'runtimeMemory'>,
     private readonly afterImport: (components: MnemonPackComponent[]) => void = () => {},
     private readonly now: () => Date = () => new Date(),
+    settings: MnemonSettingsBridge | undefined = undefined,
   ) {
+    this.settings = settings
     this.root = resolve(runner.effectiveDataDir())
+    this.machine = new MnemonMachineStore(runner)
     this.runtimeLimits = {
       memory: config.runtimeMemory.memoryLimitBytes,
       user: config.runtimeMemory.userLimitBytes,
     }
+  }
+
+  /** The identity this machine stamps onto everything it exports. */
+  identity(): MnemonMachineIdentity {
+    return this.machine.read()
+  }
+
+  /** Late binding keeps one bridge across every runtime generation the Host swaps in. */
+  useSettingsBridge(bridge: MnemonSettingsBridge | undefined): void {
+    this.settings = bridge
+  }
+
+  /**
+   * Settings are staged into the data directory only for the duration of one export:
+   * the profile itself stays the source of truth and is never rewritten by an export.
+   */
+  private async stageSettings(components: MnemonPackComponent[]): Promise<void> {
+    if (!components.includes('settings') || this.settings === undefined) return
+    writeSettingsPayload(join(this.root, 'settings'), await this.settings.collect())
   }
 
   target(): MnemonPackTarget {
@@ -688,13 +976,15 @@ export class MnemonPackManager {
     const components = componentsForScope(scope)
     return this.runner.withExclusive(async () => {
       await new Promise<void>(resolveReady => setImmediate(resolveReady))
+      await this.stageSettings(components)
       return withLocks(this.root, components, () => {
-        const payload = collectExport(this.root, components, this.runtimeLimits)
         const exportedAt = this.now().toISOString()
+        const machine = this.identity()
+        const payload = collectExport(this.root, components, this.runtimeLimits, { machine, at: exportedAt })
         const summary = summaryFor(components, payload, this.runtimeLimits)
         const manifest: MnemonPackManifest = {
           format: MNEMON_PACK_FORMAT, version: MNEMON_PACK_VERSION, scope, exportedAt,
-          source: { plugin: 'dsh-mnemon', pluginVersion: '0.1.0' }, components, summary,
+          source: { plugin: 'dsh-mnemon', pluginVersion: '0.1.0' }, machine, components, summary,
         }
         const checksums: ChecksumFile = { algorithm: 'sha256', files: Object.fromEntries(Object.entries(payload).map(([path, bytes]) => [path, sha256(bytes)])) }
         const entries: Zippable = {
@@ -737,7 +1027,7 @@ export class MnemonPackManager {
     return this.runner.withExclusive(async () => {
       await new Promise<void>(resolveReady => setImmediate(resolveReady))
       mkdirSync(this.root, { recursive: true, mode: 0o700 })
-      return withLocks(this.root, components, () => {
+      return withLocks(this.root, components, (): MnemonPackImportResult => {
         const staging = stageImport(this.root, pack, components, options.mode, this.runtimeLimits)
         commitStaging(this.root, staging, components)
         this.afterImport(components)
@@ -746,6 +1036,13 @@ export class MnemonPackManager {
           summary: pack.manifest.summary.filter(summary => components.includes(summary.component)),
         }
       })
+    }).then(async (result): Promise<MnemonPackImportResult> => {
+      // The data directory now holds the merged settings snapshot; applying it is
+      // what makes the running profile match what this Pack carried.
+      if (components.includes('settings') && this.settings !== undefined) {
+        await this.settings.apply(parseSettingsPayload(json(pack.files[SETTINGS_PAYLOAD_PATH]!, SETTINGS_PAYLOAD_PATH)))
+      }
+      return result
     })
   }
 }

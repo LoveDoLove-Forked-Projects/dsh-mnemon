@@ -592,7 +592,7 @@ describe('MnemonSettingsCard', () => {
     // Moving the storage says what it does and waits for its own Apply.
     choose('存储范围', '工作区')
     expect(mutate).toHaveBeenCalledTimes(1)
-    expect(screen.getByText('应用后读写新位置，已有数据不会迁移')).toBeTruthy()
+    expect(screen.getByText('应用后读写新位置；选好目录后可以一并迁移已有数据')).toBeTruthy()
     fireEvent.click(apply())
     await waitFor(() => expect(mutate).toHaveBeenLastCalledWith([{ op: 'set', path: ['storageScope'], value: 'workspace' }]))
   })
@@ -661,7 +661,7 @@ describe('MnemonSettingsCard', () => {
 
     expect(selector('Storage scope').textContent).toBe('Global')
     choose('Storage scope', 'Workspace')
-    expect(screen.getByText('Memory moves to the new location; existing data stays where it is')).toBeTruthy()
+    expect(screen.getByText('Memory reads and writes the new location; a chosen directory can carry the existing data over')).toBeTruthy()
     expect(apply('Apply')).toBeTruthy()
   })
 
@@ -1235,6 +1235,7 @@ describe('MnemonSettingsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: '安全导入' }))
     await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-pack', 'import', {
       base64: 'cGFjaw==',
+      mode: 'merge',
     }))
     expect(screen.getByText('已将 ZIP 安全合并到 /active/.mnemon。')).toBeTruthy()
   })
@@ -1314,6 +1315,6 @@ describe('centralized workspace storage settings', () => {
     expect(screen.queryByTitle('/data/mnemon')).toBeNull()
     fireEvent.click(directoryChoice('默认'))
     expect(screen.getByTitle('/home/me/.mnemon')).toBeTruthy()
-    expect(screen.getByText('应用后读写新位置，已有数据不会迁移')).toBeTruthy()
+    expect(screen.getByText('应用后读写新位置；选好目录后可以一并迁移已有数据')).toBeTruthy()
   })
 })

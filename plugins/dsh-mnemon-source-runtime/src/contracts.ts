@@ -2,6 +2,13 @@ export type RuntimeMemoryTarget = 'memory' | 'user'
 export type RuntimeMemoryImportance = 'critical' | 'normal' | 'low'
 export type RuntimeMemoryAction = 'add' | 'replace' | 'remove'
 
+/** Provenance a DSH Host stamps when an entry crosses machines; absent for local writes. */
+export interface RuntimeMemoryEntryOrigin {
+  machine: string
+  label: string
+  at: string
+}
+
 export interface RuntimeMemoryEntry {
   content: string
   created_at: string
@@ -10,6 +17,8 @@ export interface RuntimeMemoryEntry {
   importance: RuntimeMemoryImportance
   /** Optional git branch names that limit where this entry is projected. Absent means every branch. */
   branches?: string[]
+  /** Which installation wrote this entry, so a merge can tell two machines apart. */
+  origin?: RuntimeMemoryEntryOrigin
 }
 
 export interface RuntimeMemoryUsage {

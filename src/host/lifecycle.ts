@@ -764,6 +764,14 @@ export class MnemonLifecycle {
     return this.runTaskAgent('', scope.workspaceId, signal, operation)
   }
 
+  /**
+   * Read the merged memory and let a model propose what a human should review.
+   * It writes nothing: every proposal waits in the ledger until it is accepted.
+   */
+  reconcile(graph: import('./runtime.ts').MnemonRuntimeGraph, scope: import('../core/contracts/index.ts').MemoryOperationScope, signal: AbortSignal) {
+    return this.coordinator.reconcile(graph, scope, signal)
+  }
+
   documents(sessionId: string) {
     return this.coordinator.documentsSnapshot(this.liveAgent(sessionId))
   }

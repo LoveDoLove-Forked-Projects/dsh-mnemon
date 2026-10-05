@@ -10,9 +10,12 @@ import type { MemoryCapability, MemoryJsonValue, MemoryOperationScope, MemorySou
 import type { CreateMemoryBodyRequest as CreateMemorySpaceRequest, Insight, MemoryBodyCatalog as MemorySpaceCatalog, PreparedMemoryPlacement, RememberRequest } from 'dsh-mnemon-source-memory-spaces/contracts'
 import type { RuntimeMemoryMutation } from 'dsh-mnemon-source-runtime/contracts'
 import type { DocumentMutation } from 'dsh-mnemon-source-documents/contracts'
-import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus, type MnemonPackComponent } from './protocol.ts'
+import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_REVIEW_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus, type MnemonPackComponent, type MnemonPackImportMode } from './protocol.ts'
 import { MNEMON_PACK_COMPONENTS } from './protocol.ts'
-export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
+import { applyReconcileOperations, sourceApplier, type MnemonReconcileSessions } from './reconcile.ts'
+import { migrateStorageRoot, planMigration } from './storage-migration.ts'
+import { withMemoryStorageLock } from '../sdk/storage-lock.ts'
+export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_REVIEW_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('payload must be an object')
@@ -71,7 +74,7 @@ function requestedComponents(value: unknown): MnemonPackComponent[] | undefined 
   if (!Array.isArray(value) || value.length === 0) throw new Error('components must be a non-empty array')
   const components = value.map(String) as MnemonPackComponent[]
   if (new Set(components).size !== components.length || components.some(component => !MNEMON_PACK_COMPONENTS.includes(component))) {
-    throw new Error('components must be runtime, documents, or memory-spaces')
+    throw new Error('components must be one or more of ' + MNEMON_PACK_COMPONENTS.join(', '))
   }
   return components
 }
@@ -408,11 +411,30 @@ export function createPackHandler(input: LiveMnemonRuntime): HostRpcHandler {
       const runtime = scoped(input, payload)
       const manager = runtime.graph.packs
       if (endpoint === 'target') return success(manager.target())
+      // Moving the data directory is the same kind of operation as Pack: it acts
+      // on the storage root itself, so it takes that root's lock and nothing else.
+      if (endpoint === 'storage-plan') {
+        const to = String(payload.dataDir ?? '').trim()
+        if (to === '') throw new Error('dataDir must be a non-empty directory')
+        return success(planMigration(runtime.graph.directory, to))
+      }
+      if (endpoint === 'storage-migrate') {
+        requireWritable(runtime)
+        const to = String(payload.dataDir ?? '').trim()
+        if (to === '') throw new Error('dataDir must be a non-empty directory')
+        const from = runtime.graph.directory
+        const plan = planMigration(from, to)
+        if (plan.blocked !== undefined) throw new Error('cannot move the Mnemon data directory: ' + plan.blocked)
+        if (payload.confirmed !== true) throw new Error('Moving the Mnemon data directory requires confirmation')
+        return success(await withMemoryStorageLock(from, () => migrateStorageRoot(from, to, { remove: true })))
+      }
       if (endpoint === 'export') return success(await manager.exportPack('full'))
       if (endpoint === 'inspect') return success(manager.inspectPack(String(payload.base64 ?? ''), payload.fileName === undefined ? undefined : String(payload.fileName)))
       if (endpoint === 'import') {
         requireWritable(runtime)
-        const result = await manager.importPack(String(payload.base64 ?? ''), { mode: 'merge' })
+        const mode: MnemonPackImportMode = payload.mode === 'replace' ? 'replace' : 'merge'
+        const components = requestedComponents(payload.components)
+        const result = await manager.importPack(String(payload.base64 ?? ''), { mode, ...(components === undefined ? {} : { components }) })
         if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
         return success(result)
       }
@@ -482,12 +504,61 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
     } catch (error) { return failure(error) }
   }
 }
+/**
+ * Review is the one channel that changes memory only after a human read the
+ * proposal: a reconciliation run stages an entry, opinions are recorded against
+ * it, and an accepted entry is applied operation by operation.
+ */
+export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle): HostRpcHandler {
+  return async (endpoint, rawPayload, signal) => {
+    try {
+      const payload = object(rawPayload)
+      const ledger = input.reviews
+      if (endpoint === 'view') return success(ledger.view())
+      if (endpoint === 'opinion') {
+        const author = payload.author === 'agent' ? 'agent' : 'user'
+        return success(ledger.addOpinion(String(payload.id ?? ''), author, String(payload.text ?? '')))
+      }
+      if (endpoint === 'decide') {
+        const status = payload.status === 'rejected' ? 'rejected' : 'accepted'
+        return success(ledger.decide(String(payload.id ?? ''), status))
+      }
+      if (endpoint === 'reopen') return success(ledger.reopen(String(payload.id ?? '')))
+      const runtime = scoped(input, payload, lifecycle)
+      requireWritable(runtime)
+      if (endpoint === 'reconcile') {
+        if (lifecycle === undefined) throw new Error('Mnemon memory reconciliation is unavailable')
+        return success(await lifecycle.reconcile(runtime.graph, runtime.scope, signal ?? new AbortController().signal))
+      }
+      if (endpoint === 'apply') {
+        if (lifecycle === undefined) throw new Error('Mnemon memory reconciliation is unavailable')
+        const entry = ledger.get(String(payload.id ?? ''))
+        if (entry === undefined) throw new Error('unknown review entry: ' + String(payload.id ?? ''))
+        if (entry.status !== 'accepted') throw new Error('accept the review before applying it: ' + entry.id)
+        requireCapability(runtime, 'runtime', 'write')
+        const sessions: MnemonReconcileSessions = {
+          runtime: runtime.source('runtime'),
+          documents: runtime.source('documents'),
+        }
+        const outcome = await applyReconcileOperations(entry.operations, sourceApplier(sessions), signal ?? new AbortController().signal)
+        const failure = outcome.failures.length === 0 ? undefined : outcome.failures.join('; ')
+        const applied = ledger.applied(entry.id, failure)
+        if (failure !== undefined) throw new Error(failure)
+        if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
+        return success({ entry: applied, applied: outcome.applied, failures: outcome.failures })
+      }
+      return badRequest('unknown review endpoint: ' + endpoint)
+    } catch (error) { return failure(error) }
+  }
+}
+
 export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager): {
   read: HostRpcHandler
   activation: HostRpcHandler
   write: HostRpcHandler
   pack: HostRpcHandler
   sync: HostRpcHandler
+  review: HostRpcHandler
 } {
   const versionManager = versions ?? new VersionUpdateManager({ mnemonCliPath: () => input.config.cliPath })
   const readHandler = createReadHandler(input, lifecycle, versionManager)
@@ -495,10 +566,12 @@ export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonR
   const writeHandler = createWriteHandler(input, lifecycle, versionManager)
   const packHandler = createPackHandler(input)
   const syncHandler = createSyncHandler(input)
+  const reviewHandler = createReviewHandler(input, lifecycle)
   connection.rpc.handle(MNEMON_READ_CHANNEL, readHandler)
   connection.rpc.handle(MNEMON_ACTIVATION_CHANNEL, activationHandler)
   connection.rpc.handle(MNEMON_WRITE_CHANNEL, writeHandler)
   connection.rpc.handle(MNEMON_PACK_CHANNEL, packHandler)
   connection.rpc.handle(MNEMON_SYNC_CHANNEL, syncHandler)
-  return { read: readHandler, activation: activationHandler, write: writeHandler, pack: packHandler, sync: syncHandler }
+  connection.rpc.handle(MNEMON_REVIEW_CHANNEL, reviewHandler)
+  return { read: readHandler, activation: activationHandler, write: writeHandler, pack: packHandler, sync: syncHandler, review: reviewHandler }
 }

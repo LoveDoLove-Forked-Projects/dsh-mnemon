@@ -2,7 +2,8 @@ import { isDefaultSourceInstance, isWorkspaceStorageScope } from './protocol.ts'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type { HostAgent, HostAgentsService, HostWorkspace, HostWorkspaceRegistry } from './dsh.ts'
-import { MnemonPackManager } from './pack.ts'
+import { MnemonPackManager, type MnemonSettingsBridge } from './pack.ts'
+import { MnemonReviewLedger } from './review-ledger.ts'
 import { MnemonGitSync } from './git-sync.ts'
 import type { MnemonGitHubAuth } from './github-auth.ts'
 import { StorageScopeInspector } from './storage-scope.ts'
@@ -23,6 +24,8 @@ export interface MnemonRuntimeGraph {
   readonly storage: StorageScopeInspector
   readonly packs: MnemonPackManager
   readonly sync: MnemonGitSync
+  /** Review proposals for merged memory. Never synced, never Packed. */
+  readonly reviews: MnemonReviewLedger
   readonly memoryComposition: MemoryGenerationHost
   readonly composableTurns: ComposableMemoryTurnManager
   source(typeId: string, scope?: MemoryOperationScope): SourceSession
@@ -71,7 +74,7 @@ export function memoryGenerationOptions(config: ResolvedConfig, workspaceRoot: s
 }
 
 /** One default-product scope over the single Composable Runtime. */
-export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string | undefined, extensions: MemoryRuntime): MnemonRuntimeGraph {
+export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string | undefined, extensions: MemoryRuntime, settings?: MnemonSettingsBridge): MnemonRuntimeGraph {
   const root = createStorageRoot(config, workspaceRoot)
   const directory = root.effectiveDataDir()
   const attachment = extensions.attachGeneration(memoryGenerationOptions(config, workspaceRoot))
@@ -81,10 +84,11 @@ export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string
     throw new Error(evaluation.diagnostics.map(value => value.message).join('; '))
   }
   const composableTurns = new ComposableMemoryTurnManager(attachment.host)
-  const packs = new MnemonPackManager(root, config)
+  const packs = new MnemonPackManager(root, config, () => {}, () => new Date(), settings)
   let disposed = false
   return {
     config, directory, storage: new StorageScopeInspector(root, config), packs, sync: new MnemonGitSync(root, config, packs),
+    reviews: new MnemonReviewLedger(root),
     memoryComposition: attachment.host, composableTurns,
     source: (type, scope = { storage: config.storageScope, ...(workspaceRoot === undefined ? {} : { workspaceId: workspaceRoot }) }) => new SourceSession(attachment.host, composableTurns, type, scope),
     retire: () => attachment.release(),
@@ -131,12 +135,14 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
   private readonly agentGraphs = new Map<string, { token: symbol; graph: MnemonRuntimeGraph }>()
   private readonly retiredGraphs = new Set<MnemonRuntimeGraph>()
   private githubAuth: MnemonGitHubAuth | undefined
+  private settingsBridge: MnemonSettingsBridge | undefined
   private closed = false
 
   readonly config: ResolvedConfig
   readonly storage: StorageScopeInspector
   readonly packs: MnemonPackManager
   readonly sync: MnemonGitSync
+  readonly reviews: MnemonReviewLedger
 
   constructor(initial: MnemonRuntimeGraph, private readonly workspaceRegistry: HostWorkspaceRegistry | undefined, private readonly agents: Pick<HostAgentsService, 'get'> | undefined, private readonly extensions: MemoryRuntime) {
     this.current = initial
@@ -144,6 +150,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     this.storage = liveProxy(() => this.current.storage)
     this.packs = liveProxy(() => this.current.packs)
     this.sync = liveProxy(() => this.current.sync)
+    this.reviews = liveProxy(() => this.current.reviews)
   }
 
   /**
@@ -160,6 +167,19 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     if (this.githubAuth !== undefined) graph.sync.useGitHubAuth(this.githubAuth)
   }
 
+  /**
+   * Settings are owned by the profile, not by any one generation, so the bridge is
+   * shared the same way the GitHub grant is: every later graph keeps exporting them.
+   */
+  useSettingsBridge(bridge: MnemonSettingsBridge | undefined): void {
+    this.settingsBridge = bridge
+    if (bridge !== undefined) this.current.packs.useSettingsBridge(bridge)
+  }
+
+  private applySettingsBridge(graph: MnemonRuntimeGraph): void {
+    if (this.settingsBridge !== undefined) graph.packs.useSettingsBridge(this.settingsBridge)
+  }
+
   swap(next: MnemonRuntimeGraph): void {
     if (this.closed) {
       next.dispose()
@@ -168,6 +188,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     const previous = this.current
     this.current = next
     this.applyGitHubAuth(next)
+    this.applySettingsBridge(next)
     this.retireGraph(previous)
     for (const graph of this.workspaceGraphs.values()) this.retireGraph(graph)
     this.workspaceGraphs.clear()
@@ -274,6 +295,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     if (graph === undefined) {
       graph = createRuntimeGraph(this.current.config, key, this.extensions)
       this.applyGitHubAuth(graph)
+      this.applySettingsBridge(graph)
       this.workspaceGraphs.set(key, graph)
     }
     return graph

@@ -9,6 +9,7 @@ export interface MnemonRemoteHandlers {
   readonly write: HostRpcHandler
   readonly pack: HostRpcHandler
   readonly sync: HostRpcHandler
+  readonly review: HostRpcHandler
   readonly settings: HostRpcHandler
   readonly view: HostRpcHandler
   readonly viewWrite: HostRpcHandler
@@ -73,6 +74,12 @@ export class MnemonRemoteService extends TypertRemoteService {
   sync(endpoint: string, payload: unknown, signal: AbortSignal): Promise<RpcResult<unknown>> {
     if (!this.handlers.management) return Promise.resolve(denied())
     return this.handlers.sync(endpoint, payload, signal)
+  }
+
+  @Remote('review')
+  review(endpoint: string, payload: unknown, signal: AbortSignal): Promise<RpcResult<unknown>> {
+    if (!this.handlers.management) return Promise.resolve(denied())
+    return this.handlers.review(endpoint, payload, signal)
   }
 
   @Remote('settings')

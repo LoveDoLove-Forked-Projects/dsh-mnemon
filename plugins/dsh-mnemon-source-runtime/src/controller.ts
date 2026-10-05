@@ -21,6 +21,7 @@ import type {
   RuntimeMemoryAction,
   RuntimeMemoryCompactedEntry,
   RuntimeMemoryEntry,
+  RuntimeMemoryEntryOrigin,
   RuntimeMemoryImportance,
   RuntimeMemoryMaintenancePlan,
   RuntimeMemoryMutation,
@@ -156,6 +157,12 @@ function normalizeContent(value: string | undefined, field: string): string {
   return content
 }
 
+function parseOrigin(value: unknown): RuntimeMemoryEntryOrigin | undefined {
+  if (!isRecord(value)) return undefined
+  if (typeof value.machine !== 'string' || typeof value.label !== 'string' || typeof value.at !== 'string') return undefined
+  return { machine: value.machine, label: value.label, at: value.at }
+}
+
 function parseEntry(value: unknown): RuntimeMemoryEntry | undefined {
   if (!isRecord(value) || typeof value.content !== 'string' || !isTarget(value.target) || !isImportance(value.importance)) return undefined
   if (typeof value.created_at !== 'string' || typeof value.updated_at !== 'string') return undefined
@@ -163,13 +170,19 @@ function parseEntry(value: unknown): RuntimeMemoryEntry | undefined {
   if (content === '' || content.includes('§')) return undefined
   if (value.target === 'user' && value.branches !== undefined) return undefined
   const branches = parseRuntimeBranches(value.branches)
+  const origin = parseOrigin(value.origin)
+  // A Host may stamp fields this Source does not own. Spreading the stored entry
+  // first keeps that provenance across a read/modify/write cycle instead of
+  // silently stripping it from memories.json.
   return {
+    ...(value as unknown as RuntimeMemoryEntry),
     content,
     created_at: value.created_at,
     updated_at: value.updated_at,
     target: value.target,
     importance: value.importance,
     ...(branches === undefined ? {} : { branches }),
+    ...(origin === undefined ? {} : { origin }),
   }
 }
 

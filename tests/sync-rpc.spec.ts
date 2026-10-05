@@ -11,7 +11,7 @@ import { MNEMON_GITHUB_DEFAULT_CLIENT_ID, MnemonGitHubAuth, type MnemonGitHubCre
 const directories: string[] = []
 const releases: Array<() => Promise<void>> = []
 const TOKEN = 'ghp_secret_token_value'
-const COMPONENTS = ['runtime', 'documents', 'memory-spaces']
+const COMPONENTS = ['runtime', 'documents', 'memory-spaces', 'settings']
 
 async function git(args: string[], cwd?: string): Promise<string> {
   const result = await runProcess('git', args, { timeoutMs: 60_000, ...(cwd === undefined ? {} : { cwd }), label: 'git' })

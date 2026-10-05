@@ -96,7 +96,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const pushed = await machineA.sync.push({ message: 'Sync memory' })
     expect(pushed).toMatchObject({ branch: 'mnemon-sync', subdir: 'mnemon/', committed: true, pushed: true, message: 'Sync memory' })
     expect(pushed.commit).toMatch(/^[0-9a-f]{40}$/u)
-    expect(pushed.summary.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces'])
+    expect(pushed.summary.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
     expect(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin)).toContain('"mnemonpack"')
     expect(await git(['show', 'mnemon-sync:mnemon/payload/runtime/USER.md'], origin)).toContain('Prefer concise answers')
     expect(await git(['show', 'mnemon-sync:mnemon/checksums.json'], origin)).toContain('"sha256"')
@@ -128,7 +128,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const manifest = JSON.parse(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin))
     expect(manifest).toMatchObject({ format: 'mnemonpack', version: 1, scope: 'full', sync: { channel: 'git', branch: 'mnemon-sync', subdir: 'mnemon/' } })
     expect(manifest.sync.pushedAt).toBe('2026-08-14T12:00:00.000Z')
-    expect(manifest.components).toEqual(['runtime', 'documents', 'memory-spaces'])
+    expect(manifest.components).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
   })
 
   it('does not commit a second time when the payload has not changed', async () => {
@@ -159,14 +159,14 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const preview = await machineB.sync.preview()
     expect(preview).toMatchObject({ branch: 'mnemon-sync', subdir: 'mnemon/', pushedAt: '2026-08-14T12:00:00.000Z' })
     expect(preview.manifest.scope).toBe('full')
-    expect(preview.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces'])
+    expect(preview.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
     // The published profile differs from the empty one this machine holds.
     expect(preview.components.find(entry => entry.component === 'runtime')).toMatchObject({ changed: true, items: 1 })
     expect(preview.files.changed).toBeGreaterThan(0)
     expect(preview.expandedBytes).toBeGreaterThan(0)
 
     const pulled = await machineB.sync.pull({ mode: 'merge' })
-    expect(pulled).toMatchObject({ imported: true, mode: 'merge', components: ['runtime', 'documents', 'memory-spaces'] })
+    expect(pulled).toMatchObject({ imported: true, mode: 'merge', components: ['runtime', 'documents', 'memory-spaces', 'settings'] })
     expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).toContain('Prefers table output')
 
     // The pulled payload is the same pack the ZIP path would have produced.
@@ -218,6 +218,37 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     await git(['commit', '--quiet', '--allow-empty', '-m', 'Unrelated'], await unrelatedCommit(origin))
     await expect(machineA.sync.preview()).rejects.toThrow('holds no Mnemon payload')
     await expect(machineA.sync.pull({ mode: 'merge' })).rejects.toThrow('holds no Mnemon payload')
+  })
+
+  it('folds the branch into this machine before publishing, so no machine overwrites another', async () => {
+    const origin = await repository('sync-merge-remote')
+    const machineA = await machine('sync-merge-a', origin)
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefer concise answers', importance: 'normal' }, { confirmed: true })
+    await machineA.sync.push({ message: 'Publish from A' })
+
+    const machineB = await machine('sync-merge-b', origin)
+    await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefers table output', importance: 'normal' }, { confirmed: true })
+    const pushed = await machineB.sync.push({ message: 'Publish from B' })
+
+    expect(pushed.merged).toMatchObject({ components: ['runtime', 'documents', 'memory-spaces', 'settings'] })
+    expect(pushed.merged?.commit).toMatch(/^[0-9a-f]{40}$/u)
+    // The merge lands locally first, so the machine that pushes keeps both entries too.
+    expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).toContain('Prefer concise answers')
+    // And the published payload holds both machines' entries, not only the newest push.
+    const published = await git(['show', 'mnemon-sync:mnemon/payload/runtime/USER.md'], origin)
+    expect(published).toContain('Prefer concise answers')
+    expect(published).toContain('Prefers table output')
+  })
+
+  it('reports the identity of this machine on every status', async () => {
+    const machineA = await machine('sync-machine-identity')
+    const status = await machineA.sync.status()
+    const stored = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { version: number; id: string; label: string; createdAt: string }
+
+    expect(stored.version).toBe(1)
+    expect(status.machine).toEqual({ id: stored.id, label: stored.label, createdAt: stored.createdAt })
+    expect(stored.id).toMatch(/^[0-9a-f-]{36}$/u)
+    expect(stored.label.length).toBeGreaterThan(0)
   })
 
   it('creates the branch on the first push and honours a nested directory', async () => {

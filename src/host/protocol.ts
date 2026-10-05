@@ -50,6 +50,12 @@ export const MNEMON_SYNC_DEFAULT_SUBDIR = 'mnemon/'
 export const MNEMON_SYNC_DEFAULT_AUTHOR_NAME = 'dsh-mnemon sync'
 export const MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL = 'mnemon@localhost'
 export const MNEMON_SETTINGS_CHANNEL = '/dsh-mnemon-settings'
+/**
+ * Reconciliation is the only channel that changes memory after a human read it:
+ * it stages proposals into a review ledger, takes opinions, and applies an
+ * accepted entry. It is deliberately separate from the write channel.
+ */
+export const MNEMON_REVIEW_CHANNEL = '/dsh-mnemon-review'
 /** DSH API Gateway endpoints used by paired remote Web clients. */
 export const MNEMON_REMOTE_CHANNEL = '/api'
 export const MNEMON_REMOTE_NAMESPACE = 'dshMnemon'
@@ -61,6 +67,7 @@ export const MNEMON_REMOTE_SYNC_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/sync`
 export const MNEMON_REMOTE_SETTINGS_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/settings`
 export const MNEMON_REMOTE_VIEW_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/view`
 export const MNEMON_REMOTE_VIEW_WRITE_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/viewWrite`
+export const MNEMON_REMOTE_REVIEW_ENDPOINT = `${MNEMON_REMOTE_NAMESPACE}/review`
 export const MNEMON_SETTINGS_NAMESPACE = 'mnemon'
 export const MNEMON_UI_SETTINGS_NAMESPACE = 'mnemon-ui'
 export * from './view-protocol.ts'
@@ -457,9 +464,10 @@ export interface SubagentCounters {
   compactions: number
   documentArchives: number
   metadataMaintenances: number
+  reconciliations: number
   failures: number
   lastRunId?: string
-  lastOperation?: 'recall' | 'write' | 'review' | 'placement' | 'migration' | 'compaction' | 'document-archive' | 'metadata-maintenance'
+  lastOperation?: 'recall' | 'write' | 'review' | 'placement' | 'migration' | 'compaction' | 'document-archive' | 'metadata-maintenance' | 'reconcile'
   lastAt?: string
 }
 
@@ -555,9 +563,9 @@ export interface StatusView {
   stats?: MemorySpaceStats & { dbPath?: string }
 }
 
-export type MnemonPackComponent = 'runtime' | 'documents' | 'memory-spaces'
+export type MnemonPackComponent = 'runtime' | 'documents' | 'memory-spaces' | 'settings'
 /** The Sources that keep their data in Mnemon's data directory, in the order a backup lists them. */
-export const MNEMON_PACK_COMPONENTS = ['runtime', 'documents', 'memory-spaces'] as const satisfies readonly MnemonPackComponent[]
+export const MNEMON_PACK_COMPONENTS = ['runtime', 'documents', 'memory-spaces', 'settings'] as const satisfies readonly MnemonPackComponent[]
 export type MnemonPackScope = 'full' | MnemonPackComponent
 export type MnemonPackImportMode = 'merge' | 'replace'
 
@@ -574,6 +582,8 @@ export interface MnemonPackManifest {
   scope: MnemonPackScope
   exportedAt: string
   source: { plugin: 'dsh-mnemon'; pluginVersion: string }
+  /** The installation that wrote this payload, so a reader can tell two machines apart. */
+  machine?: MnemonMachineIdentity
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
 }
@@ -610,6 +620,126 @@ export interface MnemonPackImportResult {
   targetRoot: string
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
+}
+
+/**
+ * The profile settings a backup carries. Only the user layer travels: machine
+ * local keys (the data directory, the CLI path, the storage scope, and custom
+ * pack ids) describe one installation and are never restored from a Pack.
+ */
+export interface MnemonSettingsNamespaceSnapshot {
+  ns: string
+  user: JsonValue
+  updatedAt: string
+}
+
+export interface MnemonSettingsPayload {
+  version: 1
+  exportedAt: string
+  namespaces: MnemonSettingsNamespaceSnapshot[]
+}
+
+/**
+ * The identity one installation signs its entries with. It stays in the data
+ * directory's state area, which no Pack component carries, and travels only as
+ * the provenance of the entries a Pack does carry.
+ */
+export interface MnemonMachineIdentity {
+  id: string
+  label: string
+  createdAt: string
+}
+
+/** Which machine wrote one runtime entry, so a merge can tell two installations apart. */
+export interface MnemonEntryOrigin {
+  machine: string
+  label: string
+  at: string
+}
+
+/** One entry one machine removed, so the removal survives a merge instead of resurrecting. */
+export interface MnemonTombstone {
+  target: 'memory' | 'user'
+  contentHash: string
+  deletedAt: string
+  machine?: string
+}
+
+export interface MnemonTombstoneFile {
+  version: 1
+  tombstones: MnemonTombstone[]
+}
+
+/** What one memory reconciliation proposes, and why. Nothing here is applied until a reviewer accepts it. */
+export type MnemonReconcileOperation =
+  | { kind: 'runtime-add'; target: 'memory' | 'user'; content: string; importance: 'critical' | 'normal' | 'low'; branches?: string[]; reason: string }
+  | { kind: 'runtime-replace'; target: 'memory' | 'user'; oldText: string; content: string; importance?: 'critical' | 'normal' | 'low'; branches?: string[]; reason: string }
+  | { kind: 'runtime-remove'; target: 'memory' | 'user'; oldText: string; reason: string }
+  | { kind: 'document-archive'; documentId: string; reason: string }
+
+export type MnemonReviewStatus = 'pending' | 'accepted' | 'rejected'
+
+/** One reviewer's opinion on a proposal. Accepting or rejecting never replaces writing what one thinks. */
+export interface MnemonReviewOpinion {
+  id: string
+  author: 'user' | 'agent'
+  text: string
+  createdAt: string
+}
+
+export interface MnemonReviewEntry {
+  id: string
+  createdAt: string
+  updatedAt: string
+  status: MnemonReviewStatus
+  title: string
+  summary: string
+  /** The installation that produced the proposal. */
+  machine: { id: string; label: string }
+  /** Other installations whose entries the proposal touches, so a reviewer sees whose memory is at stake. */
+  foreignMachines: string[]
+  operations: MnemonReconcileOperation[]
+  opinions: MnemonReviewOpinion[]
+  decidedAt?: string
+  appliedAt?: string
+  failure?: string
+}
+
+export interface MnemonReviewLedgerView {
+  path: string
+  entries: MnemonReviewEntry[]
+  pending: number
+}
+
+export interface MnemonReviewApplyResult {
+  entry: MnemonReviewEntry
+  applied: number
+  failures: string[]
+}
+
+/** What one reconciliation run produced. A run with no findings creates no review. */
+export interface MnemonReconcileResult {
+  /** One line a reviewer scans in the ledger list. */
+  title: string
+  summary: string
+  action: 'planned' | 'none' | 'failed'
+  /** How many operations the proposal holds; the review entry carries the details. */
+  operations: number
+  foreignMachines: string[]
+  entry?: MnemonReviewEntry
+  provider: string
+  runId: string
+}
+
+/** Moving the data directory: what was moved, and how. */
+export interface MnemonStorageMigration {
+  from: string
+  to: string
+  source: 'rename' | 'copy'
+  files: number
+  bytes: number
+  /** Whether the old directory was removed after the copy verified. */
+  removed: boolean
 }
 
 /**
@@ -717,6 +847,8 @@ export interface MnemonSyncStatus {
   mirrorPath: string
   git: MnemonSyncGitStatus
   remote: MnemonSyncRemoteStatus
+  /** This installation's identity, which its entries and its commits carry. */
+  machine: MnemonMachineIdentity
   lastCommit?: MnemonSyncCommit
 }
 
@@ -733,6 +865,19 @@ export interface MnemonSyncPushResult {
   bytes: number
   summary: MnemonPackComponentSummary[]
   pushed: boolean
+  /**
+   * What a push folded in from the branch before publishing. A push never
+   * overwrites a remote payload: the remote is merged into this machine first,
+   * and the merged result is what the new commit holds.
+   */
+  merged?: {
+    commit: string
+    machine?: { id: string; label: string }
+    components: MnemonPackComponent[]
+    summary: MnemonPackComponentSummary[]
+    /** Entries the merge dropped because a tombstone removed them. */
+    tombstones: number
+  }
   /** Why the branch was not published, when it was not. */
   reason?: string
 }

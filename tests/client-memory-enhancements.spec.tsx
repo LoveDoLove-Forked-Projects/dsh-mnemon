@@ -94,6 +94,11 @@ function fixture(options: { writable?: boolean; failApply?: boolean; failRefresh
       ok: true as const,
       value: { login: 'octocat', repositories: [] },
     }
+    // The review card lives on the storage page and reads the ledger on mount.
+    if (channel === '/dsh-mnemon-review' && endpoint === 'view') return {
+      ok: true as const,
+      value: { path: '/root/.mnemon/state/review-ledger.json', entries: [], pending: 0 },
+    }
     return { ok: false as const, error: { code: 'internal' as const, message: `unsupported ${channel} ${endpoint}`, details: {} } }
   })
   return { call, connection: { rpc: { call }, isLoopback: true } as ClientConnectionHandle }

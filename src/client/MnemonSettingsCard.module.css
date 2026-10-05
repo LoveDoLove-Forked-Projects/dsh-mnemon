@@ -497,6 +497,36 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .syncFeedback p { margin: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .syncSuccess { color: var(--dsw-alias-state-success-primary); }
 
+/* The chosen directory: the field and the shell's chooser beside it. */
+.directoryRow { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.directoryRow > .directoryInput { flex: 1 1 auto; min-width: 0; }
+
+/* Moving memory to another directory: what leaves, what arrives, and what stops it. */
+.moveSummary { display: grid; gap: 8px; }
+.moveSummary p { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.moveSummary strong { color: var(--dsw-alias-label-secondary); font-weight: 500; }
+
+/* Review proposals: one entry per reconciliation, with the opinions left on it. */
+.reviewList { display: grid; gap: 8px; }
+.reviewEntry { display: flex; min-width: 0; flex-direction: column; gap: 6px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.reviewEntry > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.reviewEntry > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewEntry > p { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.reviewTitle { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.reviewTitle strong { font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.reviewOperations { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+.reviewOperations li { font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewOperations small { display: block; color: var(--dsw-alias-label-tertiary); }
+.reviewOpinions { display: grid; gap: 4px; }
+.reviewOpinions > strong { font-size: 12px; font-weight: 500; line-height: 18px; }
+.reviewOpinions > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.reviewOpinions > div { display: flex; min-width: 0; gap: 6px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewOpinions > div strong { flex: none; color: var(--dsw-alias-label-secondary); font-weight: 500; }
+.reviewOpinionForm { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.reviewOpinionForm > input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.reviewOpinionForm > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
+.reviewOpinionForm > input:disabled { cursor: default; opacity: .5; }
+
 .selector:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
@@ -512,6 +542,10 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
   .syncBar > button:last-child { grid-column: 1 / -1; }
   .syncFormActions { flex-wrap: wrap; }
   .syncFormActions button { flex: 1; }
+  .directoryRow { flex-wrap: wrap; }
+  .directoryRow > button { flex: 1; }
+  .reviewOpinionForm { flex-wrap: wrap; }
+  .reviewOpinionForm > input { flex: 1 1 100%; }
   .inlineChoices { width: 100%; }
   .inlineChoices label { flex: 1; }
   .inlineChoices span { width: 100%; justify-content: center; }

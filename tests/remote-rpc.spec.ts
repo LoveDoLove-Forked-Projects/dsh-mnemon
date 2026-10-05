@@ -11,7 +11,7 @@ describe('Mnemon API Gateway service', () => {
   function fixture(management: boolean) {
     const handlers = {
       read: handler('read'), activation: handler('activation'), write: handler('write'), pack: handler('pack'),
-      sync: handler('sync'), settings: handler('settings'), view: handler('view'), viewWrite: handler('view-write'), management,
+      sync: handler('sync'), review: handler('review'), settings: handler('settings'), view: handler('view'), viewWrite: handler('view-write'), management,
     }
     const service = new MnemonRemoteService(new Context(), handlers)
     return { service, handlers, signal: new AbortController().signal }
