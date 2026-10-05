@@ -167,6 +167,46 @@ describe('Mnemon Pack settings component', () => {
     expect(JSON.parse(readFileSync(join(target.root, 'settings', 'mnemon.json'), 'utf8'))).toEqual(incoming)
   })
 
+  it('keeps an unchanged profile byte-identical across two exports', async () => {
+    const payload: MnemonSettingsPayload = {
+      version: 1,
+      exportedAt: '2026-08-14T12:00:00.000Z',
+      namespaces: [{ ns: 'mnemon-ui', user: { displayMode: 'sidebar' }, updatedAt: '2026-08-14T12:00:00.000Z' }],
+    }
+    const source = await machine('pack-settings-stable', tickingClock(), bridge(payload))
+    const first = await source.manager.exportPack('settings')
+    const second = await source.manager.exportPack('settings')
+
+    // The clock moved between the two exports; the payload must not follow it,
+    // because a push compares payload bytes to decide whether to commit at all.
+    expect(packed(second.base64, 'payload/settings/mnemon.json')).toEqual(payload)
+    expect(archive(second.base64)['payload/settings/mnemon.json']).toEqual(archive(first.base64)['payload/settings/mnemon.json'])
+  })
+
+  it('restamps the namespace whose settings really changed', async () => {
+    let payload: MnemonSettingsPayload = {
+      version: 1,
+      exportedAt: '2026-08-14T12:00:00.000Z',
+      namespaces: [{ ns: 'mnemon-ui', user: { displayMode: 'sidebar' }, updatedAt: '2026-08-14T12:00:00.000Z' }],
+    }
+    const source = await machine('pack-settings-restamp', tickingClock(), {
+      collect: async () => payload,
+      apply: vi.fn(async () => {}),
+    })
+    await source.manager.exportPack('settings')
+    payload = {
+      version: 1,
+      exportedAt: '2026-08-14T12:00:05.000Z',
+      namespaces: [
+        { ns: 'mnemon-ui', user: { displayMode: 'window' }, updatedAt: '2026-08-14T12:00:05.000Z' },
+        { ns: 'mnemon', user: { idleReviewMs: 45_000 }, updatedAt: '2026-08-14T12:00:05.000Z' },
+      ],
+    }
+    const exported = await source.manager.exportPack('settings')
+
+    expect(packed(exported.base64, 'payload/settings/mnemon.json')).toEqual(payload)
+  })
+
   it('refuses a settings payload that lost its export stamp', async () => {
     const source = await machine('pack-settings-stampless')
     mkdirSync(join(source.root, 'settings'), { recursive: true })

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { HostRpcHandler } from '../src/host/dsh.ts'
+import { gitEnvironment } from '../src/host/git-sync.ts'
 import { runProcess } from '../src/host/process.ts'
 import { createSyncHandler } from '../src/host/rpc.ts'
 import { compositionFixture } from './fixtures/composition.ts'
@@ -14,7 +15,7 @@ const TOKEN = 'ghp_secret_token_value'
 const COMPONENTS = ['runtime', 'documents', 'memory-spaces', 'settings']
 
 async function git(args: string[], cwd?: string): Promise<string> {
-  const result = await runProcess('git', args, { timeoutMs: 60_000, ...(cwd === undefined ? {} : { cwd }), label: 'git' })
+  const result = await runProcess('git', args, { timeoutMs: 60_000, env: gitEnvironment(), ...(cwd === undefined ? {} : { cwd }), label: 'git' })
   if (result.exitCode !== 0) throw new Error('git ' + args.join(' ') + ': ' + result.stderr)
   return result.stdout
 }

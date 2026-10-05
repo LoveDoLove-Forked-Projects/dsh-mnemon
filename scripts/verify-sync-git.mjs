@@ -2,9 +2,10 @@
 // Real end-to-end verification for the Mnemon Git sync channel.
 //
 // It launches two independent DSH Web instances over disposable DSH_HOME and
-// storage roots, drives /dsh-mnemon-sync over real loopback HTTP with the same
-// envelopes the browser sends, and publishes to a real bare repository. The
-// only stand-in is the model endpoint, which never answers a memory request.
+// storage roots, drives /dsh-mnemon-sync, /dsh-mnemon-settings, /dsh-mnemon-review
+// and /dsh-mnemon-pack over real loopback HTTP with the same envelopes the browser
+// sends, and publishes to a real bare repository. The only stand-in is the model
+// endpoint, which never answers a memory request.
 //
 // Run after 'pnpm run build && pnpm --workspace-concurrency=4 -r build'.
 // Set MNEMON_SYNC_E2E_KEEP=1 to keep the fixture for inspection.
@@ -22,6 +23,7 @@ const keep = process.env.MNEMON_SYNC_E2E_KEEP === '1'
 const MARKER = 'Sync e2e: the maintainer keeps acceptance notes in the project wiki.'
 const PROFILE = 'Sync e2e profile entry.'
 const TOKEN = 'ghp_sync_e2e_placeholder_token'
+const RECONCILE_MARKER = 'Sync e2e: the reviewed reconciliation kept this entry.'
 
 const failures = []
 const children = []
@@ -47,8 +49,23 @@ function run(command, args, options = {}) {
   })
 }
 
+/**
+ * Git takes the repository location from the environment, so a launcher that
+ * exports `GIT_DIR` for its own PATH bookkeeping (the harness shims do) hijacks
+ * every command below. The harness runs under exactly such a shell, so its own
+ * Git processes are given a copy of the environment with those variables removed.
+ */
+function gitEnvironment(environment = process.env) {
+  const sanitized = {}
+  for (const [name, value] of Object.entries(environment)) {
+    if (value === undefined || name.toUpperCase().startsWith('GIT_')) continue
+    sanitized[name] = value
+  }
+  return sanitized
+}
+
 async function git(args, cwd) {
-  const result = await run('git', args, { cwd })
+  const result = await run('git', args, { cwd, env: gitEnvironment() })
   if (result.code !== 0) throw new Error('git ' + args.join(' ') + ' failed: ' + (result.stderr || result.stdout).trim())
   return result.stdout.trim()
 }
@@ -94,21 +111,60 @@ function expectFailure(result, pattern, label) {
   return result.error.message
 }
 
-/** The one stand-in: a loopback model that never receives a memory request. */
+/**
+ * The one stand-in. Every delegated run but reconciliation gets a plain-text
+ * answer, so no memory is ever written by the model. A reconciliation is asked
+ * through the completion protocol, and the Host only accepts a structured
+ * result, so the stub answers that one protocol exactly as a model would: the
+ * review, the decision and the applied operations below stay real.
+ */
 function modelStub() {
-  const server = createServer((request, response) => {
-    request.resume()
+  let calls = 0
+  const server = createServer(async (request, response) => {
+    let body = ''
+    for await (const chunk of request) body += chunk
+    const wire = body === '' ? {} : JSON.parse(body)
+    const system = Array.isArray(wire.system)
+      ? wire.system.map(block => typeof block?.text === 'string' ? block.text : '').join('\n')
+      : typeof wire.system === 'string' ? wire.system : ''
+    const instructions = /Completion protocol: call `([^`]+)` exactly once with requestId `([^`]+)` and result matching this JSON schema:\n([^\n]+)/u.exec(system)
+    const call = instructions === undefined ? undefined : reconcileReply(instructions)
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
     const event = value => response.write('event: ' + value.type + '\ndata: ' + JSON.stringify(value) + '\n\n')
-    event({ type: 'message_start', message: { id: 'sync-e2e', type: 'message', role: 'assistant', model: 'stub', content: [], usage: { input_tokens: 1, output_tokens: 0 } } })
-    event({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } })
-    event({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Sync e2e has no conversation.' } })
+    event({ type: 'message_start', message: { id: 'sync-e2e-' + String(++calls), type: 'message', role: 'assistant', model: 'stub', content: [], usage: { input_tokens: 1, output_tokens: 0 } } })
+    event({ type: 'content_block_start', index: 0, content_block: call === undefined ? { type: 'text', text: '' } : { type: 'tool_use', id: 'sync-e2e-call-' + String(calls), name: call.name, input: {} } })
+    event({ type: 'content_block_delta', index: 0, delta: call === undefined ? { type: 'text_delta', text: 'Sync e2e has no conversation.' } : { type: 'input_json_delta', partial_json: JSON.stringify(call.input) } })
     event({ type: 'content_block_stop', index: 0 })
-    event({ type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } })
+    event({ type: 'message_delta', delta: { stop_reason: call === undefined ? 'end_turn' : 'tool_use' }, usage: { output_tokens: 1 } })
     event({ type: 'message_stop' })
     response.end()
   })
   return server
+}
+
+/** Answer the completion protocol only for a reconciliation schema; nothing else is scripted. */
+function reconcileReply(instructions) {
+  const schema = JSON.parse(instructions[3])
+  const actions = schema?.properties?.action?.enum
+  if (!Array.isArray(actions) || !actions.includes('planned')) return undefined
+  return {
+    name: instructions[1],
+    input: {
+      requestId: instructions[2],
+      result: {
+        title: 'Reconcile the memory the acceptance run wrote',
+        summary: 'This installation holds one entry the acceptance run added. Keeping it beside the merged memory leaves the installation coherent.',
+        action: 'planned',
+        operations: [{
+          kind: 'runtime-add',
+          target: 'memory',
+          content: RECONCILE_MARKER,
+          importance: 'normal',
+          reason: 'The merged memory should carry the entry the acceptance run reviewed.',
+        }],
+      },
+    },
+  }
 }
 
 async function install(home, workspace, env) {
@@ -231,7 +287,8 @@ try {
   const pushed = expectOk(await sync(a, 'push', { message: 'Sync from the acceptance run', confirmed: true }), 'push')
   check('push committed and published one pack', pushed.committed === true && pushed.pushed === true
     && /^[0-9a-f]{40}$/u.test(pushed.commit) && pushed.branch === 'mnemon-sync' && pushed.subdir === 'mnemon/', JSON.stringify(pushed))
-  check('the pack holds every component', JSON.stringify(pushed.summary.map(entry => entry.component)) === '["runtime","documents","memory-spaces"]', JSON.stringify(pushed.summary))
+  check('the pack holds every component, settings included',
+    JSON.stringify(pushed.summary.map(entry => entry.component)) === '["runtime","documents","memory-spaces","settings"]', JSON.stringify(pushed.summary))
   const authored = await git(['log', '-1', '--format=%an <%ae>|%cn <%ce>', 'mnemon-sync'], origin)
   check('the commit carries the identity Git was left with',
     authored === 'Mnemon Local <local@localhost>|Mnemon Local <local@localhost>', authored)
@@ -239,7 +296,15 @@ try {
   check('the branch holds the manifest, the checksums and the payload',
     tree.includes('mnemon/manifest.json') && tree.includes('mnemon/checksums.json')
     && tree.includes('mnemon/payload/runtime/memories.json') && tree.includes('mnemon/payload/runtime/USER.md')
-    && tree.includes('mnemon/payload/runtime/MEMORY.md'), tree.split('\n').slice(0, 8).join(', '))
+    && tree.includes('mnemon/payload/runtime/MEMORY.md')
+    && tree.includes('mnemon/payload/settings/mnemon.json'), tree.split('\n').slice(0, 10).join(', '))
+  const settingsEntry = pushed.summary.find(entry => entry.component === 'settings')
+  check('the settings component carries its own payload file',
+    settingsEntry !== undefined && settingsEntry.files >= 1 && settingsEntry.bytes > 0, JSON.stringify(settingsEntry))
+  const publishedSettings = JSON.parse(await git(['show', 'mnemon-sync:mnemon/payload/settings/mnemon.json'], origin))
+  check('the published settings payload is a readable namespace snapshot',
+    publishedSettings.version === 1 && typeof publishedSettings.exportedAt === 'string'
+    && Array.isArray(publishedSettings.namespaces), JSON.stringify(publishedSettings))
   const publishedMemory = await git(['show', 'mnemon-sync:mnemon/payload/runtime/MEMORY.md'], origin)
   check('the published working memory carries the entry', publishedMemory.includes(MARKER))
   const manifest = JSON.parse(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin))
@@ -268,7 +333,7 @@ try {
   // only the component that really carries the entry has to report a change.
   const runtimeDelta = preview.components.find(entry => entry.component === 'runtime')
   check('preview reports the working memory as changed against an empty root',
-    preview.components.length === 3 && runtimeDelta?.changed === true
+    preview.components.length === 4 && runtimeDelta?.changed === true
     && preview.files.changed > 0 && preview.expandedBytes > 0, JSON.stringify(preview.components))
   const unconfirmedPull = await sync(b, 'pull', {})
   expectFailure(unconfirmedPull, /requires confirmation/u, 'an unconfirmed pull')
@@ -278,13 +343,45 @@ try {
   const pulled = expectOk(await sync(b, 'pull', { confirmed: true }), 'pull')
   check('pull imported the published commit through the pack importer',
     pulled.imported === true && pulled.mode === 'merge' && pulled.commit === pushed.commit
-    && JSON.stringify(pulled.components) === '["runtime","documents","memory-spaces"]', JSON.stringify({ mode: pulled.mode, components: pulled.components }))
+    && JSON.stringify(pulled.components) === '["runtime","documents","memory-spaces","settings"]', JSON.stringify({ mode: pulled.mode, components: pulled.components }))
   const secondMemory = await readFile(join(data.b, 'runtime', 'MEMORY.md'), 'utf8')
   const secondProfile = await readFile(join(data.b, 'runtime', 'USER.md'), 'utf8')
   check('the second machine now holds the working memory and the profile',
     secondMemory.includes(MARKER) && secondProfile.includes(PROFILE))
 
-  console.log('\n3. A tampered payload fails hard and imports nothing')
+  console.log('\n3. Settings travel in the pack without the keys that belong to one machine')
+  const settingsA = expectOk(await call(a, '/dsh-mnemon-settings', 'get', {}), 'settings get')
+  check('the settings channel reports the profile value, revision and writer',
+    settingsA.mode === 'host' && settingsA.writable === true && typeof settingsA.revision === 'number'
+    && settingsA.value.defaultRecallLimit === 10, JSON.stringify({ revision: settingsA.revision, limit: settingsA.value.defaultRecallLimit }))
+  const refusedField = await call(a, '/dsh-mnemon-settings', 'mutate', { ops: [{ op: 'set', path: ['remoteAccess'], value: 'trusted-host' }] })
+  expectFailure(refusedField, /unsupported mnemon settings field: remoteAccess/u, 'an unsupported settings field')
+  check('a refused settings edit reports its own error code', refusedField.error.code === 'settings-rejected', JSON.stringify(refusedField.error))
+  const edited = expectOk(await call(a, '/dsh-mnemon-settings', 'mutate', { ops: [
+    { op: 'set', path: ['defaultRecallLimit'], value: 7 },
+    { op: 'set', path: ['cliPath'], value: join(data.a, 'bin', 'mnemon') },
+  ] }), 'settings mutate')
+  check('the edit is committed and answered from the committed profile',
+    edited.value.defaultRecallLimit === 7 && edited.value.cliPath === join(data.a, 'bin', 'mnemon')
+    && edited.revision > settingsA.revision, JSON.stringify({ revision: edited.revision, limit: edited.value.defaultRecallLimit }))
+  const settingsPush = expectOk(await sync(a, 'push', { message: 'Carry the settings edit', confirmed: true }), 'push')
+  check('the settings edit publishes a second commit',
+    settingsPush.committed === true && settingsPush.pushed === true && settingsPush.commit !== pushed.commit, JSON.stringify(settingsPush.commit))
+  const carriedSettings = JSON.parse(await git(['show', 'mnemon-sync:mnemon/payload/settings/mnemon.json'], origin))
+  const carriedMnemon = carriedSettings.namespaces.find(snapshot => snapshot.ns === 'mnemon')
+  check('the payload carries the edited namespace and drops the machine-local key',
+    carriedMnemon !== undefined && carriedMnemon.user.defaultRecallLimit === 7
+    && JSON.stringify(carriedSettings).includes('cliPath') === false, JSON.stringify(carriedSettings))
+  const settingsPull = expectOk(await sync(b, 'pull', { confirmed: true }), 'pull')
+  check('the second machine imports the settings commit',
+    settingsPull.imported === true && settingsPull.commit === settingsPush.commit, JSON.stringify(settingsPull.commit))
+  const settingsB = expectOk(await call(b, '/dsh-mnemon-settings', 'get', {}), 'settings get')
+  check('the second machine applies the imported settings to its own profile',
+    settingsB.value.defaultRecallLimit === 7, JSON.stringify(settingsB.value.defaultRecallLimit))
+  check('the key that only describes machine A never crossed to machine B',
+    settingsB.value.cliPath !== join(data.a, 'bin', 'mnemon'), JSON.stringify(settingsB.value.cliPath))
+
+  console.log('\n4. A tampered payload fails hard and imports nothing')
   await git(['-c', 'core.autocrlf=false', 'clone', '--quiet', '--branch', 'mnemon-sync', origin, clone])
   await writeFile(join(clone, 'mnemon', 'payload', 'runtime', 'MEMORY.md'), publishedMemory + '\ntampered\n')
   await git(['add', '--all'], clone)
@@ -297,7 +394,7 @@ try {
   expectFailure(tamperedPull, /failed its checksum/u, 'pull of a tampered payload')
   check('the tampered payload was not imported', (await readFile(join(data.b, 'runtime', 'MEMORY.md'), 'utf8')) === secondMemory)
 
-  console.log('\n4. A token never reaches a response, a file, or the mirror')
+  console.log('\n5. A token never reaches a response, a file, or the mirror')
   const withToken = expectOk(await sync(a, 'configure', { token: TOKEN }), 'configure')
   check('configure names the credential without carrying it',
     withToken.hasToken === true && withToken.credentialSource === 'token'
@@ -320,12 +417,93 @@ try {
   check('the token never reaches the mirror',
     (await readFile(join(data.a, 'state', 'sync', 'git', '.git', 'config'), 'utf8')).includes(TOKEN) === false)
 
-  console.log('\n5. Read-only work still answers while every write stays gated')
-  const unknown = await sync(a, 'nope', {})
-  expectFailure(unknown, /unknown sync endpoint: nope/u, 'an unknown endpoint')
-  check('an unknown endpoint is a bad request', unknown.error.code === 'bad-request')
+  console.log('\n6. Moving the data directory is planned, confirmed and completed')
+  const moveTarget = join(fixture, 'data-a-moved')
+  const emptyPlan = await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: '' })
+  expectFailure(emptyPlan, /dataDir must be a non-empty directory/u, 'a plan without a directory')
+  const samePlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: data.a }), 'storage-plan')
+  check('planning a move onto the current directory is refused by name',
+    samePlan.from === data.a && samePlan.to === data.a
+    && samePlan.blocked === 'the data directory is already this directory', JSON.stringify(samePlan.blocked))
+  const nestedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: join(data.a, 'nested') }), 'storage-plan')
+  check('planning a move into the data directory is refused as nested',
+    nestedPlan.blocked === 'one directory is inside the other', JSON.stringify(nestedPlan.blocked))
+  const movePlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
+  check('a usable target is planned with its size and no blocker',
+    movePlan.from === data.a && movePlan.to === moveTarget && movePlan.blocked === undefined
+    && movePlan.targetOccupied === false && movePlan.sameDevice === true
+    && movePlan.source.files > 0 && movePlan.source.bytes > 0, JSON.stringify(movePlan))
+  const unconfirmedMove = await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: moveTarget })
+  expectFailure(unconfirmedMove, /Moving the Mnemon data directory requires confirmation/u, 'an unconfirmed move')
+  check('an unconfirmed move leaves the data directory in place',
+    existsSync(join(data.a, 'runtime', 'MEMORY.md')) === true && existsSync(moveTarget) === false)
+  const migrated = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: moveTarget, confirmed: true }), 'storage-migrate')
+  check('the move reports what it carried and that it removed the old root',
+    migrated.from === data.a && migrated.to === moveTarget && migrated.files >= movePlan.source.files
+    && migrated.bytes > 0 && migrated.removed === true, JSON.stringify(migrated))
+  check('the memory and the sync state arrived at the new directory',
+    existsSync(join(moveTarget, 'runtime', 'MEMORY.md')) === true && existsSync(join(moveTarget, 'state', 'sync-git.json')) === true)
+  const occupiedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
+  check('a directory that already holds data is refused as a target',
+    occupiedPlan.targetOccupied === true && occupiedPlan.blocked === 'the target directory already holds data', JSON.stringify(occupiedPlan.blocked))
+  const occupiedMove = await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: moveTarget, confirmed: true })
+  expectFailure(occupiedMove, /cannot move the Mnemon data directory: the target directory already holds data/u, 'a move onto occupied data')
+  const repointed = expectOk(await call(a, '/dsh-mnemon-settings', 'mutate', { ops: [
+    { op: 'set', path: ['storageScope'], value: 'custom' },
+    { op: 'set', path: ['dataDir'], value: moveTarget },
+  ] }), 'settings mutate')
+  check('the profile now points at the directory the data moved to',
+    repointed.value.storageScope === 'custom' && repointed.value.dataDir === moveTarget, JSON.stringify(repointed.value.dataDir))
+  const movedTarget = expectOk(await call(a, '/dsh-mnemon-pack', 'target', {}), 'pack target')
+  check('the running Host reads and writes the moved directory',
+    movedTarget.root === moveTarget && movedTarget.scope === 'custom', JSON.stringify(movedTarget))
+  check('the memory survived the move and the repointing',
+    (await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')).includes(MARKER))
 
-  console.log('\n6. GitHub sign-in answers over the channel without a browser')
+  console.log('\n7. A reconciliation is proposed, reviewed with opinions, and only then applied')
+  const idleReview = expectOk(await call(a, '/dsh-mnemon-review', 'view', {}), 'review view')
+  check('an installation that never reconciled has an empty ledger',
+    idleReview.pending === 0 && idleReview.entries.length === 0
+    && idleReview.path === join(moveTarget, 'state', 'review-ledger.json'), JSON.stringify(idleReview.path))
+  const emptyOpinion = await call(a, '/dsh-mnemon-review', 'opinion', { id: 'missing-entry', text: '   ' })
+  expectFailure(emptyOpinion, /a review opinion must not be empty/u, 'an empty opinion')
+  const unknownReview = await call(a, '/dsh-mnemon-review', 'nope', {})
+  expectFailure(unknownReview, /unknown review endpoint: nope/u, 'an unknown review endpoint')
+  check('an unknown review endpoint is a bad request', unknownReview.error.code === 'bad-request', JSON.stringify(unknownReview.error))
+  const phantomApply = await call(a, '/dsh-mnemon-review', 'apply', { id: 'missing-entry' })
+  expectFailure(phantomApply, /unknown review entry: missing-entry/u, 'applying an entry that does not exist')
+  // No workspace is named: the review channel must run on its own, the way the
+  // settings page does when a session has no workbench directory yet.
+  const reconciled = expectOk(await call(a, '/dsh-mnemon-review', 'reconcile', {}), 'review reconcile')
+  check('a reconciliation stages one pending review and writes nothing',
+    reconciled.action === 'planned' && reconciled.operations === 1
+    && reconciled.entry?.status === 'pending' && reconciled.entry?.opinions.length === 0, JSON.stringify(reconciled))
+  const staged = expectOk(await call(a, '/dsh-mnemon-review', 'view', {}), 'review view')
+  check('the staged review waits in the ledger with its proposal',
+    staged.pending === 1 && staged.entries.length === 1 && staged.entries[0]?.id === reconciled.entry.id
+    && staged.entries[0]?.operations.length === 1, JSON.stringify({ pending: staged.pending, entries: staged.entries.length }))
+  const untouched = await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')
+  check('a pending review changes no memory', untouched.includes(RECONCILE_MARKER) === false)
+  const opinion = expectOk(await call(a, '/dsh-mnemon-review', 'opinion', { id: reconciled.entry.id, text: 'Keep it, the entry is still useful.' }), 'review opinion')
+  check('an opinion is recorded against the review',
+    opinion.status === 'pending' && opinion.opinions.length === 1 && opinion.opinions[0]?.author === 'user'
+    && opinion.opinions[0]?.text === 'Keep it, the entry is still useful.', JSON.stringify(opinion.opinions))
+  const refusedApply = await call(a, '/dsh-mnemon-review', 'apply', { id: reconciled.entry.id })
+  expectFailure(refusedApply, /accept the review before applying it/u, 'applying a review that is still pending')
+  const decided = expectOk(await call(a, '/dsh-mnemon-review', 'decide', { id: reconciled.entry.id, status: 'accepted' }), 'review decide')
+  check('accepting the review leaves its opinions in place',
+    decided.status === 'accepted' && decided.opinions.length === 1 && typeof decided.decidedAt === 'string', JSON.stringify({ status: decided.status, decidedAt: decided.decidedAt }))
+  const applied = expectOk(await call(a, '/dsh-mnemon-review', 'apply', { id: reconciled.entry.id }), 'review apply')
+  check('the accepted review applied every operation',
+    applied.applied === 1 && applied.failures.length === 0 && applied.entry.status === 'accepted'
+    && typeof applied.entry.appliedAt === 'string', JSON.stringify({ applied: applied.applied, failures: applied.failures }))
+  const written = await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')
+  check('the applied operation reached the working memory', written.includes(RECONCILE_MARKER))
+  const reopened = expectOk(await call(a, '/dsh-mnemon-review', 'reopen', { id: reconciled.entry.id }), 'review reopen')
+  check('reopening clears the decision and the application',
+    reopened.status === 'pending' && reopened.decidedAt === undefined && reopened.appliedAt === undefined, JSON.stringify({ status: reopened.status }))
+
+  console.log('\n8. GitHub sign-in answers over the channel without a browser')
   const signIn = expectOk(await sync(a, 'github-status'), 'github-status')
   check('the sign-in surface reports what this Host can do',
     typeof signIn.available === 'boolean' && typeof signIn.signedIn === 'boolean' && typeof signIn.writable === 'boolean'

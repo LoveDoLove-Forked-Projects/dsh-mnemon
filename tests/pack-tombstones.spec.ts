@@ -115,8 +115,29 @@ describe('Mnemon Pack machine identity', () => {
     expect(me.label.length).toBeGreaterThan(0)
     // The Pack carries the identity itself, not the on-disk record that also holds a version.
     expect(exported.manifest.machine).toEqual({ id: me.id, label: me.label, createdAt: me.createdAt })
+    // The stamp is the moment the entry was written, not the moment it was exported.
+    const stored = entries(source.root)[0]!
     expect(packed(exported.base64, 'payload/runtime/memories.json')).toMatchObject({
-      entries: [{ content: 'Prefer concise answers', origin: { machine: me.id, label: me.label, at: '2030-01-01T00:00:01.000Z' } }],
+      entries: [{ content: 'Prefer concise answers', origin: { machine: me.id, label: me.label, at: stored.updated_at } }],
+    })
+  })
+
+  it('exports the same entries byte for byte when nothing was written in between', async () => {
+    const source = await machine('pack-origin-stable')
+    await add(source, 'Prefer concise answers')
+    const first = await source.manager.exportPack('runtime')
+    const second = await source.manager.exportPack('runtime')
+
+    // The clock moves on every read, so the manifest still differs; only the payload has to
+    // stay byte-identical, because that is what decides whether a push has anything to send.
+    expect(first.manifest.exportedAt).not.toBe(second.manifest.exportedAt)
+    expect(Buffer.from(archive(second.base64)['payload/runtime/memories.json']!))
+      .toEqual(Buffer.from(archive(first.base64)['payload/runtime/memories.json']!))
+    // The stamp travels inside the Pack only; the data directory keeps its own entry.
+    const stored = entries(source.root)[0]!
+    expect(stored.origin).toBeUndefined()
+    expect(packed(second.base64, 'payload/runtime/memories.json')).toMatchObject({
+      entries: [{ content: 'Prefer concise answers', origin: { at: stored.updated_at } }],
     })
   })
 

@@ -20,6 +20,7 @@ import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped, type Zippable } 
 import type { ResolvedConfig } from './config.ts'
 import { DOCUMENTS_ACTIVE_LIMIT_BYTES, DOCUMENTS_VERSION, type DocumentRecord } from 'dsh-mnemon-source-documents/contracts'
 import { RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_MEMORY_VERSION, type RuntimeMemoryEntry, type RuntimeMemoryLimits, type RuntimeMemoryTarget } from 'dsh-mnemon-source-runtime/contracts'
+import { canonicalMemoryJson } from '../core/definitions.ts'
 import { createStorageRoot, type StorageRoot } from './storage-root.ts'
 import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonSettingsPayload, type MnemonSettingsNamespaceSnapshot, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
 import { MnemonMachineStore } from './machine-identity.ts'
@@ -562,7 +563,7 @@ function collectExport(root: string, components: MnemonPackComponent[], runtimeL
   const files: Record<string, Uint8Array> = {}
   if (components.includes('runtime')) {
     const runtime = readCurrentRuntime(root, runtimeLimits)
-    const entries = stamp === undefined ? runtime.entries : stampedEntries(runtime.entries, stamp.machine, stamp.at)
+    const entries = stamp === undefined ? runtime.entries : stampedEntries(runtime.entries, stamp.machine)
     // Recording this export is what makes a later deletion visible to the merge, so the
     // tombstones written here are the ones this Pack carries.
     const tombstones = stamp === undefined ? readCurrentTombstones(root) : advanceTombstones(root, runtime.entries, stamp.machine, stamp.at)
@@ -594,6 +595,35 @@ function readSettingsPayload(root: string, fallbackExportedAt?: string): MnemonS
   const path = join(root, 'settings', 'mnemon.json')
   if (!existsSync(path)) return { version: 1, exportedAt: fallbackExportedAt ?? new Date().toISOString(), namespaces: [] }
   return parseSettingsPayload(JSON.parse(readFileSync(path, 'utf8')) as unknown)
+}
+
+/** A staging file this process cannot parse is replaced, never repaired. */
+function tryReadSettingsPayload(path: string): MnemonSettingsPayload | undefined {
+  try {
+    return parseSettingsPayload(JSON.parse(readFileSync(path, 'utf8')) as unknown)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Keep the stamps of a namespace whose settings did not change, so two exports of the
+ * same profile stay byte-identical. A namespace that changed, appeared, or disappeared
+ * carries the stamp of this export, which is also what decides merge precedence.
+ */
+function restampSettings(previous: MnemonSettingsPayload | undefined, collected: MnemonSettingsPayload): MnemonSettingsPayload {
+  if (previous === undefined) return collected
+  const before = new Map(previous.namespaces.map(entry => [entry.ns, entry]))
+  let changed = previous.namespaces.length !== collected.namespaces.length
+  const namespaces = collected.namespaces.map((entry) => {
+    const existing = before.get(entry.ns)
+    if (existing !== undefined && canonicalMemoryJson(entry.user, 'settings') === canonicalMemoryJson(existing.user, 'settings')) {
+      return { ...entry, updatedAt: existing.updatedAt }
+    }
+    changed = true
+    return entry
+  })
+  return { version: 1, exportedAt: changed ? collected.exportedAt : previous.exportedAt, namespaces }
 }
 
 function readCurrentTombstones(root: string): MnemonTombstoneFile {
@@ -692,11 +722,16 @@ function tombstoneCovers(tombstone: MnemonTombstone, entry: StoredRuntimeEntry):
   return deletedAt >= updatedAt
 }
 
-/** Entries this machine writes carry no origin until they leave it; an export stamps them. */
-function stampedEntries(entries: StoredRuntimeEntry[], machine: MnemonMachineIdentity | undefined, at: string): StoredRuntimeEntry[] {
+/**
+ * Entries this machine writes carry no origin until they leave it; an export stamps them.
+ * The stamp is the entry's own write time, never the moment of the export: a stamp taken from
+ * the clock would rewrite the payload on every run, and a repeated push would then publish a
+ * commit that carries nothing new.
+ */
+function stampedEntries(entries: StoredRuntimeEntry[], machine: MnemonMachineIdentity | undefined): StoredRuntimeEntry[] {
   if (machine === undefined) return entries
   return entries.map(entry => parseEntryOrigin(entry.origin) === undefined
-    ? { ...entry, origin: { machine: machine.id, label: machine.label, at } }
+    ? { ...entry, origin: { machine: machine.id, label: machine.label, at: entry.updated_at } }
     : entry)
 }
 
@@ -962,10 +997,17 @@ export class MnemonPackManager {
   /**
    * Settings are staged into the data directory only for the duration of one export:
    * the profile itself stays the source of truth and is never rewritten by an export.
+   *
+   * The staging file is rewritten on every export, so an unchanged profile must keep
+   * the stamps it already had: a fresh timestamp would make the payload bytes differ
+   * and turn an otherwise identical push into a second commit.
    */
   private async stageSettings(components: MnemonPackComponent[]): Promise<void> {
     if (!components.includes('settings') || this.settings === undefined) return
-    writeSettingsPayload(join(this.root, 'settings'), await this.settings.collect())
+    const collected = await this.settings.collect()
+    const path = join(this.root, 'settings', 'mnemon.json')
+    const previous = existsSync(path) ? tryReadSettingsPayload(path) : undefined
+    writeSettingsPayload(join(this.root, 'settings'), restampSettings(previous, collected))
   }
 
   target(): MnemonPackTarget {

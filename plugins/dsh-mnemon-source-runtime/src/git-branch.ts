@@ -8,6 +8,20 @@ const GIT_BRANCH_TIMEOUT_MS = 2_000
  * the directory is not a git working tree, HEAD is detached, or the probe
  * fails or times out, so callers fall back to the unfiltered view.
  */
+/**
+ * Git takes the repository location from the environment, so a launcher that
+ * exports `GIT_DIR` for its own reasons would point this probe at a directory
+ * that is not the workspace. The probe runs with those variables removed.
+ */
+export function gitEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {}
+  for (const [name, value] of Object.entries(environment)) {
+    if (value === undefined || name.toUpperCase().startsWith('GIT_')) continue
+    sanitized[name] = value
+  }
+  return sanitized
+}
+
 export function resolveGitBranch(cwd?: string): string | undefined {
   const root = cwd?.trim()
   if (root === undefined || root === '') return undefined
@@ -17,6 +31,7 @@ export function resolveGitBranch(cwd?: string): string | undefined {
       timeout: GIT_BRANCH_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
+      env: gitEnvironment(),
     })
     const branch = output.trim()
     return branch === '' ? undefined : branch

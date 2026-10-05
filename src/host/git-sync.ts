@@ -30,6 +30,38 @@ const MAX_FILE_BYTES = 128 * 1024 * 1024
 const LOCK_TIMEOUT_MS = 30_000
 /** Git on Windows would otherwise rewrite line endings and break every checksum. */
 const NO_REWRITE = ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf']
+/**
+ * Git reads where the repository is from the environment, so a launcher that
+ * exports `GIT_DIR` for its own reasons hijacks every command below: the shell
+ * shims shipped with the harness set it to the directory holding a bundled Git
+ * binary, which Git then treats as the repository. Each invocation therefore
+ * gets a copy of the environment with those variables removed.
+ */
+const GIT_LOCATION_ENV = new Set([
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_INDEX_FILE',
+  'GIT_NAMESPACE',
+  'GIT_QUARANTINE_PATH',
+  'GIT_CEILING_DIRECTORIES',
+  'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+])
+
+/**
+ * Windows environment variables are case-insensitive, so the comparison is
+ * upper-cased rather than trusting the spelling a launcher happened to use.
+ */
+export function gitEnvironment(environment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = {}
+  for (const [name, value] of Object.entries(environment)) {
+    if (value === undefined || GIT_LOCATION_ENV.has(name.toUpperCase())) continue
+    sanitized[name] = value
+  }
+  return sanitized
+}
 
 interface GitOptions {
   cwd?: string | undefined
@@ -625,6 +657,7 @@ export class MnemonGitSync {
     try {
       const result = await this.run(GIT_LABEL, prepared.args, {
         timeoutMs: MNEMON_SYNC_GIT_TIMEOUT_MS,
+        env: gitEnvironment(),
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         label: GIT_LABEL,

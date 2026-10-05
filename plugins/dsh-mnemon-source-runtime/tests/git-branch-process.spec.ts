@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { resolveGitBranch } from '../src/git-branch.ts'
+import { gitEnvironment, resolveGitBranch } from '../src/git-branch.ts'
 
 vi.mock('node:child_process', () => ({ execFileSync: vi.fn() }))
 
@@ -19,7 +19,15 @@ describe('Runtime Git probe process', () => {
       timeout: 2_000,
       stdio: ['ignore', 'pipe', 'ignore'],
       windowsHide: true,
+      env: expect.anything(),
     })
+  })
+
+  it('probes with an environment that cannot relocate the repository', () => {
+    // A launcher that exports GIT_DIR for PATH bookkeeping would otherwise point
+    // the probe at a directory that is not the workspace.
+    expect(gitEnvironment({ PATH: 'C:\\Windows', GIT_DIR: 'C:\\tools\\git', git_ceiling_directories: 'C:\\tmp', SystemRoot: 'C:\\Windows' }))
+      .toEqual({ PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows' })
   })
 
   it('does not launch Git without a workspace root', () => {
