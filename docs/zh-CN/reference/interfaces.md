@@ -141,13 +141,14 @@ RPC 是 DSH Host 与插件客户端之间的内部桥，不是稳定外部 HTTP 
 | `/dsh-mnemon-write` | 其余所有 mutation | 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-pack` | 备份导出与导入 | 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-sync` | Git 仓库同步：配置、推送、预览与拉取 | 需要 `remoteAccess: trusted-host` |
+| `/dsh-mnemon-review` | 合并记忆的整理建议、审查意见，以及执行已接受的方案 | 读取允许；`reconcile` 与 `apply` 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-settings` | Host 与界面设置 | `get` 允许；`mutate` 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-view` | 记忆组合读取 | 允许 |
 | `/dsh-mnemon-view-settings` | 保存记忆组合、安装组件 | 需要 `remoteAccess: trusted-host` |
 
-回环页面直接调用这些通道，由 DSH 浏览器会话认证。远程页面经 DSH API Gateway 到达同一组处理器：通道 `/api`，endpoint 为 `dshMnemon/read`、`dshMnemon/activation`、`dshMnemon/write`、`dshMnemon/pack`、`dshMnemon/settings`、`dshMnemon/view`、`dshMnemon/viewWrite` 与 `dshMnemon/sync`。Gateway 负责 Host/Origin 校验、浏览器配对与响应封装；Mnemon 只额外施加上表中的 `remoteAccess` 授权，并在启动时确定。见[远程管理](../guides/operations.md#远程管理)。
+回环页面直接调用这些通道，由 DSH 浏览器会话认证。远程页面经 DSH API Gateway 到达同一组处理器：通道 `/api`，endpoint 为 `dshMnemon/read`、`dshMnemon/activation`、`dshMnemon/write`、`dshMnemon/pack`、`dshMnemon/settings`、`dshMnemon/view`、`dshMnemon/viewWrite`、`dshMnemon/sync` 与 `dshMnemon/review`。Gateway 负责 Host/Origin 校验、浏览器配对与响应封装；Mnemon 只额外施加上表中的 `remoteAccess` 授权，并在启动时确定。见[远程管理](../guides/operations.md#远程管理)。
 
-Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert 服务到达这些处理器，其命名远程方法为 `read`、`activation`、`write`、`pack`、`settings`、`view`、`viewWrite` 与 `sync`。缺少该授权时，`write`、`pack`、`sync`、`viewWrite` 与 `settings` 的 `mutate` 会返回 `remote Mnemon management requires remoteAccess: trusted-host`；`read`、`activation`、`view` 与 `settings` 的 `get` 不需要。
+Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert 服务到达这些处理器，其命名远程方法为 `read`、`activation`、`write`、`pack`、`settings`、`view`、`viewWrite`、`sync` 与 `review`。缺少该授权时，`write`、`pack`、`sync`、`review`、`viewWrite` 与 `settings` 的 `mutate` 会返回 `remote Mnemon management requires remoteAccess: trusted-host`；`read`、`activation`、`view` 与 `settings` 的 `get` 不需要。
 
 ### 读通道
 
@@ -199,6 +200,8 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 | `export` | 导出完整、带 manifest 与 SHA-256 校验的 ZIP |
 | `inspect` | 解析并校验待导入 ZIP，返回组件与占用预览 |
 | `import` | 把 ZIP 安全合并到当前有效根；只读模式拒绝 |
+| `storage-plan` | 检查拟用的数据目录：目标现状、将迁移的文件数与字节数，以及无法迁移的原因；只读，且从不要求 `writeEnabled` |
+| `storage-migrate` | 把整个数据目录复制到目标路径，逐文件 SHA-256 校验通过后才删除原目录；需要 `confirmed: true` 与 `writeEnabled` |
 
 备份包含私有记忆；调用方必须把已认证 DSH 浏览器会话视为完整 Host 权限，并单独保护导出的归档。
 
@@ -224,6 +227,19 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 token 不会出现在任何响应或错误信息中。通道在每次网络操作时解析一个凭据，顺序为：环境变量 `MNEMON_SYNC_GIT_TOKEN`、`state/sync-git.json`（权限 `0600`）中保存的 token，最后是 GitHub 登录写入 DSH 凭据存储（键 `dsh-mnemon/github`）的凭据。`credentialSource` 指出生效的那一个——`environment`、`token`、`github` 或 `none`——前三者都让 `hasToken` 为 `true`，因此已登录的账号完全不需要填 token。GitHub 请求走环境自带的 `fetch`（与版本检查相同的接缝），启动器配置的代理策略对它同样生效；失败只报告 GitHub 的错误码与 HTTP 状态，绝不回显响应体。
 
 配置、凭据与失败语义见[备份与恢复](../guides/operations.md#git-仓库同步)。
+
+### 审查通道
+
+| Endpoint | 行为 |
+|---|---|
+| `view` | 审查账本：文件路径、全部建议与待审查数量；只读 |
+| `opinion` | 为某条建议追加一条意见；除非调用方指定 `agent`，作者记为 `user` |
+| `decide` | 接受或拒绝一条待审查建议 |
+| `reopen` | 把已决定的建议退回 `pending` |
+| `reconcile` | 对合并后的本机记忆执行一次整理，把计划暂存为新的待审查条目；需要 `writeEnabled` |
+| `apply` | 执行已接受建议的操作，遇到第一个失败即停止；需要 `writeEnabled` |
+
+整理本身从不写记忆：模型返回计划，计划被记录为一条建议，只有对已接受的建议执行 `apply` 才会触碰 Source。`view`、`opinion`、`decide` 与 `reopen` 在只读 Host 上同样可用，因为它们只编辑 `state/` 下的账本。账本不是 Pack 组件，因此任何建议都不会同步到其他机器。
 
 ### 设置通道
 

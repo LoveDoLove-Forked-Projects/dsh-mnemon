@@ -123,12 +123,13 @@ On the configured branch and remote directory (defaults `mnemon-sync` and `mnemo
     +-- runtime/{memories.json,USER.md,MEMORY.md}
     +-- documents/{index.json,active/<id>.md,archived/<id>.md}
     +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
+    +-- settings/mnemon.json      # the profile's memory settings, machine-local keys removed
 ```
 
 - **Push** exports the complete pack into `<storageRoot>/state/sync/git`, commits it there and pushes the branch. It requires explicit confirmation; nothing pushes on a timer.
 - **Pull** reads the remote manifest and its SHA-256 inventory, previews what would change and, after confirmation, merges through the same path as Import ZIP. A manifest or checksum mismatch is a hard failure that imports nothing.
 - The payload is the existing Mnemon Pack payload: one collector, one validator, one importer. Packs carry `manifest.json`, the SHA-256 inventory and component summaries, and the sync extension records the channel, branch, directory and push time. A reader that does not know sync still reads a valid Mnemon Pack manifest.
-- The payload is always a complete pack: runtime, documents and memory-spaces, with the user profile inside runtime. A pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional one-off `components` parameter on pull.
+- The payload is always a complete pack: runtime, documents, memory-spaces and settings, with the user profile inside runtime. The settings component carries the `user` layer of the `mnemon` namespace, so a second machine inherits the same configuration; machine-local keys (`storageScope`, `dataDir`, `cliPath`, `customPackId`, `customPacks`) are stripped, because a directory that exists on one machine is not a directory on another. A pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional one-off `components` parameter on pull.
 - The mirror under `state/sync/git` is disposable and never a pack component, so it cannot sync itself; deleting it costs one fetch.
 - Both directions require `writeEnabled`; a read-only deployment refuses push and pull with the same message Import ZIP uses.
 
@@ -163,7 +164,7 @@ To preserve reserved `state` or take an offline complete snapshot, stop every DS
 <storageRoot>/runtime
 <storageRoot>/documents
 <storageRoot>/data
-<storageRoot>/state    # when present; outside the built-in Pack's three data components
+<storageRoot>/state    # when present; outside the built-in Pack's four data components
 ```
 
 Generate an inventory or checksums and rehearse recovery in isolation. A normal directory copy while writers are running is not a consistent snapshot.

@@ -219,8 +219,10 @@ Expand the Mnemon Native card. **Manage embedding settings in DSH** makes the sa
 **Storage** names the components that keep their data in its directory; each name opens that component's page.
 
 - **Storage scope**: **Global** shares one directory across workspaces; **Workspace** keeps each workspace's memory in its own `.mnemon`; **Centralized · isolated by workspace** keeps each workspace in `workspaces/<workspace-path-hash>/` under one root.
-- **Data directory**: **Default** or **Custom**, and the row shows the one directory memory uses. Default is `MNEMON_DATA_DIR` or `~/.mnemon`. Custom opens a field for an absolute path or one starting with `~/`; under Centralized it sets the root. An empty field waits for a path; choosing **Default** is how you return to the default.
-- Scope and directory apply together with **Apply**, which states the consequence: memory reads and writes the new location, and existing data is never moved, merged or deleted.
+- **Data directory**: **Default** or **Custom**, and the row shows the one directory memory uses. Default is `MNEMON_DATA_DIR` or `~/.mnemon`. Custom opens a field for an absolute path or one starting with `~/`; under Centralized it sets the root. An empty field waits for a path; choosing **Default** is how you return to the default. **Choose directory...** opens the shell's own directory chooser and fills the field, so a path never has to be typed.
+- A chosen directory that is not the one in use offers to move the data there: the confirmation names how many files and how many bytes it would move, and states that nothing is deleted before every file has been verified. **Change the setting only** keeps the current directory where it is. A blocked target - a directory inside the current one, or one that already holds data - says so instead of offering the move.
+- Scope and directory apply together with **Apply**, which states the consequence: memory reads and writes the new location, and existing data is never moved, merged or deleted. Only the move confirmation moves anything.
+- **Memory reconciliation** asks an agent to read the merged evidence and propose a plan. The proposals are not applied: each one lists its operations, can be accepted, rejected, annotated with an opinion, and reopened, and only an accepted proposal can be applied. A Host that is read-only can still read and annotate the ledger; applying is what requires a writable deployment.
 
 ![Backup and migration: an exported ZIP previewed before a safe import](../../assets/webui-v0.5.19/en/plugin-backup-preview.jpg)
 

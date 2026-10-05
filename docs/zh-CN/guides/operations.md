@@ -123,12 +123,13 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
     +-- runtime/{memories.json,USER.md,MEMORY.md}
     +-- documents/{index.json,active/<id>.md,archived/<id>.md}
     +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
+    +-- settings/mnemon.json      # 该 profile 的记忆设置，已剔除机器本地键
 ```
 
 - **Push**：把完整包导出到 `<storageRoot>/state/sync/git`，在其中提交并推送分支。必须显式确认，不会有任何定时推送。
 - **Pull**：先读取远端 manifest 与 SHA-256 清单，预览将要发生的变更，确认后走与“导入 ZIP”相同的路径合并。manifest 或校验和不匹配属于硬失败，不会导入任何内容。
 - 载荷就是既有的 Mnemon Pack 载荷：同一个收集器、同一个校验器、同一个导入器。包内包含 `manifest.json`、SHA-256 清单与组件摘要，同步扩展字段记录通道、分支、目录与推送时间；不认识同步的读取方仍能读到合法的 Mnemon Pack manifest。
-- 载荷始终是完整包：runtime、documents 与 memory-spaces，用户画像包含在 runtime 中。Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择；组件筛选只作为 pull 的一次性可选参数 `components` 存在。
+- 载荷始终是完整包：runtime、documents、memory-spaces 与 settings，用户画像包含在 runtime 中。settings 组件承载 `mnemon` 命名空间的 `user` 层，让第二台机器继承同一份配置；机器本地键（`storageScope`、`dataDir`、`cliPath`、`customPackId`、`customPacks`）会被剔除，因为一台机器上的目录不一定是另一台机器上的目录。Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择；组件筛选只作为 pull 的一次性可选参数 `components` 存在。
 - `state/sync/git` 下的镜像是可丢弃的，且不属于任何数据组件，因此镜像不会同步自己；删除它只多一次 fetch。
 - 双向操作都要求 `writeEnabled`；只读部署会以与“导入 ZIP”相同的提示拒绝 push 与 pull。
 
@@ -163,7 +164,7 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
 <storageRoot>/runtime
 <storageRoot>/documents
 <storageRoot>/data
-<storageRoot>/state    # 若存在；不在内置 ZIP 的三类数据组件中
+<storageRoot>/state    # 若存在；不在内置 ZIP 的四类数据组件中
 ```
 
 复制完成后生成文件清单或校验和，并在隔离路径演练恢复。不要在多个进程仍写入时把普通目录复制当作一致快照。

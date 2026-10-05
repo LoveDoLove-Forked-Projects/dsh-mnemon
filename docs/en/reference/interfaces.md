@@ -141,13 +141,14 @@ RPC is an internal Host-to-client bridge, not a stable external HTTP API. Pages 
 | `/dsh-mnemon-write` | Every other mutation | Needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-pack` | Backup export and import | Needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-sync` | Git repository sync: configuration, push, preview and pull | Needs `remoteAccess: trusted-host` |
+| `/dsh-mnemon-review` | Reconciliation proposals, review opinions and applying an accepted plan | Reads allowed; `reconcile` and `apply` need `remoteAccess: trusted-host` |
 | `/dsh-mnemon-settings` | Host and interface settings | `get` allowed; `mutate` needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-view` | Memory composition reads | Allowed |
 | `/dsh-mnemon-view-settings` | Saving memory composition, installing a component | Needs `remoteAccess: trusted-host` |
 
-Loopback pages call these channels directly, authenticated by the DSH browser session. Remote pages reach the same handlers through DSH's API Gateway: channel `/api`, endpoints `dshMnemon/read`, `dshMnemon/activation`, `dshMnemon/write`, `dshMnemon/pack`, `dshMnemon/settings`, `dshMnemon/view`, `dshMnemon/viewWrite` and `dshMnemon/sync`. The Gateway owns Host/Origin validation, browser pairing and the response envelope; Mnemon adds only the `remoteAccess` grant shown above, captured at startup. See [Remote management](../guides/operations.md#remote-management).
+Loopback pages call these channels directly, authenticated by the DSH browser session. Remote pages reach the same handlers through DSH's API Gateway: channel `/api`, endpoints `dshMnemon/read`, `dshMnemon/activation`, `dshMnemon/write`, `dshMnemon/pack`, `dshMnemon/settings`, `dshMnemon/view`, `dshMnemon/viewWrite`, `dshMnemon/sync` and `dshMnemon/review`. The Gateway owns Host/Origin validation, browser pairing and the response envelope; Mnemon adds only the `remoteAccess` grant shown above, captured at startup. See [Remote management](../guides/operations.md#remote-management).
 
-The Gateway reaches these handlers through Mnemon's `mnemonRemote` Typert service in the `dshMnemon` namespace; its named remote methods are `read`, `activation`, `write`, `pack`, `settings`, `view`, `viewWrite` and `sync`. `write`, `pack`, `sync`, `viewWrite` and the `settings` `mutate` endpoint answer `remote Mnemon management requires remoteAccess: trusted-host` without the grant; `read`, `activation`, `view` and the `settings` `get` endpoint do not need it.
+The Gateway reaches these handlers through Mnemon's `mnemonRemote` Typert service in the `dshMnemon` namespace; its named remote methods are `read`, `activation`, `write`, `pack`, `settings`, `view`, `viewWrite`, `sync` and `review`. `write`, `pack`, `sync`, `review`, `viewWrite` and the `settings` `mutate` endpoint answer `remote Mnemon management requires remoteAccess: trusted-host` without the grant; `read`, `activation`, `view` and the `settings` `get` endpoint do not need it.
 
 ### Read channel
 
@@ -199,6 +200,8 @@ With `writeEnabled=false`, the activation and write channels stay registered but
 | `export` | Export a complete ZIP with manifest and SHA-256 checksums |
 | `inspect` | Parse and verify an import ZIP, returning component and occupancy preview |
 | `import` | Safely merge into the effective root; rejected in read-only mode |
+| `storage-plan` | Inspect a proposed data directory: what it holds, how many files and bytes would move, and why the move is impossible; read-only, and it never requires `writeEnabled` |
+| `storage-migrate` | Copy the whole data directory to the proposed path, verify every file by SHA-256, and only then delete the original; requires `confirmed: true` and `writeEnabled` |
 
 Backups contain private memory, so callers must treat the authenticated DSH browser session as a full Host authority and protect exported archives separately.
 
@@ -224,6 +227,19 @@ The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is eith
 Tokens never appear in a response or an error message. The channel resolves one credential per network operation, in this order: `MNEMON_SYNC_GIT_TOKEN`, the token stored in `state/sync-git.json` (mode `0600`), then the grant GitHub sign-in wrote into DSH's credentials store under the key `dsh-mnemon/github`. `credentialSource` names the winner — `environment`, `token`, `github` or `none` — and `hasToken` is `true` for the first three, so a signed-in account needs no token field at all. GitHub calls use the ambient `fetch`, the same seam the version check uses, so a launcher's proxy policy applies to them; a failure reports GitHub's error code and the HTTP status only, never a response body.
 
 Configuration, credentials and the failure semantics are described under [Backup and recovery](../guides/operations.md#git-repository-sync).
+
+### Review channel
+
+| Endpoint | Behavior |
+|---|---|
+| `view` | The review ledger: its path, every proposal and the pending count; read-only |
+| `opinion` | Append one opinion to a proposal; the author is `user` unless the caller asks for `agent` |
+| `decide` | Accept or reject a pending proposal |
+| `reopen` | Return a decided proposal to `pending` |
+| `reconcile` | Run one reconciliation over the merged local memory and stage the plan as a new pending entry; requires `writeEnabled` |
+| `apply` | Apply the operations of an accepted proposal, stopping at the first failure; requires `writeEnabled` |
+
+A reconciliation never writes memory by itself: the model returns a plan, the plan is recorded as a proposal, and only `apply` on an accepted proposal touches a Source. `view`, `opinion`, `decide` and `reopen` work on a read-only Host as well, because they only edit the ledger under `state/`. The ledger is not a Pack component, so no proposal ever syncs to another machine.
 
 ### Settings channel
 
