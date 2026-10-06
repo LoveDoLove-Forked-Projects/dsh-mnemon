@@ -113,6 +113,34 @@ describe('Mnemon storage relocation endpoints', () => {
     expect(JSON.parse(readFileSync(join(to, 'runtime', 'memories.json'), 'utf8'))).toMatchObject({ entries: [{ content: 'Prefer concise answers' }] })
   })
 
+  it('records the new location on the Host that moved the data', async () => {
+    const f = fixture()
+    const relocated: string[] = []
+    const handler = createPackHandler(f.runtime, { writable: true, relocate: async directory => { relocated.push(directory) } })
+    const to = join(temporary('rpc-review-relocate'), 'moved')
+
+    expect(await handler('storage-migrate', { dataDir: to })).toMatchObject({ ok: false, error: { message: 'Moving the Mnemon data directory requires confirmation' } })
+    expect(relocated).toEqual([])
+
+    const moved = await handler('storage-migrate', { dataDir: to, confirmed: true })
+    expect(moved).toMatchObject({ ok: true, value: { from: f.root, to, removed: true } })
+    expect(relocated).toEqual([to])
+    expect(JSON.parse(readFileSync(join(to, 'runtime', 'memories.json'), 'utf8'))).toMatchObject({ entries: [{ content: 'Prefer concise answers' }] })
+  })
+
+  it('refuses the move before deleting anything when the Host cannot record a location', async () => {
+    const f = fixture()
+    const relocate = vi.fn(async () => {})
+    const handler = createPackHandler(f.runtime, { writable: false, relocate })
+    const to = join(temporary('rpc-review-unrecorded'), 'moved')
+
+    const blocked = await handler('storage-migrate', { dataDir: to, confirmed: true })
+    expect(blocked).toMatchObject({ ok: false, error: { message: expect.stringContaining('read-only') } })
+    expect(relocate).not.toHaveBeenCalled()
+    expect(existsSync(to)).toBe(false)
+    expect(existsSync(join(f.root, 'runtime', 'memories.json'))).toBe(true)
+  })
+
   it('refuses to move the data directory on a read-only Host', async () => {
     const f = fixture({ writeEnabled: false })
     const to = join(temporary('rpc-review-readonly'), 'moved')

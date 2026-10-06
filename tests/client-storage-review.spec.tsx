@@ -84,6 +84,9 @@ describe('the chosen data directory', () => {
     expect(screen.getByRole('status').textContent).toBe('已迁移到 /new/data：4 个文件，2.0 KB。')
     // The chosen directory became the draft's, so Apply saves the new location.
     expect((screen.getByRole('textbox', { name: '数据目录' }) as HTMLInputElement).value).toBe('/new/data')
+    // The move recorded the new location on the Host, so the page re-reads the root memory now uses.
+    const targetReads = () => call.mock.calls.filter(([, endpoint]) => endpoint === 'target').length
+    await waitFor(() => expect(targetReads()).toBeGreaterThan(1))
   })
 
   it('keeps the data where it is when the user declines the move', async () => {

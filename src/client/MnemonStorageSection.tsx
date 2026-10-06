@@ -197,6 +197,10 @@ export function MnemonStorageSection(props: MnemonStorageSectionProps): JSX.Elem
       .then(result => {
         setMove(null)
         setNotice(t('storage.moved', { to: result.to, files: result.files, size: humanBytes(result.bytes) }))
+        // The move endpoint records the new location before it returns, because
+        // the live runtime has to be rebuilt on it. Re-read instead of saving
+        // the same value a second time.
+        props.onSaved()
       })
       .catch(reason => setMove(current => current === null ? null : { ...current, failed: message(reason) }))
       .finally(() => setMoving(false))

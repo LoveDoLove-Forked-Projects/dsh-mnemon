@@ -403,8 +403,21 @@ export function createWriteHandler(input: LiveMnemonRuntime, lifecycle?: MnemonL
   }
 }
 
+/**
+ * What follows a completed data-directory move. The Pack handler owns the files
+ * and the settings service owns the recorded location, so the Host wires the
+ * two together here: it is asked whether a new location could be persisted
+ * before anything is copied, and it is what rebuilds the live runtime on it.
+ */
+export interface MnemonStorageRelocation {
+  /** Whether the profile can record a new location; asked before any file moves. */
+  readonly writable: boolean
+  /** Record the new location and rebuild the live runtime on it. */
+  relocate(directory: string): Promise<void>
+}
+
 /** Pack data stays inside the selected storage root and DSH authentication. */
-export function createPackHandler(input: LiveMnemonRuntime): HostRpcHandler {
+export function createPackHandler(input: LiveMnemonRuntime, relocation?: MnemonStorageRelocation): HostRpcHandler {
   return async (endpoint, rawPayload) => {
     try {
       const payload = object(rawPayload)
@@ -426,7 +439,23 @@ export function createPackHandler(input: LiveMnemonRuntime): HostRpcHandler {
         const plan = planMigration(from, to)
         if (plan.blocked !== undefined) throw new Error('cannot move the Mnemon data directory: ' + plan.blocked)
         if (payload.confirmed !== true) throw new Error('Moving the Mnemon data directory requires confirmation')
-        return success(await withMemoryStorageLock(from, () => migrateStorageRoot(from, to, { remove: true })))
+        // Refuse before the original directory is removed: a Host that cannot
+        // record the new location would keep reading a path that no longer
+        // exists, which is worse than not moving at all.
+        if (relocation !== undefined && !relocation.writable) throw new Error('DSH settings are read-only, so the Mnemon data directory was not moved')
+        const moved = await withMemoryStorageLock(from, () => migrateStorageRoot(from, to, { remove: true }))
+        if (relocation !== undefined) {
+          try {
+            await relocation.relocate(to)
+          } catch (reason) {
+            // The files are already at the new root and the old one is gone, so
+            // this is the one failure the user has to finish by hand. Say which
+            // directory to set instead of reporting a plain move failure.
+            const detail = reason instanceof Error ? reason.message : String(reason)
+            throw new Error(`the data directory was moved to ${to}, but the new location could not be recorded (${detail}); set it as the data directory to keep using this memory`)
+          }
+        }
+        return success(moved)
       }
       if (endpoint === 'export') return success(await manager.exportPack('full'))
       if (endpoint === 'inspect') return success(manager.inspectPack(String(payload.base64 ?? ''), payload.fileName === undefined ? undefined : String(payload.fileName)))
@@ -552,7 +581,7 @@ export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: Mnemon
   }
 }
 
-export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager): {
+export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager, relocation?: MnemonStorageRelocation): {
   read: HostRpcHandler
   activation: HostRpcHandler
   write: HostRpcHandler
@@ -564,7 +593,7 @@ export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonR
   const readHandler = createReadHandler(input, lifecycle, versionManager)
   const activationHandler = createActivationHandler(input)
   const writeHandler = createWriteHandler(input, lifecycle, versionManager)
-  const packHandler = createPackHandler(input)
+  const packHandler = createPackHandler(input, relocation)
   const syncHandler = createSyncHandler(input)
   const reviewHandler = createReviewHandler(input, lifecycle)
   connection.rpc.handle(MNEMON_READ_CHANNEL, readHandler)

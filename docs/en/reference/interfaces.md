@@ -201,7 +201,7 @@ With `writeEnabled=false`, the activation and write channels stay registered but
 | `inspect` | Parse and verify an import ZIP, returning component and occupancy preview |
 | `import` | Safely merge into the effective root; rejected in read-only mode |
 | `storage-plan` | Inspect a proposed data directory: what it holds, how many files and bytes would move, and why the move is impossible; read-only, and it never requires `writeEnabled` |
-| `storage-migrate` | Copy the whole data directory to the proposed path, verify every file by SHA-256, and only then delete the original; requires `confirmed: true` and `writeEnabled` |
+| `storage-migrate` | Copy the whole data directory to the proposed path, verify every file by SHA-256, and only then delete the original; on success the Host records the new path as the `custom` data directory and rebuilds its runtime on it, so later calls never read the removed one; requires `confirmed: true`, `writeEnabled`, and a writable settings profile, which is checked before anything is copied |
 
 Backups contain private memory, so callers must treat the authenticated DSH browser session as a full Host authority and protect exported archives separately.
 
