@@ -27,6 +27,15 @@ import { MnemonMachineStore } from './machine-identity.ts'
 
 export type { MnemonPackComponent, MnemonPackComponentSummary, MnemonPackExport, MnemonPackImportMode, MnemonPackImportResult, MnemonPackManifest, MnemonPackPreview, MnemonPackScope } from "./protocol.ts"
 
+// The sync channel reads the same payload files out of a Git commit that an
+// import would read out of an archive, so it validates them with the exact
+// parsers an import uses instead of a second, drifting copy. The entry key is
+// exported for the same reason: two sides agree on an entry's identity only
+// while one definition decides it. A removal is judged by the same rule here
+// and there, so what a tombstone covers is exported too.
+export type { StoredRuntimeEntry, RuntimeFile, DocumentIndex }
+export { entryKey, tombstoneCovers, tombstoneKey }
+
 export const MNEMON_PACK_FORMAT = 'mnemonpack'
 export const MNEMON_PACK_VERSION = 1
 export const MNEMON_PACK_MIME = 'application/zip'
@@ -39,7 +48,8 @@ const LOCK_TIMEOUT_MS = 5_000
 const LOCK_STALE_MS = 30_000
 const LOCK_RETRY_MS = 20
 const COMPONENT_DIRECTORIES = { runtime: 'runtime', documents: 'documents', 'memory-spaces': 'data', settings: 'settings' } as const
-const RUNTIME_TOMBSTONE_PATH = 'payload/runtime/tombstones.json'
+export const RUNTIME_MEMORIES_PATH = 'payload/runtime/memories.json'
+export const RUNTIME_TOMBSTONE_PATH = 'payload/runtime/tombstones.json'
 const SETTINGS_PAYLOAD_PATH = 'payload/settings/mnemon.json'
 const STATE_TOMBSTONE_FILE = 'tombstones.json'
 const STATE_RUNTIME_INDEX_FILE = 'runtime-index.json'
@@ -146,7 +156,8 @@ function componentsForScope(scope: MnemonPackScope): MnemonPackComponent[] {
   return [scope]
 }
 
-function parseManifest(value: unknown): MnemonPackManifest {
+/** Exported so the sync channel can read the manifest a commit holds without unpacking the archive. */
+export function parseManifest(value: unknown): MnemonPackManifest {
   const manifest = record(value)
   if (manifest?.format !== MNEMON_PACK_FORMAT || manifest.version !== MNEMON_PACK_VERSION) throw new Error('unsupported Mnemon Pack format or version')
   if (manifest.scope !== 'full' && !COMPONENT_ORDER.includes(manifest.scope as MnemonPackComponent)) throw new Error('Mnemon Pack scope is invalid')
@@ -245,7 +256,7 @@ function parseArchive(base64: string, runtimeLimits: RuntimeMemoryLimits = RUNTI
   return { archiveBytes: archive.length, expandedBytes, files, manifest: { ...manifest, summary: actualSummary } }
 }
 
-function parseRuntime(value: unknown, limits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): RuntimeFile {
+export function parseRuntime(value: unknown, limits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): RuntimeFile {
   const source = record(value)
   if (source?.version !== RUNTIME_MEMORY_VERSION || !Array.isArray(source.entries)) throw new Error('runtime memories.json is invalid')
   const entries = source.entries.map((raw): RuntimeMemoryEntry => {
@@ -275,7 +286,7 @@ function emptyTombstones(): MnemonTombstoneFile {
   return { version: 1, tombstones: [] }
 }
 
-function parseTombstones(value: unknown): MnemonTombstoneFile {
+export function parseTombstones(value: unknown): MnemonTombstoneFile {
   const source = record(value)
   if (source?.version !== 1 || !Array.isArray(source.tombstones)) throw new Error('runtime tombstones.json is invalid')
   const tombstones = source.tombstones.map((raw): MnemonTombstone => {
@@ -567,7 +578,7 @@ function collectExport(root: string, components: MnemonPackComponent[], runtimeL
     // Recording this export is what makes a later deletion visible to the merge, so the
     // tombstones written here are the ones this Pack carries.
     const tombstones = stamp === undefined ? readCurrentTombstones(root) : advanceTombstones(root, runtime.entries, stamp.machine, stamp.at)
-    files['payload/runtime/memories.json'] = strToU8(`${JSON.stringify({ ...runtime, entries }, null, 2)}\n`)
+    files[RUNTIME_MEMORIES_PATH] = strToU8(`${JSON.stringify({ ...runtime, entries }, null, 2)}\n`)
     files['payload/runtime/USER.md'] = strToU8(runtimeProjection(entries, 'user'))
     files['payload/runtime/MEMORY.md'] = strToU8(runtimeProjection(entries, 'memory'))
     files[RUNTIME_TOMBSTONE_PATH] = strToU8(`${JSON.stringify(tombstones, null, 2)}\n`)
@@ -713,6 +724,11 @@ function tombstoneHash(entry: { target: RuntimeMemoryTarget; content: string }):
   return sha256(`${entry.target}\0${entry.content}`)
 }
 
+/** One removal's identity: the same identity an entry key states, hashed. */
+function tombstoneKey(tombstone: MnemonTombstone): string {
+  return `${tombstone.target}\0${tombstone.contentHash}`
+}
+
 /** A tombstone hides an entry until that entry is written again later than the deletion. */
 function tombstoneCovers(tombstone: MnemonTombstone, entry: StoredRuntimeEntry): boolean {
   if (tombstone.target !== entry.target || tombstone.contentHash !== tombstoneHash(entry)) return false
@@ -753,7 +769,7 @@ function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemo
 function mergeTombstoneFiles(current: MnemonTombstoneFile, incoming: MnemonTombstoneFile): MnemonTombstoneFile {
   const byKey = new Map<string, MnemonTombstone>()
   for (const tombstone of [...current.tombstones, ...incoming.tombstones]) {
-    const key = `${tombstone.target}\0${tombstone.contentHash}`
+    const key = tombstoneKey(tombstone)
     const existing = byKey.get(key)
     if (existing === undefined || tombstone.deletedAt > existing.deletedAt) byKey.set(key, tombstone)
   }
@@ -992,6 +1008,24 @@ export class MnemonPackManager {
   /** Late binding keeps one bridge across every runtime generation the Host swaps in. */
   useSettingsBridge(bridge: MnemonSettingsBridge | undefined): void {
     this.settings = bridge
+  }
+
+  /**
+   * Record the entries this data directory held at its last export and no longer holds.
+   *
+   * An export does this on its way out, which is too late for a channel that merges the
+   * branch before it exports: the merge would write back the entry this machine just
+   * deleted, and the export that follows would see it present and record no removal at
+   * all. Recording the deletions first is what makes the merge honour them.
+   */
+  async recordDeletions(): Promise<void> {
+    return this.runner.withExclusive(async () => {
+      await new Promise<void>(resolveReady => setImmediate(resolveReady))
+      withLocks(this.root, ['runtime'], () => {
+        const runtime = readCurrentRuntime(this.root, this.runtimeLimits)
+        advanceTombstones(this.root, runtime.entries, this.identity(), this.now().toISOString())
+      })
+    })
   }
 
   /**

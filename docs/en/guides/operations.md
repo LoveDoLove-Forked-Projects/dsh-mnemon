@@ -145,6 +145,19 @@ Credentials stay out of the payload, the configuration file and the logs:
 - Status and configuration responses describe the credential (`hasToken`, `credentialSource`, `credentialLogin`), never its value.
 - An unreachable remote, or a push without credentials, still commits locally and reports that the push was skipped; nothing is lost. Run push again once credentials are available.
 
+### Seeing every machine's backups and differences
+
+**Backups** under **Storage → Git sync** walks the branch history newest first and names each backup by the manifest that commit carries: commit, message, time, the machine that published it, the push time and the component summary. The remote is one shared branch, so that history is the list of every machine's backups — which machine pushed what, and when. Opening one shows the components it carried. An empty branch reports an empty history instead of failing, and a commit whose manifest cannot be read is skipped while the rest are still listed.
+
+**Check remote** previews the component differences and then lists the memory differences entry by entry:
+
+- **Only here**: entries this installation holds and the branch does not.
+- **Only remotely**: entries the branch holds and this installation does not, each naming the machine it came from.
+- Both sides' export time, entry count and machine identity, and how many entries they share.
+- **Removals not applied here**: deletions the branch recorded that this installation has not carried out yet. The branch keeps every removal either side ever recorded, so a removal this installation already applied — or has since written over with the same content — is not counted again.
+
+The comparison is by entry, not by byte: an entry is identified by its target and its content, so the same memory counts as one entry wherever it was written. Both lists are bounded, and `truncated` in the answer says a side held more differences than the response lists. Checking the remote is a read: nothing is imported and no local memory changes.
+
 ### Recovery rehearsal
 
 1. Under **Storage**, set **Data directory** to **Custom**, enter an isolated directory and apply.

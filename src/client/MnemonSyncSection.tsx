@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react'
-import { Button, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Tag, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import {
   MNEMON_SYNC_DEFAULT_BRANCH,
   MNEMON_SYNC_DEFAULT_SUBDIR,
   MNEMON_SYNC_TOKEN_ENV,
   type ClientConnectionHandle,
+  type MnemonSyncBackup,
+  type MnemonSyncBackupList,
   type MnemonSyncConfigView,
+  type MnemonSyncDiff,
+  type MnemonSyncDiffEntry,
   type MnemonSyncGitHubRepository,
   type MnemonSyncGitHubStatus,
   type MnemonSyncPreview,
@@ -49,6 +53,28 @@ function configured(draft: SyncDraft): boolean {
   return draft.repoUrl.trim() !== ''
 }
 
+function stamp(value: string | undefined): string {
+  if (value === undefined) return ''
+  const parsed = new Date(value)
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString()
+}
+
+/** The name a backup or a difference is attributed to, as a reader can act on it. */
+function ownerName(t: MnemonTranslate, machine: { id: string; label: string } | undefined): string {
+  if (machine === undefined) return t('config.syncBackupUnknownMachine')
+  return machine.label.trim() === '' ? machine.id : machine.label
+}
+
+/** One entry of the difference: which memory, and whose it is. */
+function diffLine(t: MnemonTranslate, entry: MnemonSyncDiffEntry): JSX.Element {
+  const origin = entry.origin === undefined ? '' : ' · ' + t('config.syncDiffFrom', { machine: entry.origin.label.trim() === '' ? entry.origin.machine : entry.origin.label })
+  const text = entry.content.replace(/\s+/gu, ' ').trim()
+  return <li key={entry.target + '\u0000' + entry.content} data-target={entry.target}>
+    <span className={css.syncDiffMeta}>{t(entry.target === 'user' ? 'review.targetUser' : 'review.targetMemory')} · {entry.importance}{origin}</span>
+    <span>{text.length <= 200 ? text : text.slice(0, 199) + '…'}</span>
+  </li>
+}
+
 interface MnemonSyncSectionProps {
   connection?: ClientConnectionHandle
   sessionId?: string
@@ -76,7 +102,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SyncDraft>(() => draftOf(undefined))
   const [pending, setPending] = useState<MnemonSyncPreview | null>(null)
-  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'github' | 'repos' | 'create' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'backups' | 'diff' | 'github' | 'repos' | 'create' | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [github, setGithub] = useState<MnemonSyncGitHubStatus | null>(null)
@@ -84,6 +110,9 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const [repositories, setRepositories] = useState<MnemonSyncGitHubRepository[] | null>(null)
   const [repositoryName, setRepositoryName] = useState('')
   const [repositoryPrivate, setRepositoryPrivate] = useState(true)
+  const [backups, setBackups] = useState<MnemonSyncBackupList | null>(null)
+  const [openCommit, setOpenCommit] = useState<string | null>(null)
+  const [difference, setDifference] = useState<MnemonSyncDiff | null>(null)
   const [copied, setCopied] = useState(false)
   // The sign-in poll reschedules itself; a counter re-runs the effect after each answer.
   const [pollTick, setPollTick] = useState(0)
@@ -145,7 +174,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
 
   const push = async (): Promise<void> => {
     if (client === null || busy !== null) return
-    setBusy('push'); setFailed(null); setNotice(null); setPending(null)
+    setBusy('push'); setFailed(null); setNotice(null); setPending(null); setBackups(null); setDifference(null)
     try {
       const result = await client.pushSync()
       setNotice(result.pushed
@@ -161,9 +190,12 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
 
   const preview = async (): Promise<void> => {
     if (client === null || busy !== null) return
-    setBusy('preview'); setFailed(null); setNotice(null); setPending(null)
+    setBusy('preview'); setFailed(null); setNotice(null); setPending(null); setDifference(null)
     try {
       setPending(await client.previewSync())
+      // The byte-level answer says how much differs; the entry-level answer says which
+      // memories do. A difference that cannot be read leaves the preview standing.
+      try { setDifference(await client.syncDiff()) } catch { setDifference(null) }
     } catch (reason) {
       setFailed(message(reason))
     } finally { setBusy(null) }
@@ -175,8 +207,34 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     try {
       const result = await client.pullSync()
       setNotice(t('config.syncPulled', { commit: result.commit.slice(0, 8), root: result.targetRoot }))
-      setPending(null)
+      setPending(null); setBackups(null); setDifference(null)
       await refresh()
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  /**
+   * The branch's history: what was published, when, and by which installation. The
+   * commit message is whatever its author typed, so the manifest inside the commit is
+   * what names the machine and says what the backup held.
+   */
+  const loadBackups = async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('backups'); setFailed(null); setNotice(null)
+    try {
+      setBackups(await client.syncBackups())
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  /** Which memories are only here and which are only on the branch, before merging anything. */
+  const loadDifference = async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('diff'); setFailed(null); setNotice(null)
+    try {
+      setDifference(await client.syncDiff())
     } catch (reason) {
       setFailed(message(reason))
     } finally { setBusy(null) }
@@ -335,6 +393,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       <div className={css.rowActions}>
         <Button variant="outline" size="sm" disabled={!editable || busy !== null} onClick={() => setOpen(current => !current)}>{open ? t('config.syncHide') : t('config.syncConfigure')}</Button>
         <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void preview()}>{busy === 'preview' ? t('config.syncPreviewing') : t('config.syncPreview')}</Button>
+        <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void loadBackups()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('config.syncBackups')}</Button>
         <Button variant="primary" size="sm" disabled={!ready || disabled || busy !== null} onClick={() => void push()}>{busy === 'push' ? t('config.syncPushing') : t('config.syncPush')}</Button>
       </div>
     </SettingRow>
@@ -472,6 +531,66 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       </div>
       <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setPending(null)}>{t('common.cancel')}</Button>
       <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void pull()}>{busy === 'pull' ? t('config.syncPulling') : t('config.syncPull')}</Button>
+    </div>}
+    {difference !== null && <div className={css.syncDiff} role="status">
+      <header>
+        <strong>{t('config.syncDiffTitle', { commit: difference.commit.slice(0, 8), shared: difference.shared })}</strong>
+        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setDifference(null)}>{t('common.close')}</Button>
+      </header>
+      <small>{t('config.syncDiffSides', { local: difference.local.entries, remote: difference.remote.entries, machine: ownerName(t, difference.remote.machine) })}</small>
+      {difference.truncated && <small>{t('config.syncDiffTruncated')}</small>}
+      {difference.remoteTombstones.length > 0 && <small>{t('config.syncDiffTombstones', { count: difference.remoteTombstones.length })}</small>}
+      <div className={css.syncDiffColumns}>
+        <div>
+          <strong>{t('config.syncDiffLocalOnly', { count: difference.localOnly.length })}</strong>
+          {difference.localOnly.length === 0
+            ? <small>{t('config.syncDiffNone')}</small>
+            : <ul>{difference.localOnly.map(entry => diffLine(t, entry))}</ul>}
+        </div>
+        <div>
+          <strong>{t('config.syncDiffRemoteOnly', { count: difference.remoteOnly.length })}</strong>
+          {difference.remoteOnly.length === 0
+            ? <small>{t('config.syncDiffNone')}</small>
+            : <ul>{difference.remoteOnly.map(entry => diffLine(t, entry))}</ul>}
+        </div>
+      </div>
+    </div>}
+    {backups !== null && <div className={css.syncBackups} role="status">
+      <header>
+        <strong>{t('config.syncBackupsTitle', { branch: backups.branch })}</strong>
+        <div className={css.rowActions}>
+          <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadBackups()}>{t('review.refresh')}</Button>
+          <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => { setBackups(null); setOpenCommit(null) }}>{t('common.close')}</Button>
+        </div>
+      </header>
+      <small>{t('config.syncBackupsHint', { subdir: backups.subdir })}</small>
+      {backups.commits.length === 0
+        ? <small>{t('config.syncBackupsEmpty')}</small>
+        : <div className={css.syncBackupList}>
+          {backups.commits.map(commit => <div key={commit.commit} className={css.syncBackupEntry}>
+            <header>
+              <div className={css.reviewTitle}>
+                <strong>{commit.message}</strong>
+                <Tag tone="quiet">{commit.commit.slice(0, 8)}</Tag>
+              </div>
+              <div className={css.rowActions}>
+                <Button variant="ghost" size="sm" disabled={busy !== null}
+                  onClick={() => setOpenCommit(openCommit === commit.commit ? null : commit.commit)}>
+                  {openCommit === commit.commit ? t('review.collapse') : t('review.expand')}</Button>
+              </div>
+            </header>
+            <small>{t('config.syncBackupMeta', { machine: ownerName(t, commit.machine), time: stamp(commit.committedAt) })}</small>
+            {commit.pushedAt !== undefined && <small>{t('config.syncBackupPushedAt', { time: stamp(commit.pushedAt) })}</small>}
+            {openCommit === commit.commit && <div className={css.syncBackupComponents}>
+              {commit.components.length === 0
+                ? <small>{t('config.syncBackupNoComponents')}</small>
+                : commit.components.map(component => <small key={component.component}>
+                    {t('config.syncBackupComponent', { component: component.component, items: component.items, files: component.files, size: humanBytes(component.bytes) })}
+                  </small>)}
+            </div>}
+          </div>)}
+          {backups.truncated && <small>{t('config.syncBackupsTruncated')}</small>}
+        </div>}
     </div>}
     <div className={css.syncFeedback} aria-live="polite">
       {failed !== null && <p className={css.error} role="alert">{t('config.syncFailed', { error: failed })}</p>}

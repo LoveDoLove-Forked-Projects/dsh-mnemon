@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DocumentSnapshot } from 'dsh-mnemon-source-documents/contracts'
 import type { RuntimeMemoryEntry, RuntimeMemorySnapshot, RuntimeMemoryTargetView } from 'dsh-mnemon-source-runtime/contracts'
 import { sourceFixture } from './fixtures/sources.ts'
-import type { MnemonMachineIdentity, MnemonReconcileOperation } from '../src/host/protocol.ts'
+import type { MnemonMachineIdentity, MnemonReconcileOperation, MnemonReviewEntry } from '../src/host/protocol.ts'
 import type { MnemonReconcileApplier, MnemonReconcileSessions } from '../src/host/reconcile.ts'
 import {
   MAX_RECONCILE_OPERATIONS,
@@ -14,6 +14,7 @@ import {
   emptyDocumentSnapshot,
   foreignMachines,
   parseReconcileResult,
+  pendingOpinions,
   reconcilePrompt,
   sourceApplier,
 } from '../src/host/reconcile.ts'
@@ -125,6 +126,77 @@ describe('Mnemon memory reconciliation evidence', () => {
 
     const bounded = reconcilePrompt(evidence(Array.from({ length: 400 }, (_, index) => entry(`Entry ${index} ${'x'.repeat(400)}`))))
     expect(bounded).toContain('further entries were withheld to bound this request.')
+  })
+
+  it('writes what the branch holds that this installation does not, and what the reviewer asked for', () => {
+    const withRemote = reconcilePrompt({
+      ...evidence([entry('only local')]),
+      remote: {
+        entries: [
+          { target: 'user', content: 'Prefers table output', importance: 'normal', origin: { machine: 'machine-b', label: 'desktop', at: 'now' } },
+          { target: 'memory', content: 'Deploy on Fridays', importance: 'critical' },
+        ],
+        truncated: false,
+        tombstones: [{ target: 'user', contentHash: 'abc', deletedAt: '2026-08-13T12:00:00.000Z', machine: 'machine-b' }],
+        branch: 'mnemon-sync',
+        machine: { id: 'machine-b', label: 'desktop', createdAt: 'now' },
+      },
+      guidance: 'Two preferences say the same thing; merge them.',
+      opinions: [{ author: 'user', text: 'Keep the wording of the first one.', createdAt: '2026-08-14T10:00:00.000Z' }],
+    })
+    expect(withRemote).toContain('The sync branch (mnemon-sync) holds 2 entries this installation does not have, published by desktop (machine-b):')
+    expect(withRemote).toContain('- [user/normal] (from desktop) Prefers table output')
+    // An entry the branch holds without an origin is still attributed to the branch.
+    expect(withRemote).toContain('- [memory/critical] Deploy on Fridays')
+    expect(withRemote).toContain('The branch recorded 1 removals this installation has not applied:')
+    expect(withRemote).toContain('- [user] removed 2026-08-13T12:00:00.000Z')
+    expect(withRemote).toContain('The reviewer asks for this plan to do the following. It states what they want, not what is allowed:')
+    expect(withRemote).toContain('Two preferences say the same thing; merge them.')
+    expect(withRemote).toContain("Opinions already recorded on the pending proposals, oldest first. Treat them as the reviewer's position:")
+    expect(withRemote).toContain('- reviewer: Keep the wording of the first one.')
+
+    // No branch, no guidance, no opinions: the evidence is exactly the local one.
+    const local = reconcilePrompt(evidence([entry('only local')]))
+    expect(local).not.toContain('sync branch')
+    expect(local).not.toContain('reviewer asks for this plan')
+
+    // A branch that holds nothing is stated as nothing, not left unsaid.
+    const quiet = reconcilePrompt({ ...evidence([entry('only local')]), remote: { entries: [], truncated: false, tombstones: [], branch: 'mnemon-sync' } })
+    expect(quiet).toContain('The sync branch (mnemon-sync) holds 0 entries this installation does not have:')
+    expect(quiet).toContain('\nnone')
+    expect(quiet).not.toContain('The branch recorded')
+
+    // Both lists are bounded, and a cut list says it was cut.
+    const bounded = reconcilePrompt({
+      ...evidence([entry('only local')]),
+      remote: {
+        entries: Array.from({ length: 200 }, (_, index) => ({ target: 'user' as const, content: 'Remote ' + String(index) + ' ' + 'x'.repeat(400), importance: 'normal' as const })),
+        truncated: true,
+        tombstones: [],
+        branch: 'mnemon-sync',
+      },
+      guidance: 'g'.repeat(3_000),
+    })
+    expect(bounded).toContain('further entries were withheld to bound this request.')
+    expect(bounded).toContain('The branch may hold more entries than this list states.')
+    expect(bounded).not.toContain('g'.repeat(2_500))
+  })
+
+  it('folds the opinions of pending reviews into the evidence, oldest first', () => {
+    const review = (id: string, status: 'pending' | 'accepted' | 'rejected', opinions: Array<{ author: 'user' | 'agent'; text: string; createdAt: string }>): MnemonReviewEntry => ({
+      id, title: id, summary: '', status, operations: [], opinions: opinions.map((item, index) => ({ id: id + '-' + String(index), ...item })),
+      machine, foreignMachines: [], createdAt: '2026-08-14T12:00:00.000Z', updatedAt: '2026-08-14T12:00:00.000Z',
+    })
+    expect(pendingOpinions([
+      review('a', 'pending', [{ author: 'user', text: 'Later', createdAt: '2026-08-14T12:00:00.000Z' }]),
+      review('b', 'accepted', [{ author: 'agent', text: 'Decided', createdAt: '2026-08-14T09:00:00.000Z' }]),
+      review('c', 'pending', [{ author: 'agent', text: 'Earlier', createdAt: '2026-08-14T08:00:00.000Z' }]),
+      review('d', 'pending', []),
+    ])).toEqual([
+      { author: 'agent', text: 'Earlier', createdAt: '2026-08-14T08:00:00.000Z' },
+      { author: 'user', text: 'Later', createdAt: '2026-08-14T12:00:00.000Z' },
+    ])
+    expect(pendingOpinions([])).toEqual([])
   })
 
   it('describes a documents-free snapshot without inventing a directory', () => {

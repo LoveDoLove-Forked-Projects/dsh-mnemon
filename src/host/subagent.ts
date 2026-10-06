@@ -8,8 +8,8 @@ import { SourceSession, sourceFailure } from './source-session.ts'
 import { threeTierActionWorkflow } from 'dsh-mnemon-strategy-default-three-tier/extension-sdk'
 import { receipt as mutationReceipt } from '../sdk/input.ts'
 import { assertParticipation } from './access.ts'
-import type { MemorySpaceMetadataMaintenanceResult, MemorySpaceMetadataUpdate, MemoryPlacementDecision, MnemonReconcileResult, SubagentCounters } from './protocol.ts'
-import { emptyDocumentSnapshot, foreignMachines, parseReconcileResult, RECONCILE_PERSONA, RECONCILE_SCHEMA, reconcilePrompt, type MnemonReconcileEvidence } from './reconcile.ts'
+import type { MemorySpaceMetadataMaintenanceResult, MemorySpaceMetadataUpdate, MemoryPlacementDecision, MnemonReconcileOptions, MnemonReconcileResult, SubagentCounters } from './protocol.ts'
+import { emptyDocumentSnapshot, foreignMachines, parseReconcileResult, pendingOpinions, RECONCILE_PERSONA, RECONCILE_SCHEMA, reconcilePrompt, type MnemonReconcileEvidence } from './reconcile.ts'
 import { DEFAULT_MEMORY_VIEW_BUDGET, type ComposableMemoryView, type MemoryEvidence, type MemoryJsonValue, type MemoryMigrationLineage, type MemoryMutationReceipt, type MemoryOperationScope, type MemorySourceManagementRequest, type MemorySourceManagementResult } from '../core/contracts/index.ts'
 import type { MemoryCompositionGeneration } from '../core/composition.ts'
 import { agentScope, type MnemonAgentRuntimeSource, type MnemonRuntimeGraph } from './runtime.ts'
@@ -1141,7 +1141,7 @@ export class MnemonSubagentCoordinator {
    * proposal is never applied here, because the point of the feature is that a
    * human reads it first.
    */
-  async reconcile(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, signal: AbortSignal): Promise<MnemonReconcileResult> {
+  async reconcile(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, signal: AbortSignal, options: MnemonReconcileOptions = {}): Promise<MnemonReconcileResult> {
     const machine = graph.packs.identity()
     const lease = graph.memoryComposition.acquire()
     let runtime: RuntimeMemorySnapshot
@@ -1153,13 +1153,36 @@ export class MnemonSubagentCoordinator {
         .catch(() => emptyDocumentSnapshot(graph.directory, new Date().toISOString()))
     } finally { lease.release() }
     const others = foreignMachines(runtime.entries, machine)
-    const evidence: MnemonReconcileEvidence = { machine, runtime, documents, foreignMachines: others }
+    // The branch's side is evidence, not an answer. When it cannot be read - no
+    // repository, no git, an unpublished branch, an unreadable payload - the plan is
+    // the local plan it has always been, and nothing fails because of it.
+    const difference = await graph.sync.readRemoteForEvidence(signal)
+    const guidance = options.guidance?.trim() ?? ''
+    const opinions = pendingOpinions(graph.reviews.list())
+    const evidence: MnemonReconcileEvidence = {
+      machine, runtime, documents, foreignMachines: others,
+      ...(difference === undefined ? {} : {
+        remote: {
+          entries: difference.remoteOnly,
+          truncated: difference.truncated,
+          tombstones: difference.remoteTombstones,
+          branch: difference.branch,
+          ...(difference.remote.machine === undefined ? {} : { machine: difference.remote.machine }),
+        },
+      }),
+      ...(guidance === '' ? {} : { guidance }),
+      ...(opinions.length === 0 ? {} : { opinions }),
+    }
+    const read = {
+      ...(difference === undefined ? {} : { remoteEntries: difference.remoteOnly.length }),
+      ...(guidance === '' ? {} : { guided: true }),
+    }
     if (runtime.entries.length === 0) {
-      return { title: '', summary: '', action: 'none', operations: 0, foreignMachines: others, provider: 'host', runId: '' }
+      return { title: '', summary: '', action: 'none', operations: 0, foreignMachines: others, ...read, provider: 'host', runId: '' }
     }
     const delegated = await this.runtimeModel(scope, undefined, signal, 'reconcile', 'Reconcile merged local memory', reconcilePrompt(evidence), RECONCILE_SCHEMA as unknown as Record<string, unknown>, RECONCILE_PERSONA)
     const proposal = parseReconcileResult(delegated.result.structured, evidence)
-    const result = { title: proposal.title, summary: proposal.summary, action: proposal.action, foreignMachines: others, provider: delegated.provider, runId: delegated.runId }
+    const result = { title: proposal.title, summary: proposal.summary, action: proposal.action, foreignMachines: others, ...read, provider: delegated.provider, runId: delegated.runId }
     if (proposal.action === 'failed') throw new Error('memory reconciliation could not plan against the merged evidence: ' + proposal.summary)
     if (proposal.operations.length === 0) return { ...result, action: 'none', operations: 0 }
     const entry = graph.reviews.create({ title: proposal.title, summary: proposal.summary, machine: { id: machine.id, label: machine.label }, foreignMachines: others, operations: proposal.operations })

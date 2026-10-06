@@ -172,6 +172,54 @@ describe('MnemonClient product transport', () => {
     })
   })
 
+  it('routes the read-only backup history and memory diff without asking to write', async () => {
+    const call = vi.fn(async (_channel: string, _endpoint: string, _payload: Record<string, unknown>) => ({ ok: true as const, value: {} }))
+    const client = new MnemonClient({ rpc: { call }, isLoopback: true } as ClientConnectionHandle, 'session-1', 'workspace-1')
+
+    await client.syncBackups()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'backups', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.syncBackups(5)
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'backups', { limit: 5, sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.syncDiff()
+    expect(call).toHaveBeenLastCalledWith(MNEMON_SYNC_CHANNEL, 'diff', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    // Neither read carries a confirmation: they change nothing on either side.
+    expect(call.mock.calls.every(([, , payload]) => payload.confirmed === undefined)).toBe(true)
+  })
+
+  it('sends the reviewer guidance only when it holds something, and only the chosen operations', async () => {
+    const call = vi.fn(async () => ({ ok: true as const, value: {} }))
+    const client = new MnemonClient({ rpc: { call }, isLoopback: true } as ClientConnectionHandle, 'session-1', 'workspace-1')
+
+    await client.reconcile()
+    expect(call).toHaveBeenLastCalledWith('/dsh-mnemon-review', 'reconcile', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.reconcile('   ')
+    expect(call).toHaveBeenLastCalledWith('/dsh-mnemon-review', 'reconcile', { sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.reconcile('  Merge the two duplicates.  ')
+    expect(call).toHaveBeenLastCalledWith('/dsh-mnemon-review', 'reconcile', {
+      guidance: 'Merge the two duplicates.', sessionId: 'session-1', workspaceId: 'workspace-1',
+    })
+
+    // Applying nothing named is the whole plan; naming positions applies exactly those.
+    await client.applyReview('review-1')
+    expect(call).toHaveBeenLastCalledWith('/dsh-mnemon-review', 'apply', { id: 'review-1', sessionId: 'session-1', workspaceId: 'workspace-1' })
+
+    await client.applyReview('review-1', [2, 0])
+    expect(call).toHaveBeenLastCalledWith('/dsh-mnemon-review', 'apply', {
+      id: 'review-1', operations: [2, 0], sessionId: 'session-1', workspaceId: 'workspace-1',
+    })
+
+    // An empty selection is still a selection: the Host answers with nothing applied.
+    await client.applyReview('review-1', [])
+    expect(call).toHaveBeenLastCalledWith('/dsh-mnemon-review', 'apply', {
+      id: 'review-1', operations: [], sessionId: 'session-1', workspaceId: 'workspace-1',
+    })
+  })
+
   it('routes GitHub sign-in and the repository picker through the sync channel', async () => {
     const call = vi.fn(async () => ({ ok: true as const, value: {} }))
     const client = new MnemonClient({ rpc: { call }, isLoopback: true } as ClientConnectionHandle, 'session-1', 'workspace-1')

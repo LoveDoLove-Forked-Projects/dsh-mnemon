@@ -78,6 +78,13 @@ function requestedComponents(value: unknown): MnemonPackComponent[] | undefined 
   }
   return components
 }
+/** A one-off backup page size; an absent value lets the sync channel pick its default. */
+function requestedLimit(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  const limit = typeof value === 'number' ? value : Number(String(value).trim())
+  if (!Number.isInteger(limit) || limit < 1) throw new Error('limit must be a positive integer')
+  return limit
+}
 function success(value: unknown): RpcResult<unknown> { return { ok: true, value } }
 function failure(error: unknown): RpcResult<unknown> {
   return { ok: false, error: { code: 'internal', message: error instanceof Error ? error.message : String(error), details: {} } }
@@ -497,6 +504,15 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
         return success(await sync.push({ ...(payload.message === undefined ? {} : { message: payload.message }), ...(signal === undefined ? {} : { signal }) }))
       }
       if (endpoint === 'preview') return success(await sync.preview(signal))
+      // Reading the branch's history and the entry-level difference changes nothing
+      // here, so neither endpoint is gated on write access or on a confirmation:
+      // gating a read behind writeEnabled would hide exactly the evidence the
+      // operator needs before deciding whether to write.
+      if (endpoint === 'backups') {
+        const limit = requestedLimit(payload.limit)
+        return success(await sync.backups(limit === undefined ? {} : { limit }, signal))
+      }
+      if (endpoint === 'diff') return success(await sync.diff(signal))
       // GitHub sign-in is a property of the Host, not of one workspace graph,
       // so these endpoints never touch the mirror or the remote branch.
       if (endpoint === 'github-status') return success(await githubAuth(input).status())
@@ -557,7 +573,11 @@ export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: Mnemon
       requireWritable(runtime)
       if (endpoint === 'reconcile') {
         if (lifecycle === undefined) throw new Error('Mnemon memory reconciliation is unavailable')
-        return success(await lifecycle.reconcile(runtime.graph, runtime.scope, signal ?? new AbortController().signal))
+        // The reviewer's words shape the plan and never widen it: what an operation may
+        // contain is still decided by the host, and nothing is applied by running this.
+        const guidance = payload.guidance
+        if (guidance !== undefined && typeof guidance !== 'string') throw new Error('the reconciliation guidance must be a string')
+        return success(await lifecycle.reconcile(runtime.graph, runtime.scope, signal ?? new AbortController().signal, guidance === undefined ? {} : { guidance }))
       }
       if (endpoint === 'apply') {
         if (lifecycle === undefined) throw new Error('Mnemon memory reconciliation is unavailable')
@@ -569,7 +589,15 @@ export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: Mnemon
           runtime: runtime.source('runtime'),
           documents: runtime.source('documents'),
         }
-        const outcome = await applyReconcileOperations(entry.operations, sourceApplier(sessions), signal ?? new AbortController().signal)
+        // Omitted means every operation, which is what a caller that predates partial
+        // application sends. An index the plan does not hold is refused rather than
+        // dropped, because a caller that believes it applied the whole review must not
+        // be told a smaller subset succeeded.
+        const selection = payload.operations
+        if (selection !== undefined && (!Array.isArray(selection) || selection.some(index => typeof index !== 'number'))) {
+          throw new Error('the operations to apply must be a list of operation indexes')
+        }
+        const outcome = await applyReconcileOperations(entry.operations, sourceApplier(sessions), signal ?? new AbortController().signal, selection as number[] | undefined)
         const failure = outcome.failures.length === 0 ? undefined : outcome.failures.join('; ')
         const applied = ledger.applied(entry.id, failure)
         if (failure !== undefined) throw new Error(failure)

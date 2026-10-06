@@ -160,7 +160,7 @@ const entry = {
  * The review ledger's channel. The ledger is the Host's, so each write answers
  * with the entry as the Host would store it, and every call is recorded.
  */
-function reviewHost(state: { entry: Record<string, unknown> }) {
+function reviewHost(state: { entry: Record<string, unknown> }, overrides: Record<string, (payload: Record<string, unknown>) => unknown> = {}) {
   const calls: Array<{ endpoint: string; payload: Record<string, unknown> }> = []
   const view = () => ({ pending: state.entry.status === 'pending' ? 1 : 0, entries: [state.entry] })
   const { connection } = recordingHost({
@@ -173,6 +173,7 @@ function reviewHost(state: { entry: Record<string, unknown> }) {
     '/dsh-mnemon-review reopen': () => { state.entry = { ...state.entry, status: 'pending' }; return state.entry },
     '/dsh-mnemon-review apply': () => { state.entry = { ...state.entry, appliedAt: '2026-08-14T12:02:00.000Z' }; return { applied: 2, failures: [] } },
     '/dsh-mnemon-review reconcile': () => ({ title: 'Merge the duplicated preference', summary: 'One preference is recorded twice.', action: 'planned', operations: 2, foreignMachines: ['desktop'], provider: 'openai', runId: 'run-1' }),
+    ...overrides,
   }, calls)
   return { connection, calls }
 }
@@ -238,6 +239,48 @@ describe('memory reconciliation review', () => {
     fireEvent.click(button('整理记忆'))
     await waitFor(() => expect(calls.some(call => call.endpoint === 'reconcile')).toBe(true))
     expect(await screen.findByText('已生成 2 条建议，接受后才会写入。')).toBeTruthy()
+  })
+
+  it('sends the reviewer guidance with the run and reports what the run read', async () => {
+    const state = { entry: { ...entry } }
+    const { connection, calls } = reviewHost(state, {
+      '/dsh-mnemon-review reconcile': () => ({ title: 'Merge the duplicated preference', summary: 'One preference is recorded twice.', action: 'planned', operations: 2, foreignMachines: ['desktop'], guided: true, remoteEntries: 3, provider: 'openai', runId: 'run-1' }),
+    })
+    render(<MnemonReviewSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('Merge the duplicated preference')
+
+    fireEvent.change(screen.getByRole('textbox', { name: '整理要求' }), { target: { value: '  Merge the two duplicates.  ' } })
+    fireEvent.click(button('整理记忆'))
+    await waitFor(() => expect(calls.some(call => call.endpoint === 'reconcile')).toBe(true))
+    expect(calls.find(call => call.endpoint === 'reconcile')?.payload).toEqual({ guidance: 'Merge the two duplicates.' })
+    // The answer states all three facts: what it planned, that it read the guidance,
+    // and how many entries it read from the branch this installation lacks.
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe('已生成 2 条建议，接受后才会写入。 已按你的要求整理 参考了远端 3 条本机没有的记忆'))
+  })
+
+  it('applies only the operations the reviewer kept checked', async () => {
+    const state = { entry: { ...entry, status: 'accepted' as const } }
+    const { connection, calls } = reviewHost(state)
+    render(<MnemonReviewSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('Merge the duplicated preference')
+
+    fireEvent.click(button('查看'))
+    // An untouched review applies the whole plan, so the button offers all of it.
+    expect(button('执行')).toBeTruthy()
+    expect(screen.getByText('已选 2/2 条')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '归档文档 doc-9' }))
+    expect(screen.getByText('已选 1/2 条')).toBeTruthy()
+    expect(button('执行选中 1 条')).toBeTruthy()
+    fireEvent.click(button('执行选中 1 条'))
+    await waitFor(() => expect(calls.some(call => call.endpoint === 'apply')).toBe(true))
+    expect(calls.find(call => call.endpoint === 'apply')?.payload).toEqual({ id: 'review-1', operations: [0] })
+
+    // The applied position leaves the plan, and the rest is still selectable.
+    fireEvent.click(button('全不选'))
+    expect(screen.getByText('已选 0/2 条')).toBeTruthy()
+    fireEvent.click(button('执行'))
+    expect(screen.getByRole('alert').textContent).toBe('请至少选择一条改动。')
   })
 
   it('stays inert without a connection or a writable Host', async () => {

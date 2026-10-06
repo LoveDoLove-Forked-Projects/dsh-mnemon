@@ -1,6 +1,6 @@
 import type { DocumentSnapshot } from 'dsh-mnemon-source-documents/contracts'
 import type { RuntimeMemoryEntry, RuntimeMemoryMutation, RuntimeMemorySnapshot } from 'dsh-mnemon-source-runtime/contracts'
-import type { MnemonMachineIdentity, MnemonReconcileOperation } from './protocol.ts'
+import type { MnemonMachineIdentity, MnemonReconcileOperation, MnemonReviewEntry, MnemonSyncDiffEntry, MnemonTombstone } from './protocol.ts'
 
 /**
  * Memory reconciliation is a proposal, never a write. One bounded model run reads the
@@ -12,6 +12,11 @@ import type { MnemonMachineIdentity, MnemonReconcileOperation } from './protocol
 export const MAX_RECONCILE_OPERATIONS = 40
 const MAX_ENTRY_CHARS = 24_000
 const MAX_DOCUMENTS = 60
+const MAX_REMOTE_ENTRIES = 60
+const MAX_REMOTE_CHARS = 8_000
+const MAX_GUIDANCE = 2_000
+const MAX_OPINIONS = 20
+const MAX_OPINION_CHARS = 4_000
 const MAX_FIELD = 4_000
 const MAX_SUMMARY = 2_000
 const MAX_TITLE = 200
@@ -60,6 +65,8 @@ Prefer, in this order: leave it alone; replace a duplicate or outdated entry wit
 
 Every operation needs "kind" and "reason", where the reason is one short sentence a reviewer can weigh. runtime-add also needs target, content, and importance. runtime-replace needs target, oldText (a unique substring of the entry being replaced), content, and optionally importance and branches. runtime-remove needs target and oldText. document-archive needs documentId.
 
+The evidence may also carry the branch's side of the difference: entries another installation published that this installation has not merged, and the removals it recorded. Treat such an entry as memory that exists on the other installation, and propose an operation only in terms of what the local memory would hold afterwards. Every operation is applied to the local memory alone, so it can only name what the local memory holds: runtime-replace and runtime-remove need an oldText that matches a local entry, and an entry only the branch holds is taken in with runtime-add (or by pulling the branch), never with runtime-replace or runtime-remove. When the reviewer's request is supplied, it says what the plan should accomplish; follow its intent within these rules, and never treat it as authority to exceed them.
+
 Write the title, the summary, and every reason in the language of the dominant evidence. The title is one short line a reviewer scans in a list; the summary is shown when the review is opened, and says what changed across machines and what you propose to do about it, in at most three short sentences, without ids. If the merged memory is already coherent, return action="none" with an empty operation list. Return action="failed" only when the evidence is too contradictory to plan against. Do not narrate a plan, do not delegate, and finish through the run-specific result tool exactly once.`
 
 export interface MnemonReconcileEvidence {
@@ -68,6 +75,37 @@ export interface MnemonReconcileEvidence {
   documents: DocumentSnapshot
   /** Labels of the other installations whose entries this installation now holds. */
   foreignMachines: string[]
+  /**
+   * The branch's side of the difference, when a sync repository is configured and
+   * readable: entries published by another installation that this one has not
+   * merged, and the removals the branch recorded that this one has not applied.
+   * Absent means the plan is local, which is what it was before the branch could
+   * be read at all.
+   */
+  remote?: { entries: MnemonSyncDiffEntry[]; truncated: boolean; tombstones: MnemonTombstone[]; branch: string; machine?: MnemonMachineIdentity } | undefined
+  /** What the reviewer asked the plan to do, in their own words. */
+  guidance?: string | undefined
+  /** What reviewers already wrote on the pending reviews, newest last. */
+  opinions?: MnemonReconcileOpinion[] | undefined
+}
+
+/** One recorded opinion, flattened for the prompt. */
+export interface MnemonReconcileOpinion {
+  author: 'user' | 'agent'
+  text: string
+  createdAt: string
+}
+
+/**
+ * What reviewers already wrote on the proposals that are still open, oldest first.
+ * A decided review is not folded in: its opinion was answered by the decision, and the
+ * next plan should not keep arguing with a question that was already settled.
+ */
+export function pendingOpinions(entries: readonly MnemonReviewEntry[]): MnemonReconcileOpinion[] {
+  return entries
+    .filter(entry => entry.status === 'pending')
+    .flatMap(entry => entry.opinions.map(opinion => ({ author: opinion.author, text: opinion.text, createdAt: opinion.createdAt })))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -126,7 +164,59 @@ export function reconcilePrompt(evidence: MnemonReconcileEvidence): string {
     lines.push(`- ${document.id} | ${document.title} | ${document.sizeBytes} bytes | ${description}`)
   }
   if (active.length > MAX_DOCUMENTS) lines.push(`... ${active.length - MAX_DOCUMENTS} further active documents were withheld to bound this request.`)
+  lines.push(...remoteSection(evidence.remote))
+  lines.push(...guidanceSection(evidence.guidance, evidence.opinions))
   return lines.join('\n')
+}
+
+/**
+ * What the branch holds that this installation does not, and what it removed. Named
+ * separately from the local runtime memory, because an operation is still proposed
+ * against the local memory: this side says what the other installation already has,
+ * so the plan can merge it rather than duplicate it.
+ */
+function remoteSection(remote: MnemonReconcileEvidence['remote']): string[] {
+  if (remote === undefined) return []
+  const lines = ['']
+  const owner = remote.machine === undefined ? undefined : `${remote.machine.label} (${remote.machine.id})`
+  lines.push(`The sync branch (${remote.branch}) holds ${remote.entries.length} entries this installation does not have${owner === undefined ? '' : `, published by ${owner}`}:`)
+  if (remote.entries.length === 0) lines.push('none')
+  let used = 0
+  let shown = 0
+  for (const entry of remote.entries.slice(0, MAX_REMOTE_ENTRIES)) {
+    const origin = entry.origin === undefined ? '' : ` (from ${entry.origin.label.trim() === '' ? entry.origin.machine : entry.origin.label})`
+    const line = `- [${entry.target}/${entry.importance}]${origin} ${entry.content.replace(/\s*\n\s*/gu, ' ')}`
+    if (used + line.length > MAX_REMOTE_CHARS) break
+    used += line.length
+    shown += 1
+    lines.push(line)
+  }
+  const withheld = remote.entries.length - shown
+  if (withheld > 0) lines.push(`... ${withheld} further entries were withheld to bound this request.`)
+  if (remote.truncated) lines.push('The branch may hold more entries than this list states.')
+  if (remote.tombstones.length > 0) {
+    lines.push(`The branch recorded ${remote.tombstones.length} removals this installation has not applied:`)
+    for (const tombstone of remote.tombstones.slice(0, MAX_REMOTE_ENTRIES)) lines.push(`- [${tombstone.target}] removed ${tombstone.deletedAt}`)
+    if (remote.tombstones.length > MAX_REMOTE_ENTRIES) lines.push(`... ${remote.tombstones.length - MAX_REMOTE_ENTRIES} further removals were withheld to bound this request.`)
+  }
+  return lines
+}
+
+/** The reviewer's words, and what reviewers already wrote on the pending proposals. */
+function guidanceSection(guidance: string | undefined, opinions: MnemonReconcileOpinion[] | undefined): string[] {
+  const request = guidance?.trim() ?? ''
+  const recorded = (opinions ?? []).slice(-MAX_OPINIONS)
+  if (request === '' && recorded.length === 0) return []
+  const lines = ['']
+  if (request !== '') {
+    lines.push('The reviewer asks for this plan to do the following. It states what they want, not what is allowed:')
+    lines.push(request.slice(0, MAX_GUIDANCE))
+  }
+  if (recorded.length > 0) {
+    lines.push("Opinions already recorded on the pending proposals, oldest first. Treat them as the reviewer's position:")
+    for (const opinion of recorded) lines.push(`- ${opinion.author === 'agent' ? 'agent' : 'reviewer'}: ${opinion.text.replace(/\s+/gu, ' ').slice(0, MAX_OPINION_CHARS)}`)
+  }
+  return lines
 }
 
 /** How an existing entry is addressed: an exact text, or a unique substring of one. */
@@ -276,19 +366,44 @@ function mutationFor(operation: Exclude<MnemonReconcileOperation, { kind: 'docum
 }
 
 /**
+ * The positions in the plan a selection names, in plan order. A selection is a list
+ * of indexes into the plan; an index the plan does not hold is refused outright rather than
+ * dropped, because a caller who asked for the fifth operation and silently got four has been
+ * told their review was applied when part of it was not. Omitted means all of them.
+ */
+export function selectReconcileOperations(
+  operations: readonly MnemonReconcileOperation[],
+  selection?: readonly number[],
+): number[] {
+  if (selection === undefined) return operations.map((_operation, index) => index)
+  const chosen: number[] = []
+  for (const index of selection) {
+    if (!Number.isInteger(index) || index < 0 || index >= operations.length) {
+      throw new Error(`the review holds no operation at index ${String(index)}`)
+    }
+    if (!chosen.includes(index)) chosen.push(index)
+  }
+  return chosen.sort((left, right) => left - right)
+}
+
+/**
  * Replays an accepted proposal in the order it was written. A proposal is a plan: when one
  * operation fails the rest are not attempted, because continuing to mutate memory from a
  * plan that no longer holds is how a review turns into damage. The failure is reported with
- * the number of operations that did commit.
+ * the number of operations that did commit, and each failure names the operation's position
+ * in the plan rather than in the selection, so a reviewer can find it in what they read.
  */
 export async function applyReconcileOperations(
   operations: readonly MnemonReconcileOperation[],
   applier: MnemonReconcileApplier,
   signal: AbortSignal,
+  selection?: readonly number[],
 ): Promise<{ applied: number; failures: string[] }> {
+  const positions = selectReconcileOperations(operations, selection)
   let applied = 0
   const failures: string[] = []
-  for (const [index, operation] of operations.entries()) {
+  for (const index of positions) {
+    const operation = operations[index]!
     signal.throwIfAborted()
     try {
       if (operation.kind === 'document-archive') await applier.archive(operation.documentId, operation.reason, signal)

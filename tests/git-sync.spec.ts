@@ -46,6 +46,13 @@ function tickingClock(): { now: () => Date; reads: () => number } {
   }
 }
 
+/** The entries one data directory holds right now. */
+function entriesOf(root: string): string[] {
+  const path = join(root, 'runtime', 'memories.json')
+  if (!existsSync(path)) return []
+  return (JSON.parse(readFileSync(path, 'utf8')) as { entries: { content: string }[] }).entries.map(entry => entry.content)
+}
+
 /** One machine: a storage root, its pack manager and the sync channel over it. */
 async function machine(label: string, repository?: string, clock: () => Date = now, bridge?: MnemonSettingsBridge) {
   const root = temporary(label)
@@ -238,6 +245,132 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     expect(preview.components.find(entry => entry.component === 'runtime')?.changed).toBe(true)
     // A preview never touches the local payload.
     expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).not.toContain('Published profile')
+  })
+
+  it('lists the branch history as backups, each named by the manifest it carries', async () => {
+    const origin = await repository('sync-backups-remote')
+    const machineA = await machine('sync-backups-a', origin)
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefer concise answers', importance: 'normal' }, { confirmed: true })
+    const first = await machineA.sync.push({ message: 'Publish from A' })
+
+    // A branch that holds nothing is an empty history, not a failure.
+    const emptyOrigin = await repository('sync-backups-empty-remote')
+    const empty = await machine('sync-backups-empty', emptyOrigin)
+    expect(await empty.sync.backups()).toMatchObject({ branch: 'mnemon-sync', subdir: 'mnemon/', commits: [], truncated: false })
+
+    const machineB = await machine('sync-backups-b', origin)
+    await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Table output note', importance: 'normal' }, { confirmed: true })
+    const second = await machineB.sync.push({ message: 'Publish from B' })
+
+    const identityA = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
+    const identityB = JSON.parse(readFileSync(join(machineB.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
+    const history = await machineB.sync.backups()
+    expect(history.repoUrl).toBe(origin)
+    expect(history.truncated).toBe(false)
+    expect(history.commits.map(entry => entry.commit)).toEqual([second.commit, first.commit])
+    // The newest commit is the one this machine just wrote; the older one is A's.
+    expect(history.commits[0]).toMatchObject({ message: 'Publish from B', machine: { id: identityB.id, label: identityB.label } })
+    expect(history.commits[1]).toMatchObject({ message: 'Publish from A', machine: { id: identityA.id, label: identityA.label } })
+    expect(history.commits[1]!.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
+    expect(history.commits[1]!.components.find(entry => entry.component === 'runtime')).toMatchObject({ items: 1 })
+    expect(history.commits[1]!.committedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u)
+
+    // The history is a window, and the window says when it was cut short.
+    const one = await machineB.sync.backups({ limit: 1 })
+    expect(one.commits).toHaveLength(1)
+    expect(one.truncated).toBe(true)
+    expect((await machineB.sync.backups({ limit: 0 })).commits).toHaveLength(1)
+
+    // Reading the history moves neither the branch nor the reader's payload. The
+    // reader is a third machine that has never pushed, so nothing has folded into it.
+    const tip = (await git(['rev-parse', 'mnemon-sync'], origin)).trim()
+    const reader = await machine('sync-backups-reader', origin)
+    await reader.sync.backups()
+    expect((await git(['rev-parse', 'mnemon-sync'], origin)).trim()).toBe(tip)
+    const held = join(reader.root, 'runtime', 'USER.md')
+    expect(existsSync(held) ? readFileSync(held, 'utf8') : '').not.toContain('Prefer concise answers')
+  })
+
+  it('reports which memories are only here and which are only on the branch', async () => {
+    const origin = await repository('sync-diff-remote')
+    const machineA = await machine('sync-diff-a', origin)
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefer concise answers', importance: 'normal' }, { confirmed: true })
+    await machineA.sync.push({ message: 'Publish from A' })
+
+    const machineB = await machine('sync-diff-b', origin)
+    await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Local only note', importance: 'critical' }, { confirmed: true })
+    const identityA = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
+    const identityB = (await machineB.sync.status()).machine
+
+    const apart = await machineB.sync.diff()
+    expect(apart).toMatchObject({ repoUrl: origin, branch: 'mnemon-sync', subdir: 'mnemon/', shared: 0, truncated: false })
+    expect(apart.commit).toMatch(/^[0-9a-f]{40}$/u)
+    expect(apart.local).toMatchObject({ entries: 1, machine: { id: identityB.id } })
+    expect(apart.remote).toMatchObject({ entries: 1, machine: { id: identityA.id, label: identityA.label } })
+    expect(apart.localOnly.map(entry => entry.content)).toEqual(['Local only note'])
+    expect(apart.localOnly[0]).toMatchObject({ target: 'memory', importance: 'critical' })
+    expect(apart.remoteOnly.map(entry => entry.content)).toEqual(['Prefer concise answers'])
+    expect(apart.remoteOnly[0]!.origin).toMatchObject({ machine: identityA.id, label: identityA.label })
+    expect(apart.remoteTombstones).toEqual([])
+    // Reading a difference never imports anything.
+    expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).not.toContain('Prefer concise answers')
+
+    // Importing the branch does not change the branch: it still holds A's entry alone,
+    // while this machine now holds both.
+    await machineB.sync.pull({ mode: 'merge' })
+    const imported = await machineB.sync.diff()
+    expect(imported, 'after pull').toMatchObject({ shared: 1, localOnly: [{ content: 'Local only note' }], remoteOnly: [] })
+    expect(imported.local.entries).toBe(2)
+    expect(imported.remote.entries).toBe(1)
+
+    // Publishing is what makes the branch hold both machines' memories.
+    await machineB.sync.push({ message: 'Publish from B' })
+    const merged = await machineB.sync.diff()
+    expect(merged, 'after push').toMatchObject({ shared: 2, localOnly: [], remoteOnly: [] })
+    expect(merged.local.entries).toBe(2)
+    expect(merged.remote.entries).toBe(2)
+
+    // Without a repository there is no difference to read, and it says so.
+    const loose = await machine('sync-diff-unconfigured')
+    await expect(loose.sync.diff()).rejects.toThrow('no sync repository is configured')
+    await expect(loose.sync.backups()).rejects.toThrow('no sync repository is configured')
+  })
+
+  it('counts only the removals this machine has not applied yet', async () => {
+    // The Source stamps an entry with the real clock, and a deletion only hides an entry
+    // written no later than it. A clock ahead of the fixture's writes is what makes the
+    // deletion a deletion instead of a re-publication.
+    const ahead = () => new Date('2030-01-01T00:00:00.000Z')
+    const origin = await repository('sync-diff-removal-remote')
+    const machineA = await machine('sync-diff-removal-a', origin, ahead)
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefer concise answers', importance: 'normal' }, { confirmed: true })
+    await machineA.sync.push({ message: 'Publish from A' })
+
+    const machineB = await machine('sync-diff-removal-b', origin, ahead)
+    await machineB.sync.pull({ mode: 'merge' })
+
+    // A deletes what it published, so the branch carries a removal as well as its entries.
+    // Publishing is what records the deletion: the branch still holds the entry, so a push
+    // that folded it in first would restore it and report no removal at all.
+    await machineA.sources.runtime.mutate('mutate', { action: 'remove', target: 'user', oldText: 'Prefer concise answers' }, { confirmed: true })
+    const removal = await machineA.sync.push({ message: 'Delete on A' })
+    expect(removal.committed, 'the deletion is a new commit').toBe(true)
+    expect(removal.merged?.tombstones).toBe(0)
+    expect(entriesOf(machineA.root)).toEqual([])
+
+    // B has not read that commit: the removal is one this machine has not applied.
+    const unread = await machineB.sync.diff()
+    expect(unread.remoteTombstones.map(tombstone => tombstone.target)).toEqual(['user'])
+    expect(unread.remote.entries).toBe(0)
+
+    // Reading the branch applies the removal. Tombstones only ever grow, so the branch
+    // still carries it; what changes is that this machine now holds it too, and a removal
+    // both sides hold is not something left to reconcile.
+    await machineB.sync.pull({ mode: 'merge' })
+    const applied = await machineB.sync.diff()
+    expect(applied.remoteTombstones).toEqual([])
+    expect(applied.local.entries).toBe(0)
+    expect(applied.remote.entries).toBe(0)
   })
 
   it('fails hard and imports nothing when a payload file does not match its checksum', async () => {

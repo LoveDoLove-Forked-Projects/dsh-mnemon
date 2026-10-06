@@ -717,6 +717,15 @@ export interface MnemonReviewApplyResult {
   failures: string[]
 }
 
+/** What a reconciliation run is told beyond the memory it reads. */
+export interface MnemonReconcileOptions {
+  /**
+   * The reviewer's own words: what the plan should accomplish. It shapes the plan and
+   * never widens it - the host still decides what an operation may contain.
+   */
+  guidance?: string
+}
+
 /** What one reconciliation run produced. A run with no findings creates no review. */
 export interface MnemonReconcileResult {
   /** One line a reviewer scans in the ledger list. */
@@ -726,6 +735,10 @@ export interface MnemonReconcileResult {
   /** How many operations the proposal holds; the review entry carries the details. */
   operations: number
   foreignMachines: string[]
+  /** How many entries the branch held that this installation had not merged, when it could be read. */
+  remoteEntries?: number
+  /** Whether the plan was given the reviewer's own words to follow. */
+  guided?: boolean
   entry?: MnemonReviewEntry
   provider: string
   runId: string
@@ -924,6 +937,69 @@ export interface MnemonSyncPullResult {
   targetRoot: string
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
+}
+
+/**
+ * One commit on the sync branch that carries a Mnemon payload. The manifest inside
+ * the commit is what says which installation published it and what it held; the
+ * commit itself only says when and with which message.
+ */
+export interface MnemonSyncBackup {
+  commit: string
+  message: string
+  committedAt: string
+  /** The installation that published this backup, when the manifest names one. */
+  machine?: MnemonMachineIdentity
+  pushedAt?: string
+  components: MnemonPackComponentSummary[]
+}
+
+export interface MnemonSyncBackupList {
+  repoUrl: string
+  branch: string
+  subdir: string
+  commits: MnemonSyncBackup[]
+  /** Whether commits older than the requested window exist on the branch. */
+  truncated: boolean
+}
+
+/** One runtime entry, as a difference between this machine and the branch shows it. */
+export interface MnemonSyncDiffEntry {
+  target: 'memory' | 'user'
+  content: string
+  importance: 'critical' | 'normal' | 'low'
+  /** Which installation wrote it, when that is not this machine. */
+  origin?: MnemonEntryOrigin
+}
+
+export interface MnemonSyncDiffSide {
+  /** The manifest identity of the side: this machine's export, or the commit. */
+  exportedAt: string
+  entries: number
+  machine?: MnemonMachineIdentity
+}
+
+/**
+ * What this machine holds and the branch tip holds, stated as entries rather than
+ * as bytes: which memories are only here, which are only there, and which removals
+ * the branch recorded that this machine has not applied.
+ */
+export interface MnemonSyncDiff {
+  repoUrl: string
+  branch: string
+  subdir: string
+  commit: string
+  pushedAt?: string
+  localExportAt: string
+  local: MnemonSyncDiffSide
+  remote: MnemonSyncDiffSide
+  localOnly: MnemonSyncDiffEntry[]
+  remoteOnly: MnemonSyncDiffEntry[]
+  /** How many entries both sides hold, compared by target and content. */
+  shared: number
+  /** Whether a side held more differences than this response lists. */
+  truncated: boolean
+  remoteTombstones: MnemonTombstone[]
 }
 
 export type VersionPackageId = `dsh-mnemon-${'source' | 'strategy' | 'provider'}-${string}`

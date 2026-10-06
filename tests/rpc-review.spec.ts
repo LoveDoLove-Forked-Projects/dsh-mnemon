@@ -182,12 +182,16 @@ describe('Mnemon review endpoints', () => {
     const handler = createReviewHandler(f.runtime, lifecycle({ reconcile }))
 
     expect(await handler('reconcile', { workspaceId: '/fixture/workspace' })).toMatchObject({ ok: true, value: result })
-    expect(reconcile).toHaveBeenCalledWith(f.graph, { storage: 'global', workspaceId: '/fixture/workspace' }, expect.any(AbortSignal))
+    expect(reconcile).toHaveBeenCalledWith(f.graph, { storage: 'global', workspaceId: '/fixture/workspace' }, expect.any(AbortSignal), {})
+    // The reviewer's words reach the run that plans, and nothing else about it changes.
+    expect(await handler('reconcile', { workspaceId: '/fixture/workspace', guidance: 'Merge the two answers.' })).toMatchObject({ ok: true, value: result })
+    expect(reconcile).toHaveBeenLastCalledWith(f.graph, { storage: 'global', workspaceId: '/fixture/workspace' }, expect.any(AbortSignal), { guidance: 'Merge the two answers.' })
+    expect(await handler('reconcile', { workspaceId: '/fixture/workspace', guidance: 7 })).toMatchObject({ ok: false, error: { message: 'the reconciliation guidance must be a string' } })
     expect(await createReviewHandler(f.runtime)('reconcile', {})).toMatchObject({ ok: false, error: { message: 'Mnemon memory reconciliation is unavailable' } })
 
     const readonly = fixture({ writeEnabled: false })
     expect(await createReviewHandler(readonly.runtime, lifecycle({ reconcile }))('reconcile', {})).toMatchObject({ ok: false, error: { message: expect.stringContaining('read-only') } })
-    expect(reconcile).toHaveBeenCalledTimes(1)
+    expect(reconcile).toHaveBeenCalledTimes(2)
   })
 
   it('applies an accepted review operation by operation', async () => {
@@ -204,6 +208,30 @@ describe('Mnemon review endpoints', () => {
     expect(applied).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
     expect(f.runtimeSource.mutate).toHaveBeenCalledWith('mutate', { action: 'remove', target: 'user', oldText: 'Prefer short answers' }, expect.any(AbortSignal))
     expect(f.ledger.get(entry.id)).toMatchObject({ status: 'accepted', appliedAt: expect.any(String) })
+  })
+
+  it('applies only the operations the reviewer selected, and refuses an index the plan does not hold', async () => {
+    const f = fixture()
+    const entry = f.ledger.create({ ...proposal, operations: [
+      { kind: 'runtime-remove', target: 'user', oldText: 'Prefer short answers', reason: 'Superseded.' },
+      { kind: 'runtime-remove', target: 'user', oldText: 'Prefer concise answers', reason: 'Superseded.' },
+    ] })
+    f.ledger.decide(entry.id, 'accepted')
+    const handler = createReviewHandler(f.runtime, lifecycle())
+
+    // A caller that believes it applied the whole review must not be told a subset did.
+    expect(await handler('apply', { id: entry.id, operations: [2] })).toMatchObject({ ok: false, error: { message: 'the review holds no operation at index 2' } })
+    expect(await handler('apply', { id: entry.id, operations: 'all' })).toMatchObject({ ok: false, error: { message: 'the operations to apply must be a list of operation indexes' } })
+    expect(f.runtimeSource.mutate).not.toHaveBeenCalled()
+
+    expect(await handler('apply', { id: entry.id, operations: [1] })).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
+    expect(f.runtimeSource.mutate).toHaveBeenCalledTimes(1)
+    expect(f.runtimeSource.mutate).toHaveBeenCalledWith('mutate', { action: 'remove', target: 'user', oldText: 'Prefer concise answers' }, expect.any(AbortSignal))
+    // The review stays accepted and keeps the operations that were not applied.
+    expect(f.ledger.get(entry.id)).toMatchObject({ status: 'accepted', operations: [{ oldText: 'Prefer short answers' }, { oldText: 'Prefer concise answers' }] })
+
+    expect(await handler('apply', { id: entry.id, operations: [0] })).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
+    expect(f.runtimeSource.mutate).toHaveBeenLastCalledWith('mutate', { action: 'remove', target: 'user', oldText: 'Prefer short answers' }, expect.any(AbortSignal))
   })
 
   it('records the failure and stops at the operation that no longer holds', async () => {

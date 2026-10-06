@@ -213,6 +213,8 @@ Backups contain private memory, so callers must treat the authenticated DSH brow
 | `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` and `credentialSource`. An empty `branch` or `subdir` restores that field's default, and an empty author falls back to the Git identity of the machine |
 | `push` | Export the full Mnemon Pack payload into the mirror, commit it and push the branch; requires `confirmed: true` |
 | `preview` | Read the remote manifest and its SHA-256 inventory and report which components differ from local; read-only |
+| `backups` | Walk the branch history newest first and name each commit by the Pack manifest it carries: commit, message, time, the machine that published it, the push time and the component summary. An optional `limit` bounds the page and `truncated` says the branch holds more; a commit whose manifest cannot be read is skipped; read-only |
+| `diff` | Compare the local payload with the branch payload entry by entry: both sides' export time, entry count and machine, the entries only here, the entries only there, how many they share, and the removals the branch recorded that this installation has not carried out yet; read-only |
 | `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts an optional one-off `components` parameter |
 | `github-status` | Whether this Host mounts a credentials store, whether an account is signed in, whether that store is writable, the account login and scopes, and the pending device-flow code; read-only |
 | `github-start` | Ask GitHub for a device code and return the code, the verification URL and the poll interval; requires `writeEnabled: true` |
@@ -236,8 +238,8 @@ Configuration, credentials and the failure semantics are described under [Backup
 | `opinion` | Append one opinion to a proposal; the author is `user` unless the caller asks for `agent` |
 | `decide` | Accept or reject a pending proposal |
 | `reopen` | Return a decided proposal to `pending` |
-| `reconcile` | Run one reconciliation over the merged local memory and stage the plan as a new pending entry; requires `writeEnabled` |
-| `apply` | Apply the operations of an accepted proposal, stopping at the first failure; requires `writeEnabled` |
+| `reconcile` | Run one reconciliation over the merged local memory and stage the plan as a new pending entry. An optional `guidance` string states what the plan should accomplish, and the evidence then also carries what the sync branch holds and this installation does not, plus the opinions already recorded on pending proposals; requires `writeEnabled` |
+| `apply` | Apply the operations of an accepted proposal, stopping at the first failure. An optional `operations` array of plan positions applies only those, so a reviewer can take part of a plan; requires `writeEnabled` |
 
 A reconciliation never writes memory by itself: the model returns a plan, the plan is recorded as a proposal, and only `apply` on an accepted proposal touches a Source. `view`, `opinion`, `decide` and `reopen` work on a read-only Host as well, because they only edit the ledger under `state/`. The ledger is not a Pack component, so no proposal ever syncs to another machine.
 

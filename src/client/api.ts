@@ -28,7 +28,9 @@ import {
   type MnemonReviewEntry,
   type MnemonReviewLedgerView,
   type MnemonStorageMigration,
+  type MnemonSyncBackupList,
   type MnemonSyncConfigView,
+  type MnemonSyncDiff,
   type MnemonSyncGitHubPoll,
   type MnemonSyncGitHubRepository,
   type MnemonSyncGitHubRepositoryList,
@@ -209,9 +211,14 @@ export class MnemonClient {
     return this.call(MNEMON_REVIEW_CHANNEL, 'view', {})
   }
 
-  /** One reconciliation run: it stages a proposal and writes no memory. */
-  reconcile(): Promise<MnemonReconcileResult> {
-    return this.call(MNEMON_REVIEW_CHANNEL, 'reconcile', this.scoped())
+  /**
+   * One reconciliation run: it stages a proposal and writes no memory. Guidance is what
+   * the reviewer wants the plan to accomplish, in their own words; blank means the plan
+   * reads the memory and the branch with no instruction beyond its own rules.
+   */
+  reconcile(guidance?: string): Promise<MnemonReconcileResult> {
+    const text = guidance?.trim() ?? ''
+    return this.call(MNEMON_REVIEW_CHANNEL, 'reconcile', this.scoped(text === '' ? {} : { guidance: text }))
   }
 
   reviewOpinion(id: string, text: string, author: 'user' | 'agent' = 'user'): Promise<MnemonReviewEntry> {
@@ -226,8 +233,9 @@ export class MnemonClient {
     return this.call(MNEMON_REVIEW_CHANNEL, 'reopen', { id })
   }
 
-  applyReview(id: string): Promise<MnemonReviewApplyResult> {
-    return this.call(MNEMON_REVIEW_CHANNEL, 'apply', this.scoped({ id }))
+  /** Applying a subset leaves the rest in the entry, which stays accepted. */
+  applyReview(id: string, operations?: number[]): Promise<MnemonReviewApplyResult> {
+    return this.call(MNEMON_REVIEW_CHANNEL, 'apply', this.scoped({ id, ...(operations === undefined ? {} : { operations }) }))
   }
 
   syncStatus(): Promise<MnemonSyncStatus> {
@@ -245,6 +253,16 @@ export class MnemonClient {
 
   previewSync(): Promise<MnemonSyncPreview> {
     return this.call(MNEMON_SYNC_CHANNEL, 'preview', this.scoped())
+  }
+
+  /** The commits on the branch that carry a payload, newest first. */
+  syncBackups(limit?: number): Promise<MnemonSyncBackupList> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'backups', this.scoped(limit === undefined ? {} : { limit }))
+  }
+
+  /** Which memories are only here and which are only on the branch. */
+  syncDiff(): Promise<MnemonSyncDiff> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'diff', this.scoped())
   }
 
   pullSync(components?: MnemonPackComponent[]): Promise<MnemonSyncPullResult> {

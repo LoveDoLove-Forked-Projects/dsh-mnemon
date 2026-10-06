@@ -4,12 +4,18 @@ import { join, resolve } from 'node:path'
 import { zipSync, unzipSync, type Unzipped } from 'fflate'
 import type { ResolvedConfig } from './config.ts'
 import { runProcess, type ProcessRunner } from './process.ts'
-import { MnemonPackManager, MNEMON_PACK_MAX_EXPANDED_BYTES } from './pack.ts'
+import {
+  MnemonPackManager, MNEMON_PACK_MAX_EXPANDED_BYTES, RUNTIME_MEMORIES_PATH, RUNTIME_TOMBSTONE_PATH,
+  entryKey, parseManifest as parseManifestJson, parseRuntime, parseTombstones, tombstoneCovers, tombstoneKey,
+  type RuntimeFile, type StoredRuntimeEntry,
+} from './pack.ts'
 import type {
-  MnemonPackComponent, MnemonPackImportMode, MnemonPackManifest, MnemonSyncComponentDelta, MnemonSyncConfigView,
-  MnemonSyncCredentialSource, MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview, MnemonSyncPullResult,
-  MnemonSyncPushResult, MnemonSyncRemoteStatus, MnemonSyncStatus,
+  MnemonPackComponent, MnemonPackImportMode, MnemonPackManifest, MnemonSyncBackup, MnemonSyncBackupList,
+  MnemonSyncComponentDelta, MnemonSyncConfigView, MnemonSyncCredentialSource, MnemonSyncDiff, MnemonSyncDiffEntry,
+  MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview, MnemonSyncPullResult, MnemonSyncPushResult,
+  MnemonSyncRemoteStatus, MnemonSyncStatus, MnemonTombstone, MnemonTombstoneFile,
 } from './protocol.ts'
+import { RUNTIME_MEMORY_LIMITS, type RuntimeMemoryLimits } from 'dsh-mnemon-source-runtime/contracts'
 import { MNEMON_PACK_COMPONENTS, MNEMON_SYNC_TOKEN_ENV } from './protocol.ts'
 import { MnemonGitHubAuth } from './github-auth.ts'
 import { MnemonMachineStore } from './machine-identity.ts'
@@ -28,6 +34,12 @@ const MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 const MAX_PAYLOAD_BYTES = 256 * 1024 * 1024
 const MAX_FILE_BYTES = 128 * 1024 * 1024
 const LOCK_TIMEOUT_MS = 30_000
+/** One log page stays well under the process output cap, and the reader sees the newest first. */
+const MAX_BACKUPS = 100
+const DEFAULT_BACKUP_LIMIT = 20
+/** How many older commits a page says it withheld before it stops paying for the walk. */
+const BACKUP_WALK_LIMIT = 200
+const MAX_DIFF_ENTRIES = 200
 /** Git on Windows would otherwise rewrite line endings and break every checksum. */
 const NO_REWRITE = ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf']
 /**
@@ -68,6 +80,8 @@ interface GitOptions {
   signal?: AbortSignal | undefined
   token?: string | undefined
   authenticated?: boolean | undefined
+  /** Raised for the one command that legitimately prints a whole payload file back out of a commit. */
+  maxOutputBytes?: number | undefined
 }
 
 interface MnemonSyncRemoteExtension {
@@ -206,12 +220,98 @@ function shellQuote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'"
 }
 
+/** The empty projection the runtime contract publishes when one side carries no entries. */
+function emptyRuntime(): RuntimeFile {
+  return { version: 1, entries: [] }
+}
+
+function emptyTombstones(): MnemonTombstoneFile {
+  return { version: 1, tombstones: [] }
+}
+
+/**
+ * The runtime payload one commit holds. The mirror is already at the branch tip,
+ * so reading a file out of a commit never moves the work tree, the index, or
+ * `HEAD` — which is what keeps `git status --porcelain` empty for the next push.
+ * `git show` on a path the commit does not hold fails, so the payload's own
+ * absence is the empty projection rather than an error.
+ */
+function showText(stdout: string): Uint8Array {
+  return new TextEncoder().encode(stdout)
+}
+
 function parseJson(bytes: Uint8Array, label: string): unknown {
   try {
     return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown
   } catch {
     throw new Error(label + ' is not valid JSON')
   }
+}
+
+/** How many commits one page asks for: the caller's window, clamped to what one listing should carry. */
+function backupLimit(value: unknown): number {
+  const requested = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : DEFAULT_BACKUP_LIMIT
+  return Math.min(Math.max(requested, 1), MAX_BACKUPS)
+}
+
+/** One `git log` row: the commit, when it was made, and the message its author chose. */
+interface CommitRow {
+  commit: string
+  committedAt: string
+  message: string
+}
+
+/** One entry as a difference shows it: its text and the installation that wrote it, never its bookkeeping. */
+function diffEntry(entry: StoredRuntimeEntry): MnemonSyncDiffEntry {
+  return {
+    target: entry.target,
+    content: entry.content,
+    importance: entry.importance,
+    ...(entry.origin === undefined ? {} : { origin: entry.origin }),
+  }
+}
+
+/**
+ * The runtime projection one side of a diff carries, read through the same parser
+ * an import uses. A side without the file holds nothing; a side whose file does not
+ * parse is a failure the caller names, because "no entries" and "unreadable entries"
+ * must never look alike in a merge decision.
+ */
+function runtimeOf(files: Record<string, Uint8Array>, limits: RuntimeMemoryLimits, label: string): RuntimeFile {
+  const bytes = files[RUNTIME_MEMORIES_PATH]
+  if (bytes === undefined) return emptyRuntime()
+  try {
+    return parseRuntime(parseJson(bytes, label + ' runtime memories.json'), limits)
+  } catch (error) {
+    throw new Error(label + ' runtime memories.json is invalid: ' + (error instanceof Error ? error.message : String(error)))
+  }
+}
+
+/** The removals the branch recorded. A missing or unreadable file means it recorded none. */
+function tombstonesOf(files: Record<string, Uint8Array>): MnemonTombstone[] {
+  const bytes = files[RUNTIME_TOMBSTONE_PATH]
+  if (bytes === undefined) return []
+  try {
+    return parseTombstones(parseJson(bytes, 'runtime tombstones.json')).tombstones
+  } catch {
+    return []
+  }
+}
+
+/**
+ * The removals this machine has not applied yet. The branch carries every removal both
+ * sides ever recorded — tombstones only grow — so the raw file is not the answer to "what
+ * does the branch know that I do not". A removal this machine already applied is not
+ * outstanding, and one this machine has since written over no longer hides anything.
+ * What remains is what the branch recorded and this machine has not carried out.
+ */
+function unappliedRemovals(local: Record<string, Uint8Array>, remote: Record<string, Uint8Array>): MnemonTombstone[] {
+  const mine = tombstonesOf(local)
+  const held = new Set(mine.map(tombstoneKey))
+  const entries = runtimeOf(local, RUNTIME_MEMORY_LIMITS, 'the local').entries
+  return tombstonesOf(remote).filter(tombstone =>
+    !held.has(tombstoneKey(tombstone)) && entries.some(entry => tombstoneCovers(tombstone, entry)),
+  )
 }
 
 /** Read every file below one directory as forward-slash keyed bytes. */
@@ -368,6 +468,10 @@ export class MnemonGitSync {
     const message = commitMessage(input.message, this.now())
     return this.lock(async () => {
       const prepared = await this.ensureMirror(settings, input.signal)
+      // The deletions this machine made since its last export have to be recorded before
+      // the branch is folded in: the merge would otherwise restore an entry this machine
+      // deleted, and the export that follows would report no removal at all.
+      await this.packs.recordDeletions()
       const remote = await this.readRemote(settings, input.signal)
       let merged: MnemonSyncPushResult['merged']
       if (remote !== undefined) {
@@ -450,6 +554,100 @@ export class MnemonGitSync {
         components, files: compareFiles(remote.files, local), localExportAt: exported.manifest.exportedAt,
       }
     })
+  }
+
+  /**
+   * The commits on the branch that carry a Mnemon payload, newest first. The commit
+   * message is whatever its author typed, so the manifest inside the commit is what
+   * names the installation and says what the backup held. A commit whose manifest is
+   * missing or unreadable is not a backup and is skipped rather than reported empty.
+   */
+  async backups(input: { limit?: number } = {}, signal?: AbortSignal): Promise<MnemonSyncBackupList> {
+    const settings = this.requireRepository()
+    await this.requireGit(signal)
+    const limit = backupLimit(input.limit)
+    return this.lock(async () => {
+      // A branch with no payload yet is an empty history, not a failure: the reader
+      // is asking what exists, and nothing existing is a valid answer.
+      const prepared = await this.ensureMirror(settings, signal)
+      const commits: MnemonSyncBackup[] = []
+      let truncated = false
+      if (prepared.tip !== undefined) {
+        const rows = await this.log(settings.subdir, limit + 1, signal)
+        truncated = rows.length > limit
+        for (const row of rows.slice(0, limit)) {
+          const backup = await this.backup(row, settings.subdir, signal)
+          if (backup !== undefined) commits.push(backup)
+        }
+      }
+      return { repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir, commits, truncated }
+    })
+  }
+
+  /**
+   * What this machine holds and the branch tip holds, stated as entries. The byte-level
+   * difference already lives in the preview; this answers the question a person asks
+   * before merging — which memories are only here, which are only there, and which
+   * removals the branch recorded that this machine has not applied.
+   */
+  async diff(signal?: AbortSignal): Promise<MnemonSyncDiff> {
+    const settings = this.requireRepository()
+    await this.requireGit(signal)
+    const exported = await this.packs.exportPack('full')
+    return this.lock(async () => {
+      const remote = await this.readRemote(settings, signal)
+      if (remote === undefined) throw new Error(this.absentPayload(settings))
+      const local = unpack(Buffer.from(exported.base64, 'base64'))
+      const limits = this.runtimeLimits()
+      const mine = runtimeOf(local, limits, 'the local')
+      const theirs = runtimeOf(remote.files, limits, 'the remote')
+      const mineKeys = new Set(mine.entries.map(entry => entryKey(entry)))
+      const theirsKeys = new Set(theirs.entries.map(entry => entryKey(entry)))
+      const localOnly: MnemonSyncDiffEntry[] = []
+      const remoteOnly: MnemonSyncDiffEntry[] = []
+      let shared = 0
+      for (const entry of mine.entries) {
+        if (theirsKeys.has(entryKey(entry))) shared += 1
+        else if (localOnly.length < MAX_DIFF_ENTRIES) localOnly.push(diffEntry(entry))
+      }
+      for (const entry of theirs.entries) {
+        if (!mineKeys.has(entryKey(entry)) && remoteOnly.length < MAX_DIFF_ENTRIES) remoteOnly.push(diffEntry(entry))
+      }
+      return {
+        repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir,
+        commit: remote.commit, ...(remote.pushedAt === undefined ? {} : { pushedAt: remote.pushedAt }),
+        localExportAt: exported.manifest.exportedAt,
+        local: {
+          exportedAt: exported.manifest.exportedAt, entries: mine.entries.length,
+          ...(exported.manifest.machine === undefined ? {} : { machine: exported.manifest.machine }),
+        },
+        remote: {
+          exportedAt: remote.manifest.exportedAt, entries: theirs.entries.length,
+          ...(remote.manifest.machine === undefined ? {} : { machine: remote.manifest.machine }),
+        },
+        localOnly, remoteOnly, shared,
+        // A page that stopped early must say so: a reader who cannot tell a complete
+        // difference from a cut-off one will merge on evidence that was never shown.
+        truncated: mine.entries.length - shared > localOnly.length || theirs.entries.length - shared > remoteOnly.length,
+        remoteTombstones: unappliedRemovals(local, remote.files),
+      }
+    })
+  }
+
+  /**
+   * The branch side of the difference, for a planner that reads it as evidence rather
+   * than as an answer. Every reason the difference cannot be read — no repository, no
+   * git, an unpublished branch, an unreadable payload — means the same thing here: the
+   * plan is local, exactly as it was before the branch could be read at all. Cancelling
+   * the run is the one failure that still propagates.
+   */
+  async readRemoteForEvidence(signal?: AbortSignal): Promise<MnemonSyncDiff | undefined> {
+    try {
+      return await this.diff(signal)
+    } catch (error) {
+      if (signal?.aborted === true) throw error
+      return undefined
+    }
   }
 
   /** Preview the remote payload, then merge it through the importer Import ZIP uses. */
@@ -540,6 +738,70 @@ export class MnemonGitSync {
     const result = await this.git(['rev-parse', 'HEAD'], { cwd: this.store.mirror(), signal })
     if (result.exitCode !== 0) throw new Error('the sync mirror has no commit yet: ' + tail(result.stderr || result.stdout))
     return result.stdout.trim()
+  }
+
+  /**
+   * The commits that touched the payload directory, newest first, as raw log rows.
+   * Path filtering is what makes this the backup history rather than the branch's
+   * whole history: a commit that never touched the payload is not a backup.
+   */
+  private async log(subdir: string, count: number, signal?: AbortSignal): Promise<CommitRow[]> {
+    const result = await this.git(
+      ['log', '--max-count=' + String(Math.min(count, BACKUP_WALK_LIMIT)), '--format=%H%x1f%cI%x1f%s', '--', subdir],
+      { cwd: this.store.mirror(), signal },
+    )
+    if (result.exitCode !== 0) throw new Error('git log failed: ' + tail(result.stderr || result.stdout))
+    const rows: CommitRow[] = []
+    for (const line of result.stdout.split('\n')) {
+      if (line.trim() === '') continue
+      const [commit, committedAt, message] = line.split('\u001f')
+      if (commit === undefined || commit === '') continue
+      rows.push({ commit, committedAt: committedAt ?? '', message: message ?? '' })
+    }
+    return rows
+  }
+
+  /**
+   * One file out of one commit, or nothing when that commit does not hold it.
+   * Reading through the object store is what keeps the work tree, the index, and
+   * `HEAD` untouched, so the next push still sees a clean tree.
+   */
+  private async show(commit: string, path: string, signal?: AbortSignal): Promise<Uint8Array | undefined> {
+    const result = await this.git(['show', commit + ':' + path], {
+      cwd: this.store.mirror(), signal, maxOutputBytes: MAX_FILE_BYTES,
+    })
+    if (result.exitCode !== 0) return undefined
+    return showText(result.stdout)
+  }
+
+  /** One commit as a backup, or nothing when it does not actually carry a readable manifest. */
+  private async backup(row: CommitRow, subdir: string, signal?: AbortSignal): Promise<MnemonSyncBackup | undefined> {
+    const bytes = await this.show(row.commit, subdir + MANIFEST, signal)
+    if (bytes === undefined) return undefined
+    let manifest: MnemonPackManifest
+    let pushedAt: string | undefined
+    try {
+      const raw = record(parseJson(bytes, 'the backup manifest'))
+      if (raw === undefined) return undefined
+      // The manifest parser rebuilds its result and drops unknown top-level fields,
+      // so the sync extension is read off the raw object, exactly as the tip is.
+      const extension = record(raw[SYNC_EXTENSION])
+      pushedAt = typeof extension?.pushedAt === 'string' ? extension.pushedAt : undefined
+      manifest = parseManifestJson(raw)
+    } catch {
+      return undefined
+    }
+    return {
+      commit: row.commit, message: row.message, committedAt: row.committedAt,
+      ...(manifest.machine === undefined ? {} : { machine: manifest.machine }),
+      ...(pushedAt === undefined ? {} : { pushedAt }),
+      components: manifest.summary,
+    }
+  }
+
+  /** The runtime byte budgets this installation enforces, so a remote payload is read by the same rules. */
+  private runtimeLimits(): RuntimeMemoryLimits {
+    return { memory: this.config.runtimeMemory.memoryLimitBytes, user: this.config.runtimeMemory.userLimitBytes }
   }
 
   /** Create or refresh the disposable mirror, and return the remote tip when the branch exists. */
@@ -660,6 +922,7 @@ export class MnemonGitSync {
         env: gitEnvironment(),
         ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.maxOutputBytes === undefined ? {} : { maxOutputBytes: options.maxOutputBytes }),
         label: GIT_LABEL,
       })
       return result

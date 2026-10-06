@@ -213,6 +213,8 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 | `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` 与 `credentialSource`。分支或远端目录传空会恢复该字段的默认值，提交者传空则使用本机 Git 身份 |
 | `push` | 把完整的 Mnemon Pack 载荷导出到镜像，提交并推送分支；需要 `confirmed: true` |
 | `preview` | 读取远端 manifest 与 SHA-256 清单，报告哪些组件与本地不同；只读 |
+| `backups` | 由新到旧遍历分支历史，用该提交携带的 Pack manifest 说明每次备份：提交号、说明、时间、发布它的机器、推送时间与组件摘要。可选 `limit` 限制返回条数，`truncated` 表示分支上还有更多；manifest 读不出来的提交会被跳过；只读 |
+| `diff` | 逐条比较本地载荷与分支载荷：两侧的导出时间、条目数与机器，只在本机的条目、只在远端的条目、共有条数，以及分支记录、而本机尚未执行的删除；只读 |
 | `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` |
 | `github-status` | 当前 Host 是否挂载了凭据存储、是否已登录账号、该存储是否可写、账号名与 scope，以及待完成的设备码；只读 |
 | `github-start` | 向 GitHub 申请设备码，返回设备码、验证地址与轮询间隔；需要 `writeEnabled: true` |
@@ -236,8 +238,8 @@ token 不会出现在任何响应或错误信息中。通道在每次网络操�
 | `opinion` | 为某条建议追加一条意见；除非调用方指定 `agent`，作者记为 `user` |
 | `decide` | 接受或拒绝一条待审查建议 |
 | `reopen` | 把已决定的建议退回 `pending` |
-| `reconcile` | 对合并后的本机记忆执行一次整理，把计划暂存为新的待审查条目；需要 `writeEnabled` |
-| `apply` | 执行已接受建议的操作，遇到第一个失败即停止；需要 `writeEnabled` |
+| `reconcile` | 对合并后的本机记忆执行一次整理，把计划暂存为新的待审查条目。可选 `guidance` 字符串说明计划要达成什么，证据中还会带上同步分支持有、本机没有的条目，以及待审查建议上已记录的意见；需要 `writeEnabled` |
+| `apply` | 执行已接受建议的操作，遇到第一个失败即停止。可选 `operations` 数组给出计划中的位置，只执行这些操作，因此审查者可以只采纳计划的一部分；需要 `writeEnabled` |
 
 整理本身从不写记忆：模型返回计划，计划被记录为一条建议，只有对已接受的建议执行 `apply` 才会触碰 Source。`view`、`opinion`、`decide` 与 `reopen` 在只读 Host 上同样可用，因为它们只编辑 `state/` 下的账本。账本不是 Pack 组件，因此任何建议都不会同步到其他机器。
 

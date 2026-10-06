@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type JSX } from 'react'
 import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
-import { type ClientConnectionHandle, type MnemonReconcileOperation, type MnemonReviewLedgerView, type MnemonReviewStatus } from '../host/protocol.ts'
+import { type ClientConnectionHandle, type MnemonReconcileOperation, type MnemonReviewEntry, type MnemonReviewLedgerView, type MnemonReviewStatus } from '../host/protocol.ts'
 import { MnemonClient } from './api.ts'
 import type { MnemonTranslate } from './locales.ts'
 import css from './MnemonSettingsCard.module.css'
@@ -56,6 +56,9 @@ function stamp(value: string): string {
  * The proposal is evidence, not an instruction: it changes nothing until the
  * user accepts it, and the user can leave an opinion on it either way, which
  * the next reconciliation run reads back as part of its own evidence.
+ *
+ * The reviewer also states what the run should accomplish, and picks which of
+ * the proposed changes are actually applied; the rest stay in the ledger.
  */
 export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Element {
   const { t } = props
@@ -67,8 +70,12 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
   const [openId, setOpenId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
+  // The page's own refusal is not a Host failure, so it never borrows that wording.
+  const [complaint, setComplaint] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [opinion, setOpinion] = useState('')
+  const [guidance, setGuidance] = useState('')
+  const [chosen, setChosen] = useState<Record<string, number[]>>({})
 
   const refresh = useCallback(async (): Promise<void> => {
     if (client === null) return
@@ -89,18 +96,39 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
     if (client === null) return
     setBusy(id)
     setFailed(null)
+    setComplaint(null)
     setNotice(null)
     void work(client).then(refresh).catch(reason => setFailed(message(reason))).finally(() => setBusy(null))
+  }
+
+  /** Every position the plan holds, which is what an untouched review applies. */
+  const allOf = (entry: MnemonReviewEntry): number[] => entry.operations.map((_, index) => index)
+
+  const selectionOf = (entry: MnemonReviewEntry): number[] => chosen[entry.id] ?? allOf(entry)
+
+  const keep = (entry: MnemonReviewEntry, next: number[]): void => {
+    setChosen(previous => ({ ...previous, [entry.id]: next.sort((left, right) => left - right) }))
+  }
+
+  const toggle = (entry: MnemonReviewEntry, index: number): void => {
+    const current = selectionOf(entry)
+    keep(entry, current.includes(index) ? current.filter(item => item !== index) : [...current, index])
   }
 
   const runReconcile = (): void => {
     if (client === null) return
     setBusy('reconcile')
     setFailed(null)
+    setComplaint(null)
     setNotice(null)
-    void client.reconcile()
+    void client.reconcile(guidance)
       .then(async result => {
-        setNotice(result.action === 'planned' ? t('review.planned', { operations: result.operations }) : t('review.none'))
+        // What the run was given and what it read are part of the answer: a plan
+        // that never saw the branch is a different plan from one that did.
+        const parts = [result.action === 'planned' ? t('review.planned', { operations: result.operations }) : t('review.none')]
+        if (result.guided === true) parts.push(t('review.guided'))
+        if (result.remoteEntries !== undefined && result.remoteEntries > 0) parts.push(t('review.remoteEntries', { count: result.remoteEntries }))
+        setNotice(parts.join(' '))
         setLedger(await client.reviewLedger())
       })
       .catch(reason => setFailed(message(reason)))
@@ -116,6 +144,17 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
     }))
   }
 
+  const apply = (entry: MnemonReviewEntry): void => {
+    const selection = selectionOf(entry)
+    if (selection.length === 0) { setComplaint(t('review.noSelection')); return }
+    submit(entry.id, api => api.applyReview(entry.id, selection).then(result => {
+      setNotice(t('review.applied', { count: result.applied }))
+      // The applied positions leave the plan; what stays is what is left to decide.
+      const rest = allOf(entry).filter(index => !selection.includes(index))
+      setChosen(previous => ({ ...previous, [entry.id]: rest }))
+    }))
+  }
+
   const entries = ledger?.entries ?? []
   const pending = ledger?.pending ?? 0
   return <div className={css.syncRow} role="group" aria-labelledby="mnemon-review-heading">
@@ -127,14 +166,22 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
           onClick={() => { submit('load', refresh) }}>{t('review.refresh')}</Button>
       </div>
     </SettingRow>
+    <div className={css.reviewGuidance}>
+      <label htmlFor="mnemon-review-guidance">{t('review.guidanceLabel')}</label>
+      <input id="mnemon-review-guidance" type="text" value={guidance} placeholder={t('review.guidancePlaceholder')}
+        disabled={busy !== null} onChange={event => setGuidance(event.target.value)} />
+      <small>{t('review.guidanceHint')}</small>
+    </div>
     <div className={css.syncState} aria-live="polite">
       <span>{pending === 0 ? t('review.empty') : t('review.pending', { count: pending })}</span>
     </div>
+    {complaint !== null && <p className={css.error} role="alert">{complaint}</p>}
     {failed !== null && <p className={css.error} role="alert">{t('review.failed', { error: failed })}</p>}
     {notice !== null && <p className={css.syncSuccess} role="status">{notice}</p>}
     {entries.length > 0 && <div className={css.reviewList}>
       {entries.map(entry => {
         const open = openId === entry.id
+        const selection = selectionOf(entry)
         return <div key={entry.id} className={css.reviewEntry} data-status={entry.status}>
           <header>
             <div className={css.reviewTitle}>
@@ -150,8 +197,10 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
                   onClick={() => { submit(entry.id, api => api.decideReview(entry.id, 'rejected')) }}>{t('review.reject')}</Button>
               </>}
               {entry.status === 'accepted' && <Button variant="primary" size="sm" disabled={busy !== null || props.disabled}
-                onClick={() => { submit(entry.id, api => api.applyReview(entry.id).then(result => { setNotice(t('review.applied', { count: result.applied })) })) }}>
-                {busy === entry.id ? t('review.applying') : t('review.apply')}</Button>}
+                onClick={() => { apply(entry) }}>
+                {busy === entry.id
+                  ? t('review.applying')
+                  : selection.length > 0 && selection.length < entry.operations.length ? t('review.applyCount', { count: selection.length }) : t('review.apply')}</Button>}
               {entry.status !== 'pending' && <Button variant="ghost" size="sm" disabled={busy !== null}
                 onClick={() => { submit(entry.id, api => api.reopenReview(entry.id)) }}>{t('review.reopen')}</Button>}
             </div>
@@ -162,8 +211,27 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
           {entry.failure !== undefined && <p className={css.error} role="alert">{t('review.applyFailed', { error: entry.failure })}</p>}
           {open && <>
             <p>{entry.summary}</p>
+            {entry.status === 'accepted' && <div className={css.reviewSelection}>
+              <small>{t('review.selectHint')}</small>
+              <div className={css.rowActions}>
+                <span className={css.reviewSelected}>{t('review.selected', { count: selection.length, total: entry.operations.length })}</span>
+                <Button variant="ghost" size="sm" disabled={busy !== null}
+                  onClick={() => { keep(entry, allOf(entry)) }}>{t('review.selectAll')}</Button>
+                <Button variant="ghost" size="sm" disabled={busy !== null}
+                  onClick={() => { keep(entry, []) }}>{t('review.selectNone')}</Button>
+              </div>
+            </div>}
             <ol className={css.reviewOperations}>
-              {entry.operations.map((operation, index) => <li key={index}>{operationText(t, operation)}<small>{operation.reason}</small></li>)}
+              {entry.operations.map((operation, index) => <li key={index}>
+                {entry.status === 'accepted'
+                  ? <label>
+                      <input type="checkbox" checked={selection.includes(index)} disabled={busy !== null}
+                        onChange={() => { toggle(entry, index) }} />
+                      <span>{operationText(t, operation)}</span>
+                    </label>
+                  : <span>{operationText(t, operation)}</span>}
+                <small>{operation.reason}</small>
+              </li>)}
             </ol>
             <div className={css.reviewOpinions}>
               <strong>{t('review.opinions')}</strong>

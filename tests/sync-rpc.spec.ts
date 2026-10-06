@@ -117,6 +117,28 @@ describe.skipIf(!available)('Mnemon Git sync over RPC', { timeout: 90_000 }, () 
     // Checking the remote is a read: the payload is still not on this machine.
     expect(existsSync(localMemory) ? readFileSync(localMemory, 'utf8') : '').not.toContain('RPC push payload')
 
+    // The branch's history and the entry-level difference are reads over the channel.
+    const history = await second.sync('backups', {})
+    expect(history).toMatchObject({ ok: true, value: { repoUrl: remote, branch: 'mnemon-sync', subdir: 'mnemon/', truncated: false } })
+    const backups = (history as { value: { commits: Array<{ commit: string; message: string; machine: { id: string; label: string }; components: Array<{ component: string }> }> } }).value.commits
+    expect(backups).toHaveLength(1)
+    expect(backups[0]).toMatchObject({ commit: push.commit, message: 'Sync from RPC' })
+    expect(backups[0]!.components.map(entry => entry.component)).toEqual(COMPONENTS)
+    expect(JSON.stringify(history)).not.toContain(TOKEN)
+    // A page size the channel cannot honour is refused rather than guessed at.
+    const refusedLimit = { ok: false, error: { message: 'limit must be a positive integer' } }
+    expect(await second.sync('backups', { limit: 0 })).toMatchObject(refusedLimit)
+    expect(await second.sync('backups', { limit: 'many' })).toMatchObject(refusedLimit)
+
+    const difference = await second.sync('diff', {})
+    expect(difference).toMatchObject({ ok: true, value: { repoUrl: remote, branch: 'mnemon-sync', commit: push.commit, shared: 0 } })
+    const apart = (difference as { value: { localOnly: Array<{ content: string }>; remoteOnly: Array<{ content: string; origin?: { machine: string } }> } }).value
+    expect(apart.remoteOnly.map(entry => entry.content)).toEqual(['RPC push payload'])
+    expect(apart.remoteOnly[0]!.origin?.machine).toMatch(/^[0-9a-f-]{36}$/u)
+    expect(apart.localOnly).toEqual([])
+    // Reading the difference changes nothing on this machine.
+    expect(existsSync(localMemory) ? readFileSync(localMemory, 'utf8') : '').not.toContain('RPC push payload')
+
     const pulled = await second.sync('pull', { confirmed: true })
     expect(pulled).toMatchObject({ ok: true, value: { imported: true, mode: 'merge', repoUrl: remote, commit: push.commit, components: COMPONENTS, targetRoot: second.data } })
     expect(readFileSync(localMemory, 'utf8')).toContain('RPC push payload')
