@@ -73,7 +73,10 @@ history already provides retention, review and restore, so the Git channel does 
     `inject`, so a profile that mounts no provider still loads the plugin and simply reports the
     login as unavailable; the manual token field stays as the path for those profiles. The scope is
     `repo`, and a grant can be deleted again from the same block. GitHub calls go through the
-    environment's own `fetch`, so the Host's proxy dispatcher applies without a new dependency.
+    environment's own `fetch` first, so the Host's proxy dispatcher applies without a new dependency;
+    only when that cannot connect does one retry follow through a proxy discovered from the
+    environment or the system settings, over a CONNECT tunnel built from Node's own modules. No
+    dependency is added and no global dispatcher is replaced.
 11. **Repository choice comes from the account, not from memory.** Once signed in, `github-repositories`
     lists the repositories the account may push to and `github-create` makes a new one (private by
     default, with an initial commit so the first push has a branch to publish to). Selecting one

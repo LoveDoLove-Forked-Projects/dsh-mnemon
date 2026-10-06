@@ -7,12 +7,14 @@
  * owns no secret of its own and a Host without that store reports the login as
  * unavailable instead of failing.
  *
- * Requests use the ambient `fetch`, the seam the version check and the plugin
- * installer already use: a launcher that installed a proxy policy did so on the
- * process-wide dispatcher, so an explicit dispatcher here would override that
- * policy rather than honour it. Failures report GitHub's error code and the HTTP
- * status only, never a response body.
+ * Requests go through the transport in `github-transport.ts`: the ambient
+ * `fetch` first, because a launcher that installed a proxy policy did so on the
+ * process-wide dispatcher, then one retry through a proxy discovered from the
+ * environment or from this machine's own settings, so a network that reaches
+ * GitHub only through a proxy still signs in. Failures report GitHub's error
+ * code, the HTTP status and the transport reason only, never a response body.
  */
+import { createGitHubTransport, describeTransportError, type MnemonGitHubFetch } from './github-transport.ts'
 import type { MnemonSyncGitHubPoll, MnemonSyncGitHubRepository, MnemonSyncGitHubRepositoryList, MnemonSyncGitHubStatus } from './protocol.ts'
 
 export const MNEMON_GITHUB_DEVICE_CODE_URL = 'https://github.com/login/device/code'
@@ -137,7 +139,7 @@ export class MnemonGitHubAuth {
     private readonly port: MnemonGitHubCredentialPort | undefined,
     private readonly clientId: string = MNEMON_GITHUB_DEFAULT_CLIENT_ID,
     private readonly now: () => number = () => Date.now(),
-    private readonly request: typeof fetch = fetch,
+    private readonly request: MnemonGitHubFetch = createGitHubTransport(),
   ) {}
 
   /** Whether this Host exposes a store the grant can live in. */
@@ -216,14 +218,19 @@ export class MnemonGitHubAuth {
     const current = this.liveFlow()
     if (current !== undefined) return this.status()
     if ((await this.grant()) !== undefined) return this.status()
-    const { status, body } = await this.json(MNEMON_GITHUB_DEVICE_CODE_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: this.clientId, scope: MNEMON_GITHUB_SCOPE }).toString(),
-      ...(signal === undefined ? {} : { signal }),
-    })
-    if (status !== 200) throw failure('the GitHub device code request', status, body)
-    const fields = record(body)
+    let answer: { status: number; body: unknown }
+    try {
+      answer = await this.json(MNEMON_GITHUB_DEVICE_CODE_URL, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: this.clientId, scope: MNEMON_GITHUB_SCOPE }).toString(),
+        ...(signal === undefined ? {} : { signal }),
+      })
+    } catch (error) {
+      throw new Error('the GitHub device code request could not reach GitHub: ' + describeTransportError(error))
+    }
+    if (answer.status !== 200) throw failure('the GitHub device code request', answer.status, answer.body)
+    const fields = record(answer.body)
     const deviceCode = text(fields?.device_code)
     const userCode = text(fields?.user_code)
     const verificationUri = text(fields?.verification_uri)
@@ -265,7 +272,7 @@ export class MnemonGitHubAuth {
     } catch (error) {
       // A dropped connection is not an answer: keep the flow and let the page retry.
       flow.nextPollAt = this.now() + flow.intervalMs
-      return { status: 'pending', intervalMs: flow.intervalMs, message: error instanceof Error ? error.message : String(error) }
+      return { status: 'pending', intervalMs: flow.intervalMs, message: describeTransportError(error) }
     }
     const fields = record(answer.body)
     const code = text(fields?.error)
@@ -346,7 +353,7 @@ export class MnemonGitHubAuth {
   async repositories(signal?: AbortSignal): Promise<MnemonSyncGitHubRepositoryList> {
     const token = await this.requireToken()
     const url = MNEMON_GITHUB_API_BASE + '/user/repos?per_page=' + String(MNEMON_GITHUB_REPOSITORY_PAGE) + '&sort=updated&affiliation=owner%2Ccollaborator%2Corganization_member'
-    const { status, body } = await this.json(url, { headers: this.authorization(token), ...(signal === undefined ? {} : { signal }) })
+    const { status, body } = await this.ask(url, { headers: this.authorization(token), ...(signal === undefined ? {} : { signal }) }, 'listing GitHub repositories')
     if (status !== 200) throw failure('listing GitHub repositories', status, body)
     if (!Array.isArray(body)) throw new Error('the GitHub repository answer was not a list')
     const repositories: MnemonSyncGitHubRepository[] = []
@@ -363,16 +370,34 @@ export class MnemonGitHubAuth {
     const token = await this.requireToken()
     const value = typeof name === 'string' ? name.trim() : ''
     if (!REPOSITORY_NAME.test(value)) throw new Error('a GitHub repository name holds letters, digits, dots, dashes and underscores')
-    const { status, body } = await this.json(MNEMON_GITHUB_API_BASE + '/user/repos', {
+    const { status, body } = await this.ask(MNEMON_GITHUB_API_BASE + '/user/repos', {
       method: 'POST',
       headers: { ...this.authorization(token), 'content-type': 'application/json' },
       body: JSON.stringify({ name: value, private: isPrivate === true, auto_init: true }),
       ...(signal === undefined ? {} : { signal }),
-    })
+    }, 'creating the GitHub repository')
     if (status !== 201) throw failure('creating the GitHub repository', status, body)
     const repository = repositoryOf(body)
     if (repository === undefined) throw new Error('the created GitHub repository could not be read back')
     return repository
+  }
+
+  /**
+   * A request that may never reach GitHub. The transport already retried it
+   * through a proxy if one was found; what is left is reported as the transport
+   * reason rather than the bare `fetch failed` undici would show.
+   */
+  private async ask(url: string, options: {
+    method?: string
+    headers?: Record<string, string>
+    body?: string
+    signal?: AbortSignal
+  }, action: string): Promise<{ status: number; body: unknown }> {
+    try {
+      return await this.json(url, options)
+    } catch (error) {
+      throw new Error(action + ' could not reach GitHub: ' + describeTransportError(error))
+    }
   }
 
   private async json(url: string, options: {

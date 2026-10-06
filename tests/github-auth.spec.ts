@@ -3,6 +3,7 @@ import {
   githubGrantFromRecord, MNEMON_GITHUB_DEFAULT_CLIENT_ID, MNEMON_GITHUB_MAX_INTERVAL_MS,
   MNEMON_GITHUB_SLOW_DOWN_MS, MnemonGitHubAuth, type MnemonGitHubCredentialPort, type MnemonGitHubGrant,
 } from '../src/host/github-auth.ts'
+import { createGitHubTransport } from '../src/host/github-transport.ts'
 
 const NO_STORE = 'this DSH Host provides no credentials store, so GitHub sign-in is unavailable'
 
@@ -244,6 +245,36 @@ describe('GitHub sign-in for the sync channel', () => {
     const answer = await target.poll()
     expect(answer.status).toBe('pending')
     expect(answer.message).toBe('unexpected request: https://github.com/login/oauth/access_token')
+  })
+
+  it('says GitHub could not be reached instead of showing the transport failure alone', async () => {
+    // The transport already retried through a proxy; a login on a network that
+    // cannot reach GitHub at all has to say what to set rather than "fetch failed".
+    const unreachable = createGitHubTransport({
+      ambient: () => Promise.reject(Object.assign(new Error('fetch failed'), {
+        cause: Object.assign(new Error('Connect Timeout Error'), { code: 'UND_ERR_CONNECT_TIMEOUT' }),
+      })),
+      discover: () => undefined,
+      tunnel: () => { throw new Error('no tunnel expected') },
+    })
+    const target = new MnemonGitHubAuth(port().port, MNEMON_GITHUB_DEFAULT_CLIENT_ID, () => Date.now(), unreachable)
+    await expect(target.start()).rejects.toThrow(
+      'the GitHub device code request could not reach GitHub: could not reach github.com: '
+      + 'fetch failed: Connect Timeout Error (UND_ERR_CONNECT_TIMEOUT); '
+      + 'this Host has no proxy for GitHub, so set HTTPS_PROXY to a proxy that can reach it',
+    )
+  })
+
+  it('names the repository list and the creation as unreachable too', async () => {
+    const grant = { version: 1, accessToken: 'gho_token', savedAt: 'now' } as const
+    const unreachable = createGitHubTransport({
+      ambient: () => Promise.reject(new Error('fetch failed')),
+      discover: () => undefined,
+      tunnel: () => { throw new Error('no tunnel expected') },
+    })
+    const listing = new MnemonGitHubAuth(port({ grant }).port, MNEMON_GITHUB_DEFAULT_CLIENT_ID, () => Date.now(), unreachable)
+    await expect(listing.repositories()).rejects.toThrow('listing GitHub repositories could not reach GitHub: could not reach api.github.com: fetch failed')
+    await expect(listing.create('memory', true)).rejects.toThrow('creating the GitHub repository could not reach GitHub: could not reach api.github.com: fetch failed')
   })
 
   it('tells the page apart an expired flow, a refusal and an unknown error', async () => {
