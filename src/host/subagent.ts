@@ -1164,6 +1164,7 @@ export class MnemonSubagentCoordinator {
       ...(difference === undefined ? {} : {
         remote: {
           entries: difference.remoteOnly,
+          conflicts: difference.conflicts,
           truncated: difference.truncated,
           tombstones: difference.remoteTombstones,
           branch: difference.branch,

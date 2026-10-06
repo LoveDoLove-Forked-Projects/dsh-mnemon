@@ -166,8 +166,12 @@ projected through `MnemonRemoteService` with the other management handlers, so
 
 A **Git sync** group in the plugin's Storage section, next to backup and migration. One status
 line reports whether a repository is set, whether git is present, what the remote branch holds and
-which credential is in use. Three buttons carry the actions: `Configure` (opens the form),
-`Check remote` (previews the remote payload and the component/file differences) and `Push`. The
+which credential is in use. Four buttons carry the actions: `Configure` (opens the form),
+`Check remote` (previews the remote payload and the component/file differences, then the
+entry-level difference beneath them), `Backups` (the branch history, in the same dialog) and
+`Push`. Both reads report the entry-level difference the same way, and a same-target pair of
+entries whose texts overlap by at least `0.6` in character bigrams is shown as a conflict rather
+than as two additions. The
 form opens with a **GitHub** block - `Sign in with GitHub`, the one-time code with a copy button
 and a link to `https://github.com/login/device`, a cancel button while the flow runs, and
 `Sign out` once it holds a login - followed by a **Your repositories** block that lists the

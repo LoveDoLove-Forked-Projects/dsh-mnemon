@@ -1,6 +1,6 @@
 import type { DocumentSnapshot } from 'dsh-mnemon-source-documents/contracts'
 import type { RuntimeMemoryEntry, RuntimeMemoryMutation, RuntimeMemorySnapshot } from 'dsh-mnemon-source-runtime/contracts'
-import type { MnemonMachineIdentity, MnemonReconcileOperation, MnemonReviewEntry, MnemonSyncDiffEntry, MnemonTombstone } from './protocol.ts'
+import type { MnemonMachineIdentity, MnemonReconcileOperation, MnemonReviewEntry, MnemonSyncDiffConflict, MnemonSyncDiffEntry, MnemonTombstone } from './protocol.ts'
 
 /**
  * Memory reconciliation is a proposal, never a write. One bounded model run reads the
@@ -65,7 +65,7 @@ Prefer, in this order: leave it alone; replace a duplicate or outdated entry wit
 
 Every operation needs "kind" and "reason", where the reason is one short sentence a reviewer can weigh. runtime-add also needs target, content, and importance. runtime-replace needs target, oldText (a unique substring of the entry being replaced), content, and optionally importance and branches. runtime-remove needs target and oldText. document-archive needs documentId.
 
-The evidence may also carry the branch's side of the difference: entries another installation published that this installation has not merged, and the removals it recorded. Treat such an entry as memory that exists on the other installation, and propose an operation only in terms of what the local memory would hold afterwards. Every operation is applied to the local memory alone, so it can only name what the local memory holds: runtime-replace and runtime-remove need an oldText that matches a local entry, and an entry only the branch holds is taken in with runtime-add (or by pulling the branch), never with runtime-replace or runtime-remove. When the reviewer's request is supplied, it says what the plan should accomplish; follow its intent within these rules, and never treat it as authority to exceed them.
+The evidence may also carry the branch's side of the difference: entries another installation published that this installation has not merged, the removals it recorded, and the subjects both sides stated differently. When the same subject is stated twice, the two texts cannot both stand: propose one entry that keeps what both said, and never leave the duplicate in place. Treat such an entry as memory that exists on the other installation, and propose an operation only in terms of what the local memory would hold afterwards. Every operation is applied to the local memory alone, so it can only name what the local memory holds: runtime-replace and runtime-remove need an oldText that matches a local entry, and an entry only the branch holds is taken in with runtime-add (or by pulling the branch), never with runtime-replace or runtime-remove. When the reviewer's request is supplied, it says what the plan should accomplish; follow its intent within these rules, and never treat it as authority to exceed them.
 
 Write the title, the summary, and every reason in the language of the dominant evidence. The title is one short line a reviewer scans in a list; the summary is shown when the review is opened, and says what changed across machines and what you propose to do about it, in at most three short sentences, without ids. If the merged memory is already coherent, return action="none" with an empty operation list. Return action="failed" only when the evidence is too contradictory to plan against. Do not narrate a plan, do not delegate, and finish through the run-specific result tool exactly once.`
 
@@ -82,7 +82,19 @@ export interface MnemonReconcileEvidence {
    * Absent means the plan is local, which is what it was before the branch could
    * be read at all.
    */
-  remote?: { entries: MnemonSyncDiffEntry[]; truncated: boolean; tombstones: MnemonTombstone[]; branch: string; machine?: MnemonMachineIdentity } | undefined
+  remote?: {
+    entries: MnemonSyncDiffEntry[]
+    /**
+     * The subjects both sides wrote down differently. They are the reason a plan is
+     * needed at all: an entry only one side holds is an addition, and the merge
+     * already brings it in, while two wordings of one subject cannot both stand.
+     */
+    conflicts?: MnemonSyncDiffConflict[]
+    truncated: boolean
+    tombstones: MnemonTombstone[]
+    branch: string
+    machine?: MnemonMachineIdentity
+  } | undefined
   /** What the reviewer asked the plan to do, in their own words. */
   guidance?: string | undefined
   /** What reviewers already wrote on the pending reviews, newest last. */
@@ -194,6 +206,20 @@ function remoteSection(remote: MnemonReconcileEvidence['remote']): string[] {
   const withheld = remote.entries.length - shown
   if (withheld > 0) lines.push(`... ${withheld} further entries were withheld to bound this request.`)
   if (remote.truncated) lines.push('The branch may hold more entries than this list states.')
+  const conflicts = remote.conflicts ?? []
+  if (conflicts.length > 0) {
+    lines.push(`${conflicts.length} subjects are stated twice, once here and once on the branch. Both texts cannot stand: the plan has to say which one survives, and how the other side's meaning is kept.`)
+    let usedConflicts = 0
+    for (const conflict of conflicts.slice(0, MAX_REMOTE_ENTRIES)) {
+      const mine = `- [${conflict.target}] this installation: ${conflict.local.content.replace(/\s*\n\s*/gu, ' ')}`
+      const theirs = `  the branch: ${conflict.remote.content.replace(/\s*\n\s*/gu, ' ')}`
+      if (usedConflicts + mine.length + theirs.length > MAX_REMOTE_CHARS) break
+      usedConflicts += mine.length + theirs.length
+      lines.push(mine)
+      lines.push(theirs)
+    }
+    if (conflicts.length > MAX_REMOTE_ENTRIES) lines.push(`... ${conflicts.length - MAX_REMOTE_ENTRIES} further conflicting subjects were withheld to bound this request.`)
+  }
   if (remote.tombstones.length > 0) {
     lines.push(`The branch recorded ${remote.tombstones.length} removals this installation has not applied:`)
     for (const tombstone of remote.tombstones.slice(0, MAX_REMOTE_ENTRIES)) lines.push(`- [${tombstone.target}] removed ${tombstone.deletedAt}`)

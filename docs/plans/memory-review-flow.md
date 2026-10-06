@@ -110,6 +110,14 @@ interface MnemonSyncDiffEntry {
   origin?: MnemonEntryOrigin
 }
 
+interface MnemonSyncDiffConflict {
+  target: 'memory' | 'user'
+  local: MnemonSyncDiffEntry
+  remote: MnemonSyncDiffEntry
+  /** Character-bigram overlap of the two texts; at least 0.6 for the pair to be reported. */
+  similarity: number
+}
+
 interface MnemonSyncDiff {
   repoUrl: string; branch: string; subdir: string; commit: string
   machine?: MnemonMachineIdentity
@@ -119,6 +127,8 @@ interface MnemonSyncDiff {
   remote: MnemonSyncDiffSide
   localOnly: MnemonSyncDiffEntry[]
   remoteOnly: MnemonSyncDiffEntry[]
+  /** Subjects both sides state differently; the only entries that need reconciling. */
+  conflicts: MnemonSyncDiffConflict[]
   shared: number
   /** Removals the branch recorded that this machine has not applied. */
   remoteTombstones: MnemonTombstone[]
@@ -127,12 +137,19 @@ interface MnemonSyncDiff {
 
 ## UI
 
-**Git sync** gains a third action, `Backups`: it opens a list of the commits on the branch - time,
-machine, message, component counts - and each row expands to show what that backup held, with a
-button that loads its runtime entries into the same panel the diff uses. `Check remote` keeps its
-byte-level preview and gains the entry-level difference beneath it: two short lists ("only here",
-"only on the branch") with the target, importance and origin of each entry, and a count of what both
-sides hold.
+**Git sync** gains a third action, `Backups`: it opens one dialog - the same one `Check remote`
+opens - whose upper half lists the commits on the branch (time, machine, message, component counts)
+and expands a row to show what that backup held, and whose lower half is the entry-level difference
+from the same reading: both sides' export time, entry count and machine, how many entries they
+share, the entries only here and only on the branch with the target, importance and origin of each,
+and the removals the branch recorded that this installation has not applied. A pair of same-target
+entries whose texts overlap by at least `0.6` in character bigrams is a conflict: the two sides are
+shown with their similarity, and the pair stays out of the "only here" count and out of the
+additions count, so a direct add never writes the second wording of a subject in as well. Only a
+conflict offers `Ask AI to reconcile`; with none, the branch's additions are simply added. A
+rejected plan waits for an opinion and is reopened before the AI is asked again, because a decided
+proposal is answered by its decision and its opinions are otherwise not part of the next run's
+evidence.
 
 **Memory reconciliation** gains a guidance field above the button: `整理记忆` sends whatever is in it,
 and the answer says whether the model had guidance to follow. A pending review lists its operations

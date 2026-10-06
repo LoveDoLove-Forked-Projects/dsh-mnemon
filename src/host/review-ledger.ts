@@ -92,7 +92,13 @@ export class MnemonReviewLedger {
 
   view(): MnemonReviewLedgerView {
     const entries = this.list()
-    return { path: this.path(), entries, pending: entries.filter(entry => entry.status === 'pending').length }
+    const latest = entries[0]
+    return {
+      path: this.path(),
+      entries,
+      pending: entries.filter(entry => entry.status === 'pending').length,
+      ...(latest === undefined ? {} : { latest }),
+    }
   }
 
   get(id: string): MnemonReviewEntry | undefined {

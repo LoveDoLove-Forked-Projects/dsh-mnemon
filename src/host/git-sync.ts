@@ -11,7 +11,8 @@ import {
 } from './pack.ts'
 import type {
   MnemonPackComponent, MnemonPackImportMode, MnemonPackManifest, MnemonSyncBackup, MnemonSyncBackupList,
-  MnemonSyncComponentDelta, MnemonSyncConfigView, MnemonSyncCredentialSource, MnemonSyncDiff, MnemonSyncDiffEntry,
+  MnemonSyncComponentDelta, MnemonSyncConfigView, MnemonSyncCredentialSource, MnemonSyncDiff, MnemonSyncDiffConflict,
+  MnemonSyncDiffEntry,
   MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview, MnemonSyncPullResult, MnemonSyncPushResult,
   MnemonSyncRemoteStatus, MnemonSyncStatus, MnemonTombstone, MnemonTombstoneFile,
 } from './protocol.ts'
@@ -269,6 +270,67 @@ function diffEntry(entry: StoredRuntimeEntry): MnemonSyncDiffEntry {
     importance: entry.importance,
     ...(entry.origin === undefined ? {} : { origin: entry.origin }),
   }
+}
+
+/** How alike two texts must read before they count as the same subject written twice. */
+const CONFLICT_SIMILARITY = 0.6
+/** How many conflicts one difference lists; a page past this says it was cut short. */
+const MAX_DIFF_CONFLICTS = 40
+
+/** Case, spacing, and punctuation carry no meaning when two memories are compared. */
+function normalizeForSimilarity(text: string): string {
+  return text.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '')
+}
+
+function bigramsOf(value: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (let index = 0; index + 1 < value.length; index += 1) {
+    const gram = value.slice(index, index + 2)
+    counts.set(gram, (counts.get(gram) ?? 0) + 1)
+  }
+  return counts
+}
+
+/**
+ * How alike two memories read, from 0 to 1, as the Sørensen–Dice coefficient of their
+ * character bigrams. Comparing characters rather than words is what lets a reworded
+ * sentence score high in any language, including the ones written without spaces.
+ */
+function similarityOf(left: string, right: string): number {
+  const first = normalizeForSimilarity(left)
+  const second = normalizeForSimilarity(right)
+  if (first === second) return 1
+  if (first.length < 2 || second.length < 2) return 0
+  const mine = bigramsOf(first)
+  const theirs = bigramsOf(second)
+  let mineSize = 0
+  let theirsSize = 0
+  let overlap = 0
+  for (const count of mine.values()) mineSize += count
+  for (const count of theirs.values()) theirsSize += count
+  for (const [gram, count] of mine) overlap += Math.min(count, theirs.get(gram) ?? 0)
+  return (2 * overlap) / (mineSize + theirsSize)
+}
+
+/**
+ * The subjects both sides wrote down differently. A pair counts only when the two texts
+ * talk about the same thing — the same target, and alike enough that keeping both would
+ * record one answer twice. Every other entry on one side alone is an addition, which
+ * needs no reconciling at all.
+ */
+function conflictsOf(local: readonly MnemonSyncDiffEntry[], remote: readonly MnemonSyncDiffEntry[]): MnemonSyncDiffConflict[] {
+  const conflicts: MnemonSyncDiffConflict[] = []
+  for (const mine of local) {
+    let best: { entry: MnemonSyncDiffEntry; similarity: number } | undefined
+    for (const theirs of remote) {
+      if (theirs.target !== mine.target) continue
+      const similarity = similarityOf(mine.content, theirs.content)
+      if (similarity < CONFLICT_SIMILARITY) continue
+      if (best === undefined || similarity > best.similarity) best = { entry: theirs, similarity }
+    }
+    if (best !== undefined) conflicts.push({ target: mine.target, local: mine, remote: best.entry, similarity: best.similarity })
+  }
+  return conflicts
 }
 
 /**
@@ -587,8 +649,9 @@ export class MnemonGitSync {
   /**
    * What this machine holds and the branch tip holds, stated as entries. The byte-level
    * difference already lives in the preview; this answers the question a person asks
-   * before merging — which memories are only here, which are only there, and which
-   * removals the branch recorded that this machine has not applied.
+   * before merging — which memories are only here, which are only there, which subjects
+   * both sides wrote down differently, and which removals the branch recorded that this
+   * machine has not applied.
    */
   async diff(signal?: AbortSignal): Promise<MnemonSyncDiff> {
     const settings = this.requireRepository()
@@ -613,6 +676,10 @@ export class MnemonGitSync {
       for (const entry of theirs.entries) {
         if (!mineKeys.has(entryKey(entry)) && remoteOnly.length < MAX_DIFF_ENTRIES) remoteOnly.push(diffEntry(entry))
       }
+      // The same subject written twice is the only thing a person must decide about;
+      // a memory that exists on one side alone is simply missing on the other.
+      const found = conflictsOf(localOnly, remoteOnly).sort((left, right) => right.similarity - left.similarity)
+      const conflicts = found.slice(0, MAX_DIFF_CONFLICTS)
       return {
         repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir,
         commit: remote.commit, ...(remote.pushedAt === undefined ? {} : { pushedAt: remote.pushedAt }),
@@ -625,10 +692,12 @@ export class MnemonGitSync {
           exportedAt: remote.manifest.exportedAt, entries: theirs.entries.length,
           ...(remote.manifest.machine === undefined ? {} : { machine: remote.manifest.machine }),
         },
-        localOnly, remoteOnly, shared,
+        localOnly, remoteOnly, conflicts, shared,
         // A page that stopped early must say so: a reader who cannot tell a complete
         // difference from a cut-off one will merge on evidence that was never shown.
-        truncated: mine.entries.length - shared > localOnly.length || theirs.entries.length - shared > remoteOnly.length,
+        truncated: mine.entries.length - shared > localOnly.length
+          || theirs.entries.length - shared > remoteOnly.length
+          || found.length > conflicts.length,
         remoteTombstones: unappliedRemovals(local, remote.files),
       }
     })

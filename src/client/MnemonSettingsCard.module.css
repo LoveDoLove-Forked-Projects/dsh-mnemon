@@ -563,6 +563,27 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .syncDiffColumns li { display: grid; gap: 2px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .syncDiffMeta { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 
+/* Inside the dialog the panels are the content, so they lose their own chrome and
+   the diff states its conflicts one subject at a time, side by side. */
+.syncDialogBody { display: grid; gap: 16px; }
+.syncDialogBody .syncBackups, .syncDialogBody .syncDiff { padding: 0; background: transparent; }
+.syncDialogBody .syncBackups > header > strong, .syncDialogBody .syncDiff > header > strong { font-size: 14px; line-height: 22px; }
+.syncConflictList { display: grid; gap: 8px; }
+.syncConflict { display: grid; min-width: 0; gap: 6px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncConflict > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncConflict > header > strong { font-size: 13px; font-weight: 500; line-height: 20px; }
+.syncConflict > header > small { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+.syncConflictSides { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+.syncConflictSides > div { display: grid; min-width: 0; align-content: start; gap: 2px; }
+.syncConflictSides > div > small { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+.syncConflictSides > div > span { font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncDialogNote { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncPlan { display: grid; gap: 8px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncPlan > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncPlan > header > strong { font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.syncPlan > p { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.syncPlan > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+
 .selector:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));

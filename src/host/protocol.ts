@@ -300,7 +300,7 @@ export interface TaskAgentModelCatalogFailure {
 }
 
 export interface TaskAgentModelCatalog {
-  effective?: { provider: string; model: string; source: 'fixed' | 'dsh-default' | 'active-agent' }
+  effective?: { provider: string; model: string; source: 'fixed' | 'session' | 'dsh-default' | 'active-agent' }
   defaultSelection?: { provider: string; model: string }
   groups: TaskAgentModelCatalogGroup[]
   failures: TaskAgentModelCatalogFailure[]
@@ -709,6 +709,12 @@ export interface MnemonReviewLedgerView {
   path: string
   entries: MnemonReviewEntry[]
   pending: number
+  /**
+   * The newest proposal, and only it, carried with the list so a caller can read what
+   * the last run proposed without a second round trip. Its operations are withheld
+   * here: the list is a summary, and one plan can hold `MAX_RECONCILE_OPERATIONS` changes.
+   */
+  latest?: MnemonReviewEntry
 }
 
 export interface MnemonReviewApplyResult {
@@ -972,6 +978,21 @@ export interface MnemonSyncDiffEntry {
   origin?: MnemonEntryOrigin
 }
 
+/**
+ * One memory this machine holds and the branch holds a different wording of: the same
+ * subject written twice, so the two texts cannot both stand. Entries that merely exist
+ * on one side are additions, not conflicts, and never appear here.
+ */
+export interface MnemonSyncDiffConflict {
+  target: 'memory' | 'user'
+  /** What this machine holds. */
+  local: MnemonSyncDiffEntry
+  /** What the branch holds, with the installation that wrote it. */
+  remote: MnemonSyncDiffEntry
+  /** How alike the two texts are, from 0 to 1, after normalization. */
+  similarity: number
+}
+
 export interface MnemonSyncDiffSide {
   /** The manifest identity of the side: this machine's export, or the commit. */
   exportedAt: string
@@ -995,6 +1016,11 @@ export interface MnemonSyncDiff {
   remote: MnemonSyncDiffSide
   localOnly: MnemonSyncDiffEntry[]
   remoteOnly: MnemonSyncDiffEntry[]
+  /**
+   * The same subject recorded differently on both sides. Only these need reconciling;
+   * anything that exists on one side alone can simply be added.
+   */
+  conflicts: MnemonSyncDiffConflict[]
   /** How many entries both sides hold, compared by target and content. */
   shared: number
   /** Whether a side held more differences than this response lists. */

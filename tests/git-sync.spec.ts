@@ -312,6 +312,8 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     expect(apart.remoteOnly.map(entry => entry.content)).toEqual(['Prefer concise answers'])
     expect(apart.remoteOnly[0]!.origin).toMatchObject({ machine: identityA.id, label: identityA.label })
     expect(apart.remoteTombstones).toEqual([])
+    // Two texts about different subjects are two memories, not one subject written twice.
+    expect(apart.conflicts).toEqual([])
     // Reading a difference never imports anything.
     expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).not.toContain('Prefer concise answers')
 
@@ -334,6 +336,46 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const loose = await machine('sync-diff-unconfigured')
     await expect(loose.sync.diff()).rejects.toThrow('no sync repository is configured')
     await expect(loose.sync.backups()).rejects.toThrow('no sync repository is configured')
+  })
+
+  it('finds the subjects both sides wrote differently and leaves the rest alone', async () => {
+    const origin = await repository('sync-conflict-remote')
+    const machineA = await machine('sync-conflict-a', origin)
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefer concise answers in every reply', importance: 'normal' }, { confirmed: true })
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Deploy on Fridays', importance: 'critical' }, { confirmed: true })
+    await machineA.sync.push({ message: 'Publish from A' })
+
+    const identityA = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
+
+    const machineB = await machine('sync-conflict-b', origin)
+    // The same preference, written another way, plus a memory only this side holds.
+    await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefer concise answers for all replies', importance: 'normal' }, { confirmed: true })
+    await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Local only note', importance: 'critical' }, { confirmed: true })
+
+    const apart = await machineB.sync.diff()
+    // One subject is stated twice, so keeping both would record one answer twice.
+    expect(apart.conflicts).toHaveLength(1)
+    const conflict = apart.conflicts[0]!
+    expect(conflict.target).toBe('user')
+    expect(conflict.local).toMatchObject({ target: 'user', content: 'Prefer concise answers for all replies' })
+    expect(conflict.remote).toMatchObject({ target: 'user', content: 'Prefer concise answers in every reply' })
+    // The branch's side carries the stamp of the machine that published it.
+    expect(conflict.remote.origin).toMatchObject({ machine: identityA.id, label: identityA.label })
+    // Alike enough to be the same subject, and not the same text: this is exactly the
+    // pair a person has to decide about, so it is also what the difference sorts on.
+    expect(conflict.similarity).toBeGreaterThanOrEqual(0.6)
+    expect(conflict.similarity).toBeLessThan(1)
+    // A conflict is found among the entries that only one side holds: the pair above is
+    // reported as a conflict, and the two memories about other subjects stay additions,
+    // which is exactly the distinction the panel draws.
+    expect(apart.localOnly.map(entry => entry.content)).toEqual(['Prefer concise answers for all replies', 'Local only note'])
+    expect(apart.remoteOnly.map(entry => entry.content)).toEqual(['Prefer concise answers in every reply', 'Deploy on Fridays'])
+    expect(apart.conflicts.map(entry => entry.local.content)).toEqual(['Prefer concise answers for all replies'])
+    expect(apart.shared).toBe(0)
+    expect(apart.truncated).toBe(false)
+    // Reporting a conflict reads both sides and moves neither.
+    expect(entriesOf(machineB.root)).not.toContain('Prefer concise answers in every reply')
+    expect(entriesOf(machineA.root)).not.toContain('Prefer concise answers for all replies')
   })
 
   it('counts only the removals this machine has not applied yet', async () => {

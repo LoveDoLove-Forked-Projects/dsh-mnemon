@@ -15,13 +15,13 @@ export interface MnemonReviewSectionProps {
   t: MnemonTranslate
 }
 
-const STATUS_KEY: Record<MnemonReviewStatus, 'review.statusPending' | 'review.statusAccepted' | 'review.statusRejected'> = {
+export const STATUS_KEY: Record<MnemonReviewStatus, 'review.statusPending' | 'review.statusAccepted' | 'review.statusRejected'> = {
   pending: 'review.statusPending',
   accepted: 'review.statusAccepted',
   rejected: 'review.statusRejected',
 }
 
-const STATUS_TONE: Record<MnemonReviewStatus, 'warning' | 'success' | 'quiet'> = {
+export const STATUS_TONE: Record<MnemonReviewStatus, 'warning' | 'success' | 'quiet'> = {
   pending: 'warning',
   accepted: 'success',
   rejected: 'quiet',
@@ -37,7 +37,7 @@ function targetName(t: MnemonTranslate, target: 'memory' | 'user'): string {
 }
 
 /** One operation as a reviewer reads it: what changes, and to which entry. */
-function operationText(t: MnemonTranslate, operation: MnemonReconcileOperation): string {
+export function operationText(t: MnemonTranslate, operation: MnemonReconcileOperation): string {
   switch (operation.kind) {
     case 'runtime-add': return t('review.opAdd', { target: targetName(t, operation.target), content: brief(operation.content, 160) })
     case 'runtime-replace': return t('review.opReplace', { target: targetName(t, operation.target), from: brief(operation.oldText, 80), to: brief(operation.content, 160) })

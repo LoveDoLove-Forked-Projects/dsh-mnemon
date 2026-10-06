@@ -5,11 +5,11 @@ import {
   MNEMON_SYNC_DEFAULT_SUBDIR,
   MNEMON_SYNC_TOKEN_ENV,
   type ClientConnectionHandle,
+  type MnemonReviewEntry,
   type MnemonSyncBackup,
   type MnemonSyncBackupList,
   type MnemonSyncConfigView,
   type MnemonSyncDiff,
-  type MnemonSyncDiffEntry,
   type MnemonSyncGitHubRepository,
   type MnemonSyncGitHubStatus,
   type MnemonSyncPreview,
@@ -20,6 +20,8 @@ import type { MnemonTranslate } from './locales.ts'
 import { humanBytes, message } from './page-kit.tsx'
 import css from './MnemonSettingsCard.module.css'
 import { SettingRow } from './settings-controls.tsx'
+import { MnemonDialog } from './MnemonDialog.tsx'
+import { STATUS_KEY, STATUS_TONE, operationText } from './MnemonReviewSection.tsx'
 
 /** What the configuration form holds; an empty token field keeps the saved one. */
 interface SyncDraft {
@@ -65,14 +67,10 @@ function ownerName(t: MnemonTranslate, machine: { id: string; label: string } | 
   return machine.label.trim() === '' ? machine.id : machine.label
 }
 
-/** One entry of the difference: which memory, and whose it is. */
-function diffLine(t: MnemonTranslate, entry: MnemonSyncDiffEntry): JSX.Element {
-  const origin = entry.origin === undefined ? '' : ' · ' + t('config.syncDiffFrom', { machine: entry.origin.label.trim() === '' ? entry.origin.machine : entry.origin.label })
-  const text = entry.content.replace(/\s+/gu, ' ').trim()
-  return <li key={entry.target + '\u0000' + entry.content} data-target={entry.target}>
-    <span className={css.syncDiffMeta}>{t(entry.target === 'user' ? 'review.targetUser' : 'review.targetMemory')} · {entry.importance}{origin}</span>
-    <span>{text.length <= 200 ? text : text.slice(0, 199) + '…'}</span>
-  </li>
+/** One line of text as a reader scans it: whitespace collapsed, then cut to a readable length. */
+function clip(value: string, max: number): string {
+  const text = value.replace(/\s+/gu, ' ').trim()
+  return text.length <= max ? text : text.slice(0, max - 1) + '…'
 }
 
 interface MnemonSyncSectionProps {
@@ -102,7 +100,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SyncDraft>(() => draftOf(undefined))
   const [pending, setPending] = useState<MnemonSyncPreview | null>(null)
-  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'backups' | 'diff' | 'github' | 'repos' | 'create' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'backups' | 'diff' | 'add' | 'plan' | 'apply' | 'github' | 'repos' | 'create' | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [github, setGithub] = useState<MnemonSyncGitHubStatus | null>(null)
@@ -113,6 +111,11 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const [backups, setBackups] = useState<MnemonSyncBackupList | null>(null)
   const [openCommit, setOpenCommit] = useState<string | null>(null)
   const [difference, setDifference] = useState<MnemonSyncDiff | null>(null)
+  // The branch history and the differences are one reading of the same branch, so they
+  // share one dialog; the dialog opens as soon as either answer is asked for.
+  const [dialog, setDialog] = useState(false)
+  const [plan, setPlan] = useState<MnemonReviewEntry | null>(null)
+  const [opinion, setOpinion] = useState('')
   const [copied, setCopied] = useState(false)
   // The sign-in poll reschedules itself; a counter re-runs the effect after each answer.
   const [pollTick, setPollTick] = useState(0)
@@ -174,7 +177,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
 
   const push = async (): Promise<void> => {
     if (client === null || busy !== null) return
-    setBusy('push'); setFailed(null); setNotice(null); setPending(null); setBackups(null); setDifference(null)
+    setBusy('push'); setFailed(null); setNotice(null); setPending(null); setBackups(null); setDifference(null); setPlan(null)
     try {
       const result = await client.pushSync()
       setNotice(result.pushed
@@ -190,12 +193,16 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
 
   const preview = async (): Promise<void> => {
     if (client === null || busy !== null) return
-    setBusy('preview'); setFailed(null); setNotice(null); setPending(null); setDifference(null)
+    setBusy('preview'); setFailed(null); setNotice(null); setPending(null); setDifference(null); setPlan(null)
     try {
       setPending(await client.previewSync())
       // The byte-level answer says how much differs; the entry-level answer says which
       // memories do. A difference that cannot be read leaves the preview standing.
-      try { setDifference(await client.syncDiff()) } catch { setDifference(null) }
+      try {
+        setDifference(await client.syncDiff())
+        setDialog(true)
+      } catch { setDifference(null) }
+      await readPlanQuietly()
     } catch (reason) {
       setFailed(message(reason))
     } finally { setBusy(null) }
@@ -207,7 +214,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     try {
       const result = await client.pullSync()
       setNotice(t('config.syncPulled', { commit: result.commit.slice(0, 8), root: result.targetRoot }))
-      setPending(null); setBackups(null); setDifference(null)
+      setPending(null); setBackups(null); setDifference(null); setPlan(null)
       await refresh()
     } catch (reason) {
       setFailed(message(reason))
@@ -215,26 +222,158 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   }
 
   /**
-   * The branch's history: what was published, when, and by which installation. The
-   * commit message is whatever its author typed, so the manifest inside the commit is
-   * what names the machine and says what the backup held.
+   * The branch as one reading: the history of what was published, when, and by which
+   * installation, and - below it - which memories differ. The commit message is whatever
+   * its author typed, so the manifest inside the commit is what names the machine and
+   * says what the backup held.
+   *
+   * A difference that cannot be read still leaves the history standing: the two answers
+   * are separate requests and either one alone is worth showing.
    */
-  const loadBackups = async (): Promise<void> => {
+  const loadHistory = async (): Promise<void> => {
     if (client === null || busy !== null) return
-    setBusy('backups'); setFailed(null); setNotice(null)
+    setBusy('backups'); setFailed(null); setNotice(null); setDialog(true)
     try {
       setBackups(await client.syncBackups())
     } catch (reason) {
       setFailed(message(reason))
     } finally { setBusy(null) }
+    try {
+      setDifference(await client.syncDiff())
+    } catch {
+      setDifference(null)
+    }
+    await readPlanQuietly()
   }
 
   /** Which memories are only here and which are only on the branch, before merging anything. */
   const loadDifference = async (): Promise<void> => {
     if (client === null || busy !== null) return
-    setBusy('diff'); setFailed(null); setNotice(null)
+    setBusy('diff'); setFailed(null); setNotice(null); setDialog(true)
     try {
       setDifference(await client.syncDiff())
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+    await readPlanQuietly()
+  }
+
+  /** What the newest proposal holds; the ledger keeps every run, so it is read fresh each time. */
+  const readPlan = async (): Promise<void> => {
+    if (client === null) return
+    const ledger = await client.reviewLedger()
+    setPlan(ledger.latest ?? null)
+  }
+
+  /**
+   * The plan is read whenever the dialog opens, because the review list and the dialog
+   * share one ledger: a proposal made or rejected elsewhere is what the reviewer sees here.
+   * A ledger that cannot be read leaves the history and the difference standing.
+   */
+  const readPlanQuietly = async (): Promise<void> => {
+    try {
+      await readPlan()
+    } catch {
+      setPlan(null)
+    }
+  }
+
+  /**
+   * The plain case: the branch holds memories this installation does not, and no subject
+   * is stated twice. Merging is additive and honors the branch's removals, so there is
+   * nothing to decide - the entries are simply added.
+   */
+  const addRemote = async (): Promise<void> => {
+    if (client === null || busy !== null || difference === null) return
+    setBusy('add'); setFailed(null); setNotice(null)
+    try {
+      const result = await client.pullSync()
+      setNotice(t('config.syncDiffAdded', { commit: result.commit.slice(0, 8), root: result.targetRoot }))
+      setPending(null)
+      await refresh()
+      try {
+        setDifference(await client.syncDiff())
+      } catch {
+        setDifference(null)
+      }
+      await readPlanQuietly()
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  /**
+   * Only a conflict needs a plan: the run reads both sides, and what it proposes is
+   * staged, never written. The reviewer then reads it, says what they think, and either
+   * approves it, asks again, or applies it as it stands.
+   */
+  const planDifference = async (guidance: string): Promise<void> => {
+    if (client === null || busy !== null) return
+    setBusy('plan'); setFailed(null); setNotice(null)
+    try {
+      const result = await client.reconcile(guidance)
+      const parts = [result.action === 'planned' ? t('review.planned', { operations: result.operations }) : t('review.none')]
+      if (result.guided === true) parts.push(t('review.guided'))
+      if (result.remoteEntries !== undefined && result.remoteEntries > 0) parts.push(t('review.remoteEntries', { count: result.remoteEntries }))
+      setNotice(parts.join(' '))
+      await readPlan()
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  /** An opinion never decides anything: it is what the next run reads. */
+  /**
+   * Asking the AI again after a rejection. A decided proposal is answered by its decision,
+   * so the reviewer's words only reach the next run once the proposal is open again;
+   * reopening is what makes them part of the evidence the run reads.
+   */
+  const replan = async (): Promise<void> => {
+    if (client === null || busy !== null) return
+    if (plan !== null && plan.status === 'rejected') {
+      setBusy('plan'); setFailed(null); setNotice(null)
+      try {
+        await client.reopenReview(plan.id)
+      } catch (reason) {
+        setFailed(message(reason)); setBusy(null); return
+      }
+      setBusy(null)
+    }
+    await planDifference('')
+  }
+
+  const leavePlanOpinion = async (): Promise<void> => {
+    const text = opinion.trim()
+    if (client === null || plan === null || text === '') return
+    setBusy('plan'); setFailed(null); setNotice(null)
+    try {
+      setPlan(await client.reviewOpinion(plan.id, text))
+      setOpinion('')
+      setNotice(t('review.opinionAdded'))
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  /** Approving decides the review; nothing is written until it is applied. */
+  const approvePlan = async (): Promise<void> => {
+    if (client === null || plan === null) return
+    setBusy('plan'); setFailed(null); setNotice(null)
+    try {
+      setPlan(await client.decideReview(plan.id, 'accepted'))
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setBusy(null) }
+  }
+
+  const applyPlan = async (): Promise<void> => {
+    if (client === null || plan === null || busy !== null) return
+    setBusy('apply'); setFailed(null); setNotice(null)
+    try {
+      const result = await client.applyReview(plan.id)
+      setNotice(t('review.applied', { count: result.applied }))
+      await readPlan()
+      await refresh()
     } catch (reason) {
       setFailed(message(reason))
     } finally { setBusy(null) }
@@ -387,13 +526,25 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const editable = !disabled && client !== null
   const changed = pending?.components.filter(component => component.changed).length ?? 0
   const selected = repositories?.some(repository => repository.url === draft.repoUrl) === true ? draft.repoUrl : ''
+  // What the difference asks of the reader: a plan only where a subject is stated twice,
+  // a plain addition where the branch only holds memories this installation lacks. The two
+  // sides of a conflict stay in the raw diffs, so they are taken out of both counts here:
+  // neither of them can be added or pushed on its own.
+  const conflicts = difference?.conflicts ?? []
+  const conflicted = new Set(conflicts.flatMap(conflict => [conflict.target + '\u0000' + conflict.local.content, conflict.target + '\u0000' + conflict.remote.content]))
+  const additions = difference === null ? 0 : difference.remoteOnly.filter(entry => !conflicted.has(entry.target + '\u0000' + entry.content)).length
+  const onlyHere = difference === null ? 0 : difference.localOnly.filter(entry => !conflicted.has(entry.target + '\u0000' + entry.content)).length
+  const rejected = plan !== null && plan.status === 'rejected'
+  // A decided proposal is answered by its decision, so its opinions only reach the next
+  // run once the proposal is open again: a rejected plan waits for an opinion first.
+  const awaitingOpinion = rejected && plan.opinions.length === 0
 
   return <div className={css.syncRow} role="group" aria-labelledby="mnemon-sync-heading">
     <SettingRow title={t('config.syncTitle')} titleId="mnemon-sync-heading" hint={t('config.syncSimpleDescription')}>
       <div className={css.rowActions}>
         <Button variant="outline" size="sm" disabled={!editable || busy !== null} onClick={() => setOpen(current => !current)}>{open ? t('config.syncHide') : t('config.syncConfigure')}</Button>
         <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void preview()}>{busy === 'preview' ? t('config.syncPreviewing') : t('config.syncPreview')}</Button>
-        <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void loadBackups()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('config.syncBackups')}</Button>
+        <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void loadHistory()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('config.syncBackups')}</Button>
         <Button variant="primary" size="sm" disabled={!ready || disabled || busy !== null} onClick={() => void push()}>{busy === 'push' ? t('config.syncPushing') : t('config.syncPush')}</Button>
       </div>
     </SettingRow>
@@ -532,66 +683,138 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setPending(null)}>{t('common.cancel')}</Button>
       <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void pull()}>{busy === 'pull' ? t('config.syncPulling') : t('config.syncPull')}</Button>
     </div>}
-    {difference !== null && <div className={css.syncDiff} role="status">
-      <header>
-        <strong>{t('config.syncDiffTitle', { commit: difference.commit.slice(0, 8), shared: difference.shared })}</strong>
-        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setDifference(null)}>{t('common.close')}</Button>
-      </header>
-      <small>{t('config.syncDiffSides', { local: difference.local.entries, remote: difference.remote.entries, machine: ownerName(t, difference.remote.machine) })}</small>
-      {difference.truncated && <small>{t('config.syncDiffTruncated')}</small>}
-      {difference.remoteTombstones.length > 0 && <small>{t('config.syncDiffTombstones', { count: difference.remoteTombstones.length })}</small>}
-      <div className={css.syncDiffColumns}>
-        <div>
-          <strong>{t('config.syncDiffLocalOnly', { count: difference.localOnly.length })}</strong>
-          {difference.localOnly.length === 0
-            ? <small>{t('config.syncDiffNone')}</small>
-            : <ul>{difference.localOnly.map(entry => diffLine(t, entry))}</ul>}
+    {dialog && <MnemonDialog title={t('config.syncBackups')} closeLabel={t('common.close')} wide
+      busy={busy !== null} onClose={() => setDialog(false)}>
+      <div className={css.syncDialogBody}>
+        <div className={css.syncBackups}>
+          <header>
+            <strong>{t('config.syncBackupsTitle', { branch: backups?.branch ?? status?.config.branch ?? '' })}</strong>
+            <div className={css.rowActions}>
+              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadHistory()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('review.refresh')}</Button>
+            </div>
+          </header>
+          {backups === null
+            ? <small>{t('config.syncBackupsLoading')}</small>
+            : <>
+              <small>{t('config.syncBackupsHint', { subdir: backups.subdir })}</small>
+              {backups.commits.length === 0
+                ? <small>{t('config.syncBackupsEmpty')}</small>
+                : <div className={css.syncBackupList}>
+                  {backups.commits.map(commit => <div key={commit.commit} className={css.syncBackupEntry}>
+                    <header>
+                      <div className={css.reviewTitle}>
+                        <strong>{commit.message}</strong>
+                        <Tag tone="quiet">{commit.commit.slice(0, 8)}</Tag>
+                      </div>
+                      <div className={css.rowActions}>
+                        <Button variant="ghost" size="sm" disabled={busy !== null}
+                          onClick={() => setOpenCommit(openCommit === commit.commit ? null : commit.commit)}>
+                          {openCommit === commit.commit ? t('review.collapse') : t('review.expand')}</Button>
+                      </div>
+                    </header>
+                    <small>{t('config.syncBackupMeta', { machine: ownerName(t, commit.machine), time: stamp(commit.committedAt) })}</small>
+                    {commit.pushedAt !== undefined && <small>{t('config.syncBackupPushedAt', { time: stamp(commit.pushedAt) })}</small>}
+                    {openCommit === commit.commit && <div className={css.syncBackupComponents}>
+                      {commit.components.length === 0
+                        ? <small>{t('config.syncBackupNoComponents')}</small>
+                        : commit.components.map(component => <small key={component.component}>
+                            {t('config.syncBackupComponent', { component: component.component, items: component.items, files: component.files, size: humanBytes(component.bytes) })}
+                          </small>)}
+                    </div>}
+                  </div>)}
+                  {backups.truncated && <small>{t('config.syncBackupsTruncated')}</small>}
+                </div>}
+            </>}
         </div>
-        <div>
-          <strong>{t('config.syncDiffRemoteOnly', { count: difference.remoteOnly.length })}</strong>
-          {difference.remoteOnly.length === 0
-            ? <small>{t('config.syncDiffNone')}</small>
-            : <ul>{difference.remoteOnly.map(entry => diffLine(t, entry))}</ul>}
+        <div className={css.syncDiff}>
+          <header>
+            <strong>{t('config.syncDiffTitle', { commit: difference?.commit.slice(0, 8) ?? '', shared: difference?.shared ?? 0 })}</strong>
+            <div className={css.rowActions}>
+              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadDifference()}>{busy === 'diff' ? t('config.syncPreviewing') : t('review.refresh')}</Button>
+            </div>
+          </header>
+          {difference === null
+            ? <small>{t('config.syncBackupsLoading')}</small>
+            : <>
+              <small>{t('config.syncDiffSides', { local: difference.local.entries, remote: difference.remote.entries, machine: ownerName(t, difference.remote.machine) })}</small>
+              {difference.truncated && <small>{t('config.syncDiffTruncated')}</small>}
+              {difference.remoteTombstones.length > 0 && <small>{t('config.syncDiffTombstones', { count: difference.remoteTombstones.length })}</small>}
+              {conflicts.length === 0
+                ? <p className={css.syncDialogNote}>{additions === 0 ? t('config.syncDiffNothing') : t('config.syncDiffClear')}</p>
+                : <p className={css.syncDialogNote}>{t('config.syncDiffConflicts', { count: conflicts.length })}</p>}
+              {conflicts.length === 0 && additions > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffAdditions', { count: additions })}</p>}
+              {conflicts.length === 0 && onlyHere > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffLocalOnlyNote', { count: onlyHere })}</p>}
+              {conflicts.length > 0 && <div className={css.syncConflictList}>
+                {conflicts.map(conflict => <div key={conflict.target + '\u0000' + conflict.local.content} className={css.syncConflict} data-target={conflict.target}>
+                  <header>
+                    <strong>{t(conflict.target === 'user' ? 'review.targetUser' : 'review.targetMemory')}</strong>
+                    <small>{conflict.local.importance + ' · ' + Math.round(conflict.similarity * 100) + '%'}</small>
+                  </header>
+                  <div className={css.syncConflictSides}>
+                    <div>
+                      <small>{t('config.syncDiffHere')}</small>
+                      <span>{clip(conflict.local.content, 400)}</span>
+                    </div>
+                    <div>
+                      <small>{t('config.syncDiffThere')}</small>
+                      <span>{clip(conflict.remote.content, 400)}</span>
+                    </div>
+                  </div>
+                </div>)}
+              </div>}
+              {additions > 0 && conflicts.length === 0 && <div className={css.rowActions}>
+                <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote()}>
+                  {busy === 'add' ? t('config.syncDiffAdding') : t('config.syncDiffAdd')}</Button>
+              </div>}
+              {conflicts.length > 0 && <div className={css.syncPlan}>
+                <header>
+                  <strong>{t('config.syncDiffPlan')}</strong>
+                  <div className={css.rowActions}>
+                    <Button variant="outline" size="sm" disabled={busy !== null || disabled || awaitingOpinion} onClick={() => void replan()}>
+                      {busy === 'plan' ? t('config.syncDiffReconciling') : plan === null ? t('config.syncDiffReconcile') : t('config.syncDiffPlanAgain')}</Button>
+                    {plan !== null && plan.status === 'pending' && <Button variant="primary" size="sm" disabled={busy !== null || disabled}
+                      onClick={() => void approvePlan()}>{t('config.syncDiffPlanApprove')}</Button>}
+                    {plan !== null && plan.status === 'accepted' && plan.appliedAt === undefined && <Button variant="primary" size="sm" disabled={busy !== null || disabled}
+                      onClick={() => void applyPlan()}>{busy === 'apply' ? t('review.applying') : t('config.syncDiffPlanApply')}</Button>}
+                  </div>
+                </header>
+                {plan === null
+                  ? <small>{t('review.noOpinions')}</small>
+                  : <>
+                    <header>
+                      <strong>{plan.title}</strong>
+                      <Tag tone={STATUS_TONE[plan.status]}>{t(STATUS_KEY[plan.status])}</Tag>
+                    </header>
+                    <p>{plan.summary}</p>
+                    <ol className={css.reviewOperations}>
+                      {plan.operations.map((operation, index) => <li key={index}>
+                        <span>{operationText(t, operation)}</span>
+                        <small>{operation.reason}</small>
+                      </li>)}
+                    </ol>
+                    {plan.appliedAt !== undefined && <small className={css.syncSuccess}>{t('review.appliedAt', { time: stamp(plan.appliedAt) })}</small>}
+                    {plan.status === 'rejected' && <small>{t('config.syncDiffPlanRejected')}</small>}
+                    <div className={css.reviewOpinions}>
+                      <strong>{t('review.opinions')}</strong>
+                      {plan.opinions.length === 0
+                        ? <small>{t('review.noOpinions')}</small>
+                        : plan.opinions.map(item => <div key={item.id}>
+                            <strong>{item.author === 'agent' ? t('review.authorAgent') : t('review.authorUser')}</strong>
+                            <span>{item.text}</span>
+                          </div>)}
+                    </div>
+                    <div className={css.reviewOpinionForm}>
+                      <input type="text" value={opinion} placeholder={t('review.opinionPlaceholder')} aria-label={t('review.opinions')}
+                        disabled={busy !== null} onChange={event => setOpinion(event.target.value)} />
+                      <Button variant="outline" size="sm" disabled={busy !== null || opinion.trim() === ''}
+                        onClick={() => void leavePlanOpinion()}>{t('review.opinionSend')}</Button>
+                    </div>
+                  </>}
+              </div>}
+            </>}
         </div>
       </div>
-    </div>}
-    {backups !== null && <div className={css.syncBackups} role="status">
-      <header>
-        <strong>{t('config.syncBackupsTitle', { branch: backups.branch })}</strong>
-        <div className={css.rowActions}>
-          <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadBackups()}>{t('review.refresh')}</Button>
-          <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => { setBackups(null); setOpenCommit(null) }}>{t('common.close')}</Button>
-        </div>
-      </header>
-      <small>{t('config.syncBackupsHint', { subdir: backups.subdir })}</small>
-      {backups.commits.length === 0
-        ? <small>{t('config.syncBackupsEmpty')}</small>
-        : <div className={css.syncBackupList}>
-          {backups.commits.map(commit => <div key={commit.commit} className={css.syncBackupEntry}>
-            <header>
-              <div className={css.reviewTitle}>
-                <strong>{commit.message}</strong>
-                <Tag tone="quiet">{commit.commit.slice(0, 8)}</Tag>
-              </div>
-              <div className={css.rowActions}>
-                <Button variant="ghost" size="sm" disabled={busy !== null}
-                  onClick={() => setOpenCommit(openCommit === commit.commit ? null : commit.commit)}>
-                  {openCommit === commit.commit ? t('review.collapse') : t('review.expand')}</Button>
-              </div>
-            </header>
-            <small>{t('config.syncBackupMeta', { machine: ownerName(t, commit.machine), time: stamp(commit.committedAt) })}</small>
-            {commit.pushedAt !== undefined && <small>{t('config.syncBackupPushedAt', { time: stamp(commit.pushedAt) })}</small>}
-            {openCommit === commit.commit && <div className={css.syncBackupComponents}>
-              {commit.components.length === 0
-                ? <small>{t('config.syncBackupNoComponents')}</small>
-                : commit.components.map(component => <small key={component.component}>
-                    {t('config.syncBackupComponent', { component: component.component, items: component.items, files: component.files, size: humanBytes(component.bytes) })}
-                  </small>)}
-            </div>}
-          </div>)}
-          {backups.truncated && <small>{t('config.syncBackupsTruncated')}</small>}
-        </div>}
-    </div>}
+    </MnemonDialog>}
     <div className={css.syncFeedback} aria-live="polite">
       {failed !== null && <p className={css.error} role="alert">{t('config.syncFailed', { error: failed })}</p>}
       {notice !== null && <p className={css.syncSuccess}>{notice}</p>}

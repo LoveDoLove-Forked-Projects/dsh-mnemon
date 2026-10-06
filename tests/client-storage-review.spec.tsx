@@ -5,6 +5,7 @@ import type { Config } from '../src/host/config.ts'
 import type { ClientConnectionHandle, ClientSettingsScope } from '../src/host/dsh.ts'
 import { MnemonReviewSection } from '../src/client/MnemonReviewSection.tsx'
 import { MnemonSettingsCard } from '../src/client/MnemonSettingsCard.tsx'
+import { MnemonSyncSection } from '../src/client/MnemonSyncSection.tsx'
 import { translateEn, translateZh } from '../src/client/locales.ts'
 import { settingsScope } from './helpers/settings-scope.ts'
 
@@ -15,6 +16,19 @@ const directoryChoice = (option: string, group = '数据目录') =>
   within(screen.getByRole('radiogroup', { name: group })).getByRole('radio', { name: option }) as HTMLInputElement
 
 const button = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement
+
+/**
+ * A panel button that is idle. Every action in the sync panel refuses to run while another
+ * one is in flight, so a click is only real once the button is enabled again.
+ */
+const idle = async (name: string): Promise<HTMLButtonElement> => {
+  let element = button(name)
+  await waitFor(() => {
+    element = button(name)
+    expect(element.disabled).toBe(false)
+  })
+  return element
+}
 
 /** The section of the card that holds the storage, sync and review rows. */
 const section = () => screen.getByRole('region', { name: '存储' })
@@ -190,7 +204,7 @@ describe('memory reconciliation review', () => {
     expect(screen.getByText('涉及其他机器的记忆：desktop')).toBeTruthy()
     expect(screen.getByText('待审查')).toBeTruthy()
 
-    fireEvent.click(button('查看'))
+    fireEvent.click(await idle('查看'))
     expect(screen.getByText('Both installations recorded the same answer.')).toBeTruthy()
     expect(screen.getByText('删除用户记忆：Prefer short answers')).toBeTruthy()
     expect(screen.getByText('归档文档 doc-9')).toBeTruthy()
@@ -198,7 +212,7 @@ describe('memory reconciliation review', () => {
 
     // An opinion is submitted with the text the user typed, and the box clears.
     fireEvent.change(screen.getByRole('textbox', { name: '意见' }), { target: { value: '  Keep the desktop wording.  ' } })
-    fireEvent.click(button('提交意见'))
+    fireEvent.click(await idle('提交意见'))
     await waitFor(() => expect(calls.some(call => call.endpoint === 'opinion')).toBe(true))
     expect(calls.find(call => call.endpoint === 'opinion')?.payload).toEqual({ id: 'review-1', text: 'Keep the desktop wording.', author: 'user' })
     await waitFor(() => expect(screen.getByText('Keep the desktop wording.')).toBeTruthy())
@@ -264,7 +278,7 @@ describe('memory reconciliation review', () => {
     render(<MnemonReviewSection connection={connection} disabled={false} t={translateZh} />)
     await screen.findByText('Merge the duplicated preference')
 
-    fireEvent.click(button('查看'))
+    fireEvent.click(await idle('查看'))
     // An untouched review applies the whole plan, so the button offers all of it.
     expect(button('执行')).toBeTruthy()
     expect(screen.getByText('已选 2/2 条')).toBeTruthy()
@@ -306,5 +320,269 @@ describe('memory reconciliation review', () => {
     expect((await screen.findByRole('alert')).textContent).toBe('执行失败：operation 2 (document-archive) failed: the document is gone')
     expect(button('执行')).toBeTruthy()
     expect(button('重新打开')).toBeTruthy()
+  })
+})
+
+const syncConfig = {
+  repoUrl: 'https://github.com/me/memory.git',
+  branch: 'mnemon-sync',
+  subdir: 'mnemon/',
+  hasToken: false,
+  credentialSource: 'none',
+  authorName: 'Me',
+  authorEmail: 'me@example.com',
+}
+
+const syncStatus = {
+  configured: true,
+  config: syncConfig,
+  configPath: '/data/state/sync-git.json',
+  mirrorPath: '/data/state/sync/git',
+  git: { available: true, required: '2.30' },
+  remote: { reachable: true, branchExists: true, commit: 'abcdef1234567890' },
+  machine: { id: 'machine-a', label: 'laptop', createdAt: '2026-08-14T12:00:00.000Z' },
+}
+
+const here = { target: 'user', content: 'Prefer concise answers for all replies', importance: 'normal', updatedAt: '2026-08-14T12:00:00.000Z' }
+const there = { target: 'user', content: 'Prefer concise answers in every reply', importance: 'normal', updatedAt: '2026-08-13T09:00:00.000Z' }
+
+/** One reading of the branch: what each side holds, and where the two word a subject differently. */
+function differenceOf(overrides: Record<string, unknown> = {}) {
+  return {
+    repoUrl: syncConfig.repoUrl,
+    branch: syncConfig.branch,
+    subdir: syncConfig.subdir,
+    commit: 'abcdef1234567890',
+    localExportAt: '2026-08-14T12:00:00.000Z',
+    local: { exportedAt: '2026-08-14T12:00:00.000Z', entries: 2 },
+    remote: { exportedAt: '2026-08-13T09:00:00.000Z', entries: 2, machine: { id: 'machine-b', label: 'desktop', createdAt: '2026-08-01T00:00:00.000Z' } },
+    localOnly: [here, { target: 'memory', content: 'Local only note', importance: 'critical' }],
+    remoteOnly: [there, { target: 'memory', content: 'Deploy on Fridays', importance: 'critical' }],
+    conflicts: [{ target: 'user', local: here, remote: { ...there, origin: { machine: 'machine-b', label: 'desktop', at: '2026-08-13T09:00:00.000Z' } }, similarity: 0.698 }],
+    shared: 0,
+    truncated: false,
+    remoteTombstones: [],
+    ...overrides,
+  }
+}
+
+const syncBackups = {
+  repoUrl: syncConfig.repoUrl,
+  branch: syncConfig.branch,
+  subdir: syncConfig.subdir,
+  commits: [{
+    commit: 'abcdef1234567890',
+    message: 'Publish from B',
+    committedAt: '2026-08-14T12:00:00.000Z',
+    machine: { id: 'machine-b', label: 'desktop', createdAt: '2026-08-01T00:00:00.000Z' },
+    components: [{ component: 'runtime', files: 2, bytes: 1024, items: 1 }],
+  }],
+  truncated: false,
+}
+
+/**
+ * The sync channel and the review ledger behind one dialog. The Host keeps both, so each
+ * write answers the way the Host would store it, and every call is recorded.
+ */
+function syncHost(state: { difference: Record<string, unknown>; plan?: Record<string, unknown> | null; backups?: Record<string, unknown> }, overrides: Record<string, (payload: Record<string, unknown>) => unknown> = {}) {
+  const calls: Array<{ endpoint: string; payload: Record<string, unknown> }> = []
+  const { connection } = recordingHost({
+    '/dsh-mnemon-sync status': () => syncStatus,
+    '/dsh-mnemon-sync backups': () => state.backups ?? syncBackups,
+    '/dsh-mnemon-sync diff': () => state.difference,
+    '/dsh-mnemon-sync pull': () => ({ imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [] }),
+    '/dsh-mnemon-review view': () => ({ path: '/data/state/review-ledger.json', entries: state.plan === undefined || state.plan === null ? [] : [state.plan], pending: state.plan === undefined || state.plan === null ? 0 : 1, ...(state.plan === undefined || state.plan === null ? {} : { latest: state.plan }) }),
+    '/dsh-mnemon-review reconcile': () => {
+      state.plan = { ...planEntry }
+      return { title: planEntry.title, summary: planEntry.summary, action: 'planned', operations: 2, foreignMachines: ['desktop'], provider: 'openai', runId: 'run-1' }
+    },
+    '/dsh-mnemon-review opinion': payload => {
+      state.plan = { ...state.plan, opinions: [{ id: 'opinion-1', author: payload.author ?? 'user', text: payload.text, createdAt: '2026-08-14T12:01:00.000Z' }] }
+      return state.plan
+    },
+    '/dsh-mnemon-review decide': payload => { state.plan = { ...state.plan, status: payload.status }; return state.plan },
+    '/dsh-mnemon-review apply': () => {
+      state.plan = { ...state.plan, appliedAt: '2026-08-14T12:05:00.000Z' }
+      return { applied: 2, failures: [] }
+    },
+    ...overrides,
+  }, calls)
+  return { connection, calls }
+}
+
+const planEntry = {
+  id: 'review-1',
+  createdAt: '2026-08-14T12:00:00.000Z',
+  updatedAt: '2026-08-14T12:00:00.000Z',
+  title: 'Keep one wording of the preference',
+  summary: 'Both installations recorded the same answer in different words.',
+  machine: { id: 'machine-a', label: 'laptop' },
+  foreignMachines: ['desktop'],
+  status: 'pending' as const,
+  operations: [
+    { kind: 'runtime-replace' as const, target: 'user' as const, oldText: there.content, content: here.content, reason: 'The branch wording is the older one.' },
+    { kind: 'runtime-remove' as const, target: 'memory' as const, oldText: 'Deploy on Fridays', reason: 'The branch already records it.' },
+  ],
+  opinions: [],
+}
+
+const syncCalls = (calls: Array<{ endpoint: string; payload: Record<string, unknown> }>, endpoint: string) => calls.filter(call => call.endpoint === endpoint)
+
+describe('the branch history and the memories that differ', () => {
+  it('lists every backup in the dialog and asks for a plan only where a subject is stated twice', async () => {
+    const { connection, calls } = syncHost({ difference: differenceOf() })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    expect(within(dialog).getByText('mnemon-sync 上的备份')).toBeTruthy()
+    expect(await within(dialog).findByText('Publish from B')).toBeTruthy()
+    expect(within(dialog).getByText('abcdef12')).toBeTruthy()
+    // The stamp is whatever the reader's locale renders, so only its frame is fixed.
+    expect(within(dialog).getByText(/^来自 desktop · \d/u)).toBeTruthy()
+
+    // A backup says which components it holds, and how much of each.
+    fireEvent.click(await idle('查看'))
+    expect(within(dialog).getByText('runtime：1 条记忆 · 2 个文件 · 1.0 KB')).toBeTruthy()
+
+    // The difference below the history states the conflict and nothing to add on its own.
+    expect(within(dialog).getByText('与远端 abcdef12 的记忆差异（共有 0 条）')).toBeTruthy()
+    expect(within(dialog).getByText('本地 2 条 · 远端 2 条 · 远端来自 desktop')).toBeTruthy()
+    expect(within(dialog).getByText('有 1 个主题两边写法不同，需要整理。')).toBeTruthy()
+    expect(within(dialog).getByText(here.content)).toBeTruthy()
+    expect(within(dialog).getByText(there.content)).toBeTruthy()
+    expect(within(dialog).getByText('normal · 70%')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '直接新增' })).toBeNull()
+    expect(button('让 AI 整理')).toBeTruthy()
+    expect(syncCalls(calls, 'pull')).toEqual([])
+  })
+
+  it('adds what only the branch holds when no subject is stated twice', async () => {
+    const state = { difference: differenceOf({ localOnly: [], remoteOnly: [there], conflicts: [] }) }
+    const { connection, calls } = syncHost(state, {
+      '/dsh-mnemon-sync pull': () => {
+        state.difference = differenceOf({ localOnly: [], remoteOnly: [], conflicts: [], shared: 1 })
+        return { imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [] }
+      },
+    })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    expect(await within(dialog).findByText('没有冲突：两边没有同一主题的两种写法。')).toBeTruthy()
+    expect(within(dialog).getByText('远端还有 1 条本机没有的记忆，可以直接新增。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '让 AI 整理' })).toBeNull()
+
+    // Adding is the whole merge: it is confirmed to the Host and re-read afterwards.
+    fireEvent.click(await idle('直接新增'))
+    await waitFor(() => expect(syncCalls(calls, 'pull').length).toBe(1))
+    expect(syncCalls(calls, 'pull')[0]?.payload).toEqual({ confirmed: true })
+    expect(await screen.findByText('已新增远端 abcdef12 的记忆到 /data/mnemon。')).toBeTruthy()
+    await waitFor(() => expect(within(dialog).getByText('本机与远端没有需要合并的记忆。')).toBeTruthy())
+  })
+
+  it('reconciles a conflict, records an opinion, and writes only after approval', async () => {
+    const { connection, calls } = syncHost({ difference: differenceOf() })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    await within(dialog).findByText('有 1 个主题两边写法不同，需要整理。')
+
+    fireEvent.click(await idle('让 AI 整理'))
+    await waitFor(() => expect(syncCalls(calls, 'reconcile').length).toBe(1))
+    expect(syncCalls(calls, 'reconcile')[0]?.payload).toEqual({})
+    expect(await screen.findByText('已生成 2 条建议，接受后才会写入。')).toBeTruthy()
+
+    // The plan is shown with what each change would do, and nothing ran yet.
+    expect(within(dialog).getByText('Keep one wording of the preference')).toBeTruthy()
+    expect(within(dialog).getByText('Both installations recorded the same answer in different words.')).toBeTruthy()
+    expect(within(dialog).getByText('The branch wording is the older one.')).toBeTruthy()
+    expect(within(dialog).getByText('待审查')).toBeTruthy()
+    expect(syncCalls(calls, 'apply')).toEqual([])
+
+    // An opinion is recorded against the plan and is what the next run reads.
+    fireEvent.change(screen.getByRole('textbox', { name: '意见' }), { target: { value: '  Keep the branch wording.  ' } })
+    fireEvent.click(await idle('提交意见'))
+    await waitFor(() => expect(syncCalls(calls, 'opinion').length).toBe(1))
+    expect(syncCalls(calls, 'opinion')[0]?.payload).toEqual({ id: 'review-1', text: 'Keep the branch wording.', author: 'user' })
+    expect(await screen.findByText('已记录你的意见。')).toBeTruthy()
+
+    // Approving decides it; applying is a second, separate step.
+    fireEvent.click(await idle('满意，通过'))
+    await waitFor(() => expect(syncCalls(calls, 'decide').length).toBe(1))
+    expect(syncCalls(calls, 'decide')[0]?.payload).toEqual({ id: 'review-1', status: 'accepted' })
+    expect(await within(dialog).findByText('已接受')).toBeTruthy()
+    expect(syncCalls(calls, 'apply')).toEqual([])
+
+    fireEvent.click(await idle('采纳并执行'))
+    await waitFor(() => expect(syncCalls(calls, 'apply').length).toBe(1))
+    expect(syncCalls(calls, 'apply')[0]?.payload).toEqual({ id: 'review-1' })
+    expect(await screen.findByText('已执行 2 条改动。')).toBeTruthy()
+  })
+
+  it('waits for an opinion before asking again about a plan that was already rejected', async () => {
+    // A rejection can arrive from the review list; what the dialog does with it is what
+    // matters here: it never writes, and it only asks again once there is something to say.
+    const state: { difference: Record<string, unknown>; plan?: Record<string, unknown> | null } = { difference: differenceOf(), plan: { ...planEntry, status: 'rejected' } }
+    const { connection, calls } = syncHost(state, {
+      '/dsh-mnemon-review reopen': () => { state.plan = { ...state.plan, status: 'pending' }; return state.plan },
+      '/dsh-mnemon-review reconcile': () => {
+        state.plan = { ...planEntry, title: 'One wording, on the branch', summary: 'Reconciled again after the opinion.' }
+        return { title: 'One wording, on the branch', summary: 'Reconciled again after the opinion.', action: 'planned', operations: 1, foreignMachines: ['desktop'], provider: 'openai', runId: 'run-2' }
+      },
+    })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    expect(await within(dialog).findByText('已拒绝')).toBeTruthy()
+    expect(within(dialog).getByText('这份方案已被拒绝；给出意见后可以让 AI 重新整理。')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '采纳并执行' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '满意，通过' })).toBeNull()
+    expect(syncCalls(calls, 'apply')).toEqual([])
+
+    // An opinion is what a new run reads, and a decided proposal is answered by its
+    // decision, so the plan waits for one and the run is only asked after it is open again.
+    expect(button('让 AI 重新整理').disabled).toBe(true)
+    fireEvent.change(screen.getByRole('textbox', { name: '意见' }), { target: { value: 'Keep the branch wording.' } })
+    fireEvent.click(await idle('提交意见'))
+    await waitFor(() => expect(syncCalls(calls, 'opinion').length).toBe(1))
+    expect(button('让 AI 重新整理').disabled).toBe(false)
+
+    fireEvent.click(await idle('让 AI 重新整理'))
+    await waitFor(() => expect(syncCalls(calls, 'reopen').length).toBe(1))
+    expect(syncCalls(calls, 'reopen')[0]?.payload).toEqual({ id: 'review-1' })
+    await waitFor(() => expect(syncCalls(calls, 'reconcile').length).toBe(1))
+    expect(await within(dialog).findByText('One wording, on the branch')).toBeTruthy()
+    expect(await within(dialog).findByText('Reconciled again after the opinion.')).toBeTruthy()
+    expect(within(dialog).getByText('待审查')).toBeTruthy()
+    expect(syncCalls(calls, 'apply')).toEqual([])
+  })
+
+  it('reports when a plan ran instead of offering to run it a second time', async () => {
+    // Applying writes for real, so once it has run the dialog must say so and take the
+    // button away: running the same operations again would fail on text that is gone.
+    const state: { difference: Record<string, unknown>; plan?: Record<string, unknown> | null } = { difference: differenceOf(), plan: { ...planEntry, status: 'accepted' } }
+    const { connection, calls } = syncHost(state)
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    expect(await within(dialog).findByText('已接受')).toBeTruthy()
+
+    fireEvent.click(await idle('采纳并执行'))
+    await waitFor(() => expect(syncCalls(calls, 'apply').length).toBe(1))
+    expect(syncCalls(calls, 'apply')[0]?.payload).toEqual({ id: 'review-1' })
+    expect(await screen.findByText('已执行 2 条改动。')).toBeTruthy()
+
+    expect(await within(dialog).findByText(/执行于/)).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('button', { name: '采纳并执行' })).toBeNull())
+    expect(screen.queryByRole('button', { name: '满意，通过' })).toBeNull()
   })
 })

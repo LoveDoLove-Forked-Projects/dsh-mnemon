@@ -147,16 +147,20 @@ Credentials stay out of the payload, the configuration file and the logs:
 
 ### Seeing every machine's backups and differences
 
-**Backups** under **Storage → Git sync** walks the branch history newest first and names each backup by the manifest that commit carries: commit, message, time, the machine that published it, the push time and the component summary. The remote is one shared branch, so that history is the list of every machine's backups — which machine pushed what, and when. Opening one shows the components it carried. An empty branch reports an empty history instead of failing, and a commit whose manifest cannot be read is skipped while the rest are still listed.
+**Backups** under **Storage → Git sync** opens a dialog whose upper half walks the branch history newest first and names each backup by the manifest that commit carries: commit, message, time, the machine that published it, the push time and the component summary. The remote is one shared branch, so that history is the list of every machine's backups — which machine pushed what, and when. Opening one shows the components it carried. An empty branch reports an empty history instead of failing, and a commit whose manifest cannot be read is skipped while the rest are still listed.
 
-**Check remote** previews the component differences and then lists the memory differences entry by entry:
+The lower half of the dialog is the memory difference from the same reading, and **Check remote** opens that same dialog. The comparison is by entry, not by byte: an entry is identified by its target and its content, so the same memory counts as one entry wherever it was written. It gives both sides' export time, entry count and machine identity, and how many entries they share, and then three kinds of entries:
 
-- **Only here**: entries this installation holds and the branch does not.
-- **Only remotely**: entries the branch holds and this installation does not, each naming the machine it came from.
-- Both sides' export time, entry count and machine identity, and how many entries they share.
+- **One subject written twice**: two entries in the same target whose text is nearly the same, such as "Prefer concise answers in every reply" and "Prefer concise answers for all replies". Similarity is the overlap of character bigrams, and only `0.6` or more counts as the same subject, so unrelated memories are never called a conflict for sharing a target. This is the only kind that needs reconciling: the dialog shows both wordings side by side with their similarity and offers **Ask AI to reconcile**.
+- **Only remotely**: entries the branch holds and this installation does not, each naming the machine it came from. With no conflict they can simply be **added**: merging is additive and honors the removals the branch recorded, so nothing has to be decided.
+- **Only here**: entries this installation holds and the branch does not; a push shares them.
 - **Removals not applied here**: deletions the branch recorded that this installation has not carried out yet. The branch keeps every removal either side ever recorded, so a removal this installation already applied — or has since written over with the same content — is not counted again.
 
-The comparison is by entry, not by byte: an entry is identified by its target and its content, so the same memory counts as one entry wherever it was written. Both lists are bounded, and `truncated` in the answer says a side held more differences than the response lists. Checking the remote is a read: nothing is imported and no local memory changes.
+The two sides of a conflict stay in the per-side difference, but the dialog treats them as conflicts: **Add them** and the "only here" count both exclude them, so pressing the button never writes the second wording of a subject in as well. Both lists are bounded, and `truncated` in the answer says a side held more differences than the response lists.
+
+Reconciling reuses the existing review ledger. **Ask AI to reconcile** gives the run the difference — including both wordings of every conflict — as evidence, and the plan arrives as a pending proposal that is never written on its own; it lists every operation with its reason, and can be **Approved** and then **Applied**, or annotated with an opinion first. A rejected plan has to be **reopened** before the AI is asked again: a decided proposal is answered by its decision, so the reviewer's words only reach the next run once it is open again — which is why the dialog reads "leave an opinion, then ask again".
+
+Backups and differences are both reads: nothing is imported and no local memory changes. The only writes are **Add them** and **Apply**.
 
 ### Recovery rehearsal
 

@@ -388,18 +388,22 @@ export function ThreeTierSettings(props: ShippedSettingsServices & { page: Memor
   const request = useRef(0)
   // What the catalog read so far: DSH's route alone, or every Provider's models too.
   const loaded = useRef<'none' | 'route' | 'full'>('none')
+  // The page belongs to one conversation, so its effective route is that conversation's.
+  const sessionId = page.sessionId
+  const workspaceId = page.workspace?.id
+  const client = useMemo(() => connection === undefined ? undefined : new MnemonClient(connection, sessionId, workspaceId), [connection, sessionId, workspaceId])
   const load = useCallback((full: boolean): void => {
-    if (connection === undefined) return
+    if (client === undefined) return
     const current = ++request.current
     setCatalog(value => ({ ...value, state: 'loading', error: null }))
-    void new MnemonClient(connection).taskAgentModels(full).then(value => {
+    void client.taskAgentModels(full).then(value => {
       if (request.current !== current) return
       loaded.current = full ? 'full' : 'route'
       setCatalog({ state: 'ready', value, error: null, full })
     }, reason => {
       if (request.current === current) setCatalog(value => ({ ...value, state: 'error', error: message(reason) }))
     })
-  }, [connection])
+  }, [client])
   useEffect(() => () => { request.current += 1 }, [])
   // A fixed route shows every Provider's models; what was read already is not read again.
   const configuredMode = snapshot.value?.taskAgentModel?.mode === 'fixed' ? 'fixed' : 'inherit'
@@ -457,8 +461,12 @@ function TaskAgentModelRows(props: {
   const { route, t } = props
   const groups = props.catalog?.groups ?? []
   const group = groups.find(candidate => candidate.id === route.provider)
-  const inherited = props.catalog?.defaultSelection
-    ?? (props.catalog?.effective?.source === 'fixed' ? undefined : props.catalog?.effective)
+  // An inherited route is the catalog's effective one: the conversation's own
+  // model when the page was opened from one, the DSH new-session default
+  // otherwise. That default stays only as a hint when no route resolves at all.
+  const inherited = props.catalog?.effective?.source === 'fixed'
+    ? undefined
+    : props.catalog?.effective ?? props.catalog?.defaultSelection
   const fixed = props.mode === 'fixed' && !props.choosing
   const effective = props.mode === 'fixed'
     ? (!fixed || route.provider === '' || route.model === '' ? undefined : { provider: route.provider, model: route.model })
