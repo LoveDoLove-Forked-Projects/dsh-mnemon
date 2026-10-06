@@ -109,7 +109,12 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // measured package to 1,639,792 bytes (+2,911). Keep less than 1 KB of
 // headroom; the optional author is one branch in the Host bundle and adds no
 // credential, payload or endpoint to either half.
-const maximumUnpackedBytes = 1_640_500
+// Syncing settings with the payload, reconciling merged memory through the review
+// ledger, moving the data directory from the storage page and the GitHub transport
+// that falls back to the system proxy bring the measured package to 1,751,495 bytes
+// (+111,703). Keep less than 1 KB of headroom; the ledger, the migration plan and the
+// proxy discovery stay in the Host bundle and add no endpoint to lib/client.js.
+const maximumUnpackedBytes = 1_752_000
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)
