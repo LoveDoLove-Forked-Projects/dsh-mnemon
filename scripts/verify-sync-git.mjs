@@ -428,6 +428,17 @@ try {
   const nestedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: join(data.a, 'nested') }), 'storage-plan')
   check('planning a move into the data directory is refused as nested',
     nestedPlan.blocked === 'one directory is inside the other', JSON.stringify(nestedPlan.blocked))
+  // A genuinely separate, already occupied directory is the one case the plan
+  // refuses before touching anything: the current directory cannot be used for
+  // this, because after a completed move the Host itself follows the new root.
+  const occupiedTarget = join(fixture, 'data-a-occupied')
+  await mkdir(occupiedTarget)
+  await writeFile(join(occupiedTarget, 'keep.txt'), 'not a Mnemon root\n')
+  const occupiedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: occupiedTarget }), 'storage-plan')
+  check('a directory that already holds data is refused as a target',
+    occupiedPlan.targetOccupied === true && occupiedPlan.blocked === 'the target directory already holds data', JSON.stringify(occupiedPlan.blocked))
+  const occupiedMove = await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: occupiedTarget, confirmed: true })
+  expectFailure(occupiedMove, /cannot move the Mnemon data directory: the target directory already holds data/u, 'a move onto occupied data')
   const movePlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
   check('a usable target is planned with its size and no blocker',
     movePlan.from === data.a && movePlan.to === moveTarget && movePlan.blocked === undefined
@@ -443,21 +454,19 @@ try {
     && migrated.bytes > 0 && migrated.removed === true, JSON.stringify(migrated))
   check('the memory and the sync state arrived at the new directory',
     existsSync(join(moveTarget, 'runtime', 'MEMORY.md')) === true && existsSync(join(moveTarget, 'state', 'sync-git.json')) === true)
-  const occupiedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
-  check('a directory that already holds data is refused as a target',
-    occupiedPlan.targetOccupied === true && occupiedPlan.blocked === 'the target directory already holds data', JSON.stringify(occupiedPlan.blocked))
-  const occupiedMove = await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: moveTarget, confirmed: true })
-  expectFailure(occupiedMove, /cannot move the Mnemon data directory: the target directory already holds data/u, 'a move onto occupied data')
-  const repointed = expectOk(await call(a, '/dsh-mnemon-settings', 'mutate', { ops: [
-    { op: 'set', path: ['storageScope'], value: 'custom' },
-    { op: 'set', path: ['dataDir'], value: moveTarget },
-  ] }), 'settings mutate')
+  // The Host records the new location itself, so the profile already follows
+  // the move; planning the move again must report the directory it now uses.
+  const followedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
+  check('the moved directory is now the current one, so it is refused by name',
+    followedPlan.from === moveTarget && followedPlan.to === moveTarget && followedPlan.targetOccupied === false
+    && followedPlan.blocked === 'the data directory is already this directory', JSON.stringify(followedPlan.blocked))
+  const repointed = expectOk(await call(a, '/dsh-mnemon-settings', 'get', {}), 'settings get')
   check('the profile now points at the directory the data moved to',
     repointed.value.storageScope === 'custom' && repointed.value.dataDir === moveTarget, JSON.stringify(repointed.value.dataDir))
   const movedTarget = expectOk(await call(a, '/dsh-mnemon-pack', 'target', {}), 'pack target')
   check('the running Host reads and writes the moved directory',
     movedTarget.root === moveTarget && movedTarget.scope === 'custom', JSON.stringify(movedTarget))
-  check('the memory survived the move and the repointing',
+  check('the memory survived the move and the recorded location',
     (await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')).includes(MARKER))
 
   console.log('\n7. A reconciliation is proposed, reviewed with opinions, and only then applied')
