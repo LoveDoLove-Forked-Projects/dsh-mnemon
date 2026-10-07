@@ -199,7 +199,7 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 | `target` | 当前有效根、范围，以及“默认位置”对应的默认根 |
 | `export` | 导出完整、带 manifest 与 SHA-256 校验的 ZIP |
 | `inspect` | 解析并校验待导入 ZIP，返回组件与占用预览 |
-| `import` | 把 ZIP 安全合并到当前有效根；只读模式拒绝 |
+| `import` | 把 ZIP 安全合并到当前有效根；只读模式拒绝。结果里的 `runtime` 回报合并新增了几条、又有几条因为本机记录过删除而留在原处，可选 `revive: true` 表示这次导入推翻这些删除 |
 | `storage-plan` | 检查拟用的数据目录：目标现状、将迁移的文件数与字节数，以及无法迁移的原因；只读，且从不要求 `writeEnabled` |
 | `storage-migrate` | 把整个数据目录复制到目标路径，逐文件 SHA-256 校验通过后才删除原目录；成功后 Host 会把新路径记为 `custom` 数据目录并据此重建运行图，之后调用不会再读已删除的旧目录；需要 `confirmed: true`、`writeEnabled`，以及可写的设置档案——后者在任何文件被复制前先校验 |
 
@@ -214,8 +214,8 @@ Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert �
 | `push` | 把完整的 Mnemon Pack 载荷导出到镜像，提交并推送分支；需要 `confirmed: true` |
 | `preview` | 读取远端 manifest 与 SHA-256 清单，报告哪些组件与本地不同；只读 |
 | `backups` | 由新到旧遍历分支历史，用该提交携带的 Pack manifest 说明每次备份：提交号、说明、时间、发布它的机器、推送时间与组件摘要。可选 `limit` 限制返回条数，`truncated` 表示分支上还有更多；manifest 读不出来的提交会被跳过；只读 |
-| `diff` | 逐条比较本地载荷与分支载荷：两侧的导出时间、条目数与机器，只在本机的条目、只在远端的条目、共有条数，以及分支记录、而本机尚未执行的删除；只读 |
-| `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` |
+| `diff` | 逐条比较本地载荷与分支载荷：两侧的导出时间、条目数与机器，只在本机的条目、只在远端的条目、共有条数，`heldBack` 表示远端持有、却被本机自己的墓碑挡住的条数，以及分支记录、而本机尚未执行的删除；只读 |
+| `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` 与 `revive`——后者推翻本机记录过的删除，让被挡住的远端条目这次真的写入 |
 | `github-status` | 当前 Host 是否挂载了凭据存储、是否已登录账号、该存储是否可写、账号名与 scope，以及待完成的设备码；只读 |
 | `github-start` | 向 GitHub 申请设备码，返回设备码、验证地址与轮询间隔；需要 `writeEnabled: true` |
 | `github-poll` | 按 GitHub 要求的节奏询问一次浏览器步骤是否完成，成功时保存凭据；需要 `writeEnabled: true` |

@@ -22,7 +22,7 @@ import { DOCUMENTS_ACTIVE_LIMIT_BYTES, DOCUMENTS_VERSION, type DocumentRecord } 
 import { RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_MEMORY_VERSION, type RuntimeMemoryEntry, type RuntimeMemoryLimits, type RuntimeMemoryTarget } from 'dsh-mnemon-source-runtime/contracts'
 import { canonicalMemoryJson } from '../core/definitions.ts'
 import { createStorageRoot, type StorageRoot } from './storage-root.ts'
-import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonSettingsPayload, type MnemonSettingsNamespaceSnapshot, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
+import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonRuntimeMergeReport, type MnemonSettingsPayload, type MnemonSettingsNamespaceSnapshot, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
 import { MnemonMachineStore } from './machine-identity.ts'
 
 export type { MnemonPackComponent, MnemonPackComponentSummary, MnemonPackExport, MnemonPackImportMode, MnemonPackImportResult, MnemonPackManifest, MnemonPackPreview, MnemonPackScope } from "./protocol.ts"
@@ -277,7 +277,7 @@ export function parseRuntime(value: unknown, limits: RuntimeMemoryLimits = RUNTI
   })
   for (const target of ['user', 'memory'] as const) {
     const used = runtimeBytes(entries, target)
-    if (used > limits[target]) throw new Error(`runtime ${target} memory exceeds its ${limits[target]} byte limit`)
+    if (used > limits[target]) throw new Error(`runtime ${target} memory holds ${used} bytes and exceeds its ${limits[target]} byte limit`)
   }
   return { version: 1, entries }
 }
@@ -715,7 +715,7 @@ function advanceTombstones(root: string, entries: StoredRuntimeEntry[], machine:
 }
 
 /** One entry's identity across machines: its target plus its exact text. */
-function entryKey(entry: StoredRuntimeEntry): string {
+function entryKey(entry: { target: RuntimeMemoryTarget; content: string }): string {
   return `${entry.target}\0${entry.content}`
 }
 
@@ -751,18 +751,52 @@ function stampedEntries(entries: StoredRuntimeEntry[], machine: MnemonMachineIde
     : entry)
 }
 
-function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemoryLimits): RuntimeFile {
+/**
+ * What one merge did to the runtime entries, stated as counts rather than as a file:
+ * a page that reports "added" without this number is guessing, and a merge that drops
+ * an entry because a tombstone hides it has to be able to say how many it dropped.
+ */
+type RuntimeMergeReport = MnemonRuntimeMergeReport
+
+/**
+ * Fold one Pack's runtime entries into this data directory.
+ *
+ * A tombstone is this machine's own record that it deleted an entry, and it normally
+ * wins over the branch: without that rule a deleted memory would come back on every
+ * merge. `revive` is the one case where the reader says the deletion was wrong: the
+ * branch's copy is written again, and the tombstone is dropped so the next merge keeps
+ * agreeing with the branch instead of hiding the entry a second time.
+ */
+function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemoryLimits, options: { revive?: boolean } = {}): { runtime: RuntimeFile; report: RuntimeMergeReport; revived: MnemonTombstone[] } {
   const current = readCurrentRuntime(root, runtimeLimits)
   const incoming = parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits)
   const tombstones = mergeTombstones(root, pack).tombstones
-  const keys = new Set(current.entries.map(entryKey))
   const entries = current.entries.filter(entry => !tombstones.some(tombstone => tombstoneCovers(tombstone, entry)))
+  // What is present is what survives this machine's own deletions. Keying the merge off the
+  // stored file instead would count a deleted entry as already here, so reviving it would
+  // report nothing added while the tombstone kept it hidden — an add that adds nothing.
+  const keys = new Set(entries.map(entryKey))
+  const report: RuntimeMergeReport = { added: 0, held: 0 }
+  const revived: MnemonTombstone[] = []
   for (const entry of incoming.entries) {
     const key = entryKey(entry)
-    if (tombstones.some(tombstone => tombstoneCovers(tombstone, entry))) continue
-    if (!keys.has(key)) { keys.add(key); entries.push(entry) }
+    const hidden = tombstones.filter(tombstone => tombstoneCovers(tombstone, entry))
+    if (hidden.length > 0) {
+      if (options.revive !== true) { report.held += 1; continue }
+      // The reader overrules their own deletion: the entry comes back and the
+      // tombstones that hid it go, or the next merge would hide it again.
+      for (const tombstone of hidden) if (!revived.includes(tombstone)) revived.push(tombstone)
+    }
+    if (keys.has(key)) continue
+    keys.add(key)
+    entries.push(entry)
+    report.added += 1
   }
-  return parseRuntime({ version: 1, entries }, runtimeLimits)
+  return {
+    runtime: parseRuntime({ version: 1, entries }, runtimeLimits),
+    report,
+    revived: mergeTombstoneFiles({ version: 1, tombstones: revived }, { version: 1, tombstones: [] }).tombstones,
+  }
 }
 
 /** Tombstones only ever grow: the newest deletion of one entry wins, and neither side forgets one. */
@@ -861,14 +895,28 @@ function reconcilePersistedStore(root: string): void {
   }
 }
 
-function stageImport(root: string, pack: ParsedPack, components: MnemonPackComponent[], mode: MnemonPackImportMode, runtimeLimits: RuntimeMemoryLimits): string {
+function stageImport(root: string, pack: ParsedPack, components: MnemonPackComponent[], mode: MnemonPackImportMode, runtimeLimits: RuntimeMemoryLimits, options: { revive?: boolean } = {}): { staging: string; report: RuntimeMergeReport | undefined; revived: MnemonTombstone[] } {
   const staging = join(root, `.dsh-pack-stage-${randomUUID()}`)
   mkdirSync(staging, { recursive: true, mode: 0o700 })
   try {
+    let report: RuntimeMergeReport | undefined
+    let revived: MnemonTombstone[] = []
     if (components.includes('runtime')) {
-      const runtime = mode === 'merge' ? mergeRuntime(root, pack, runtimeLimits) : parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits)
+      const merged = mode === 'merge' ? mergeRuntime(root, pack, runtimeLimits, options) : undefined
+      const runtime = merged === undefined ? parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits) : merged.runtime
       writeRuntime(join(staging, 'runtime'), runtime)
-      writeTombstones(join(staging, 'state'), mergeTombstones(root, pack))
+      const tombstones = mergeTombstones(root, pack)
+      if (merged === undefined) {
+        writeTombstones(join(staging, 'state'), tombstones)
+      } else {
+        report = merged.report
+        revived = merged.revived
+        // A revived entry stays revived only if the tombstones that hid it are gone
+        // from the state this import commits, so they are dropped here rather than
+        // after the commit has already put them back.
+        const dropped = new Set(revived.map(tombstoneKey))
+        writeTombstones(join(staging, 'state'), dropped.size === 0 ? tombstones : { version: 1, tombstones: tombstones.tombstones.filter(tombstone => !dropped.has(tombstoneKey(tombstone))) })
+      }
     }
     if (components.includes('documents')) {
       const documents = mode === 'merge' ? mergeDocuments(root, pack) : archiveDocuments(pack)
@@ -885,7 +933,7 @@ function stageImport(root: string, pack: ParsedPack, components: MnemonPackCompo
       }
       writeRegistry(join(staging, 'data'), memory.registry, memory.databases)
     }
-    return staging
+    return { staging, report, revived }
   } catch (error) {
     rmSync(staging, { recursive: true, force: true })
     throw error
@@ -1092,7 +1140,7 @@ export class MnemonPackManager {
     }
   }
 
-  async importPack(base64: string, options: { mode: MnemonPackImportMode; components?: MnemonPackComponent[] }): Promise<MnemonPackImportResult> {
+  async importPack(base64: string, options: { mode: MnemonPackImportMode; components?: MnemonPackComponent[]; revive?: boolean }): Promise<MnemonPackImportResult> {
     const pack = parseArchive(base64, this.runtimeLimits)
     if (options.mode !== 'merge' && options.mode !== 'replace') throw new Error('Pack import mode must be merge or replace')
     if (options.components !== undefined && (new Set(options.components).size !== options.components.length || options.components.some(component => !COMPONENT_ORDER.includes(component)))) {
@@ -1104,12 +1152,13 @@ export class MnemonPackManager {
       await new Promise<void>(resolveReady => setImmediate(resolveReady))
       mkdirSync(this.root, { recursive: true, mode: 0o700 })
       return withLocks(this.root, components, (): MnemonPackImportResult => {
-        const staging = stageImport(this.root, pack, components, options.mode, this.runtimeLimits)
-        commitStaging(this.root, staging, components)
+        const staged = stageImport(this.root, pack, components, options.mode, this.runtimeLimits, options)
+        commitStaging(this.root, staged.staging, components)
         this.afterImport(components)
         return {
           imported: true, mode: options.mode, targetRoot: this.root, components,
           summary: pack.manifest.summary.filter(summary => components.includes(summary.component)),
+          ...(staged.report === undefined ? {} : { runtime: staged.report }),
         }
       })
     }).then(async (result): Promise<MnemonPackImportResult> => {

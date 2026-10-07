@@ -680,6 +680,13 @@ export class MnemonGitSync {
       // a memory that exists on one side alone is simply missing on the other.
       const found = conflictsOf(localOnly, remoteOnly).sort((left, right) => right.similarity - left.similarity)
       const conflicts = found.slice(0, MAX_DIFF_CONFLICTS)
+      // An entry the branch holds and this machine once deleted stays out of every merge
+      // until the reader says that deletion was wrong. Counting them here is what lets a
+      // page that offers to add the branch's memories say how many the offer would skip.
+      const mineTombstones = tombstonesOf(local)
+      const heldBack = theirs.entries.filter(entry =>
+        !mineKeys.has(entryKey(entry)) && mineTombstones.some(tombstone => tombstoneCovers(tombstone, entry)),
+      ).length
       return {
         repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir,
         commit: remote.commit, ...(remote.pushedAt === undefined ? {} : { pushedAt: remote.pushedAt }),
@@ -698,6 +705,7 @@ export class MnemonGitSync {
         truncated: mine.entries.length - shared > localOnly.length
           || theirs.entries.length - shared > remoteOnly.length
           || found.length > conflicts.length,
+        heldBack,
         remoteTombstones: unappliedRemovals(local, remote.files),
       }
     })
@@ -720,13 +728,16 @@ export class MnemonGitSync {
   }
 
   /** Preview the remote payload, then merge it through the importer Import ZIP uses. */
-  async pull(input: { mode?: MnemonPackImportMode; components?: MnemonPackComponent[]; signal?: AbortSignal } = {}): Promise<MnemonSyncPullResult> {
+  async pull(input: { mode?: MnemonPackImportMode; components?: MnemonPackComponent[]; revive?: boolean; signal?: AbortSignal } = {}): Promise<MnemonSyncPullResult> {
     const settings = this.requireRepository()
     await this.requireGit(input.signal)
     const mode = input.mode ?? 'merge'
-    const options: { mode: MnemonPackImportMode; components?: MnemonPackComponent[] } = input.components === undefined
-      ? { mode }
-      : { mode, components: input.components }
+    const options: { mode: MnemonPackImportMode; components?: MnemonPackComponent[]; revive?: boolean } = {
+      mode,
+      ...(input.components === undefined ? {} : { components: input.components }),
+      // Reviving is the reader overruling their own deletion; a plain merge keeps it.
+      ...(input.revive === true ? { revive: true } : {}),
+    }
     return this.lock(async () => {
       const remote = await this.readRemote(settings, input.signal)
       if (remote === undefined) throw new Error(this.absentPayload(settings))
@@ -737,6 +748,7 @@ export class MnemonGitSync {
         commit: remote.commit, ...(remote.pushedAt === undefined ? {} : { pushedAt: remote.pushedAt }),
         manifest: remote.manifest, targetRoot: imported.targetRoot,
         components: imported.components, summary: imported.summary,
+        ...(imported.runtime === undefined ? {} : { runtime: imported.runtime }),
       }
     })
   }

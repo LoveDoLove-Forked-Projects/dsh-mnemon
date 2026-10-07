@@ -614,12 +614,26 @@ export interface MnemonPackPreview {
   occupied: Record<MnemonPackComponent, boolean>
 }
 
+/**
+ * What a merge did to the runtime entries, stated as counts rather than as a file.
+ * A page that reports "added" without this number is guessing, and a merge that
+ * leaves an entry out because a tombstone still hides it has to say how many.
+ */
+export interface MnemonRuntimeMergeReport {
+  /** Incoming entries this merge wrote into the data directory. */
+  added: number
+  /** Incoming entries a tombstone still hides, so the merge left them out. */
+  held: number
+}
+
 export interface MnemonPackImportResult {
   imported: true
   mode: MnemonPackImportMode
   targetRoot: string
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
+  /** Present when this import merged runtime entries. */
+  runtime?: MnemonRuntimeMergeReport
 }
 
 /**
@@ -943,6 +957,8 @@ export interface MnemonSyncPullResult {
   targetRoot: string
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
+  /** Present when this pull merged runtime entries. */
+  runtime?: MnemonRuntimeMergeReport
 }
 
 /**
@@ -1025,6 +1041,12 @@ export interface MnemonSyncDiff {
   shared: number
   /** Whether a side held more differences than this response lists. */
   truncated: boolean
+  /**
+   * How many of the entries the branch holds and this machine does not are held
+   * back by this machine's own tombstones: a merge would leave every one of them
+   * out, so a page that offers to add them has to say what that offer would do.
+   */
+  heldBack: number
   remoteTombstones: MnemonTombstone[]
 }
 

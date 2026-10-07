@@ -3,6 +3,7 @@ import { Button, Tag } from '@deepseek-ai/dsh-client-ui-primitives'
 import { type ClientConnectionHandle, type MnemonReconcileOperation, type MnemonReviewEntry, type MnemonReviewLedgerView, type MnemonReviewStatus } from '../host/protocol.ts'
 import { MnemonClient } from './api.ts'
 import type { MnemonTranslate } from './locales.ts'
+import { MnemonDialog } from './MnemonDialog.tsx'
 import css from './MnemonSettingsCard.module.css'
 import { message } from './page-kit.tsx'
 import { SettingRow } from './settings-controls.tsx'
@@ -76,7 +77,7 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
   const [opinion, setOpinion] = useState('')
   const [guidance, setGuidance] = useState('')
   const [chosen, setChosen] = useState<Record<string, number[]>>({})
-  const [showHistory, setShowHistory] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (client === null) return
@@ -158,14 +159,87 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
 
   const entries = ledger?.entries ?? []
   const pending = ledger?.pending ?? 0
-  // A plan that already ran is history: it stays readable, but it stops crowding
-  // the plans that still need an answer. The most recent plan stays in the open
-  // list even after it ran, because that is the one the reader just acted on. A
-  // refusal stays open too: the next run waits for the opinion it was refused for.
+  // A plan that already ran is history: it moves to its own popup so it stops taking
+  // up the page. The most recent plan stays in the open list even after it ran,
+  // because that is the one the reader just acted on. A refusal stays open too: the
+  // next run waits for the opinion it was refused for.
   const applied = entries.filter(entry => entry.status === 'accepted' && entry.appliedAt !== undefined)
   const history = applied.filter(entry => entry !== entries[0])
   const current = entries.filter(entry => !history.includes(entry))
-  const shown = showHistory ? [...current, ...history] : current
+  /** One plan, as it reads in the open list and in the history popup alike. */
+  const renderEntry = (entry: MnemonReviewEntry): JSX.Element => {
+    const open = openId === entry.id
+    const selection = selectionOf(entry)
+    return <div key={entry.id} className={css.reviewEntry} data-status={entry.status}>
+      <header>
+        <div className={css.reviewTitle}>
+          <strong>{entry.title}</strong>
+          <Tag tone={STATUS_TONE[entry.status]}>{t(STATUS_KEY[entry.status])}</Tag>
+        </div>
+        <div className={css.rowActions}>
+          <Button variant="ghost" size="sm" onClick={() => { setOpenId(open ? null : entry.id) }}>{open ? t('review.collapse') : t('review.expand')}</Button>
+          {entry.status === 'pending' && <>
+            <Button variant="outline" size="sm" disabled={busy !== null}
+              onClick={() => { submit(entry.id, api => api.decideReview(entry.id, 'accepted')) }}>{t('review.accept')}</Button>
+            <Button variant="ghost" size="sm" disabled={busy !== null}
+              onClick={() => { submit(entry.id, api => api.decideReview(entry.id, 'rejected')) }}>{t('review.reject')}</Button>
+          </>}
+          {entry.status === 'accepted' && <Button variant="primary" size="sm" disabled={busy !== null || props.disabled}
+            onClick={() => { apply(entry) }}>
+            {busy === entry.id
+              ? t('review.applying')
+              : selection.length > 0 && selection.length < entry.operations.length ? t('review.applyCount', { count: selection.length }) : t('review.apply')}</Button>}
+          {entry.status !== 'pending' && <Button variant="ghost" size="sm" disabled={busy !== null}
+            onClick={() => { submit(entry.id, api => api.reopenReview(entry.id)) }}>{t('review.reopen')}</Button>}
+        </div>
+      </header>
+      <small>{t('review.meta', { count: entry.operations.length, machine: entry.machine.label, time: stamp(entry.createdAt) })}</small>
+      {entry.foreignMachines.length > 0 && <small>{t('review.foreign', { machines: entry.foreignMachines.join(', ') })}</small>}
+      {entry.appliedAt !== undefined && <small className={css.syncSuccess}>{t('review.appliedAt', { time: stamp(entry.appliedAt) })}</small>}
+      {entry.failure !== undefined && <p className={css.error} role="alert">{t('review.applyFailed', { error: entry.failure })}</p>}
+      {open && <>
+        <p>{entry.summary}</p>
+        {entry.status === 'accepted' && <div className={css.reviewSelection}>
+          <small>{t('review.selectHint')}</small>
+          <div className={css.rowActions}>
+            <span className={css.reviewSelected}>{t('review.selected', { count: selection.length, total: entry.operations.length })}</span>
+            <Button variant="ghost" size="sm" disabled={busy !== null}
+              onClick={() => { keep(entry, allOf(entry)) }}>{t('review.selectAll')}</Button>
+            <Button variant="ghost" size="sm" disabled={busy !== null}
+              onClick={() => { keep(entry, []) }}>{t('review.selectNone')}</Button>
+          </div>
+        </div>}
+        <ol className={css.reviewOperations}>
+          {entry.operations.map((operation, index) => <li key={index}>
+            {entry.status === 'accepted'
+              ? <label>
+                  <input type="checkbox" checked={selection.includes(index)} disabled={busy !== null}
+                    onChange={() => { toggle(entry, index) }} />
+                  <span>{operationText(t, operation)}</span>
+                </label>
+              : <span>{operationText(t, operation)}</span>}
+            <small>{operation.reason}</small>
+          </li>)}
+        </ol>
+        <div className={css.reviewOpinions}>
+          <strong>{t('review.opinions')}</strong>
+          {entry.opinions.length === 0
+            ? <small>{t('review.noOpinions')}</small>
+            : entry.opinions.map(item => <div key={item.id}>
+                <strong>{item.author === 'agent' ? t('review.authorAgent') : t('review.authorUser')}</strong>
+                <span>{item.text}</span>
+              </div>)}
+        </div>
+        <div className={css.reviewOpinionForm}>
+          <input type="text" value={opinion} placeholder={t('review.opinionPlaceholder')} aria-label={t('review.opinions')}
+            disabled={busy !== null} onChange={event => setOpinion(event.target.value)} />
+          <Button variant="outline" size="sm" disabled={busy !== null || opinion.trim() === ''}
+            onClick={() => { leaveOpinion(entry.id) }}>{t('review.opinionSend')}</Button>
+        </div>
+      </>}
+    </div>
+  }
+
   return <div className={css.syncRow} role="group" aria-labelledby="mnemon-review-heading">
     <SettingRow title={t('config.reconcileTitle')} titleId="mnemon-review-heading" hint={t('config.reconcileDescription')}>
       <div className={css.rowActions}>
@@ -188,82 +262,20 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
     {failed !== null && <p className={css.error} role="alert">{t('review.failed', { error: failed })}</p>}
     {notice !== null && <p className={css.syncSuccess} role="status">{notice}</p>}
     {history.length > 0 && <div className={css.rowActions}>
-      <Button variant="ghost" size="sm" onClick={() => { setShowHistory(!showHistory) }}>
+      <Button variant="ghost" size="sm" onClick={() => { setHistoryOpen(true) }}>
         {t('review.history', { count: history.length })}</Button>
     </div>}
-    {shown.length > 0 && <div className={css.reviewList}>
-      {shown.map(entry => {
-        const open = openId === entry.id
-        const selection = selectionOf(entry)
-        return <div key={entry.id} className={css.reviewEntry} data-status={entry.status}>
-          <header>
-            <div className={css.reviewTitle}>
-              <strong>{entry.title}</strong>
-              <Tag tone={STATUS_TONE[entry.status]}>{t(STATUS_KEY[entry.status])}</Tag>
-            </div>
-            <div className={css.rowActions}>
-              <Button variant="ghost" size="sm" onClick={() => { setOpenId(open ? null : entry.id) }}>{open ? t('review.collapse') : t('review.expand')}</Button>
-              {entry.status === 'pending' && <>
-                <Button variant="outline" size="sm" disabled={busy !== null}
-                  onClick={() => { submit(entry.id, api => api.decideReview(entry.id, 'accepted')) }}>{t('review.accept')}</Button>
-                <Button variant="ghost" size="sm" disabled={busy !== null}
-                  onClick={() => { submit(entry.id, api => api.decideReview(entry.id, 'rejected')) }}>{t('review.reject')}</Button>
-              </>}
-              {entry.status === 'accepted' && <Button variant="primary" size="sm" disabled={busy !== null || props.disabled}
-                onClick={() => { apply(entry) }}>
-                {busy === entry.id
-                  ? t('review.applying')
-                  : selection.length > 0 && selection.length < entry.operations.length ? t('review.applyCount', { count: selection.length }) : t('review.apply')}</Button>}
-              {entry.status !== 'pending' && <Button variant="ghost" size="sm" disabled={busy !== null}
-                onClick={() => { submit(entry.id, api => api.reopenReview(entry.id)) }}>{t('review.reopen')}</Button>}
-            </div>
-          </header>
-          <small>{t('review.meta', { count: entry.operations.length, machine: entry.machine.label, time: stamp(entry.createdAt) })}</small>
-          {entry.foreignMachines.length > 0 && <small>{t('review.foreign', { machines: entry.foreignMachines.join(', ') })}</small>}
-          {entry.appliedAt !== undefined && <small className={css.syncSuccess}>{t('review.appliedAt', { time: stamp(entry.appliedAt) })}</small>}
-          {entry.failure !== undefined && <p className={css.error} role="alert">{t('review.applyFailed', { error: entry.failure })}</p>}
-          {open && <>
-            <p>{entry.summary}</p>
-            {entry.status === 'accepted' && <div className={css.reviewSelection}>
-              <small>{t('review.selectHint')}</small>
-              <div className={css.rowActions}>
-                <span className={css.reviewSelected}>{t('review.selected', { count: selection.length, total: entry.operations.length })}</span>
-                <Button variant="ghost" size="sm" disabled={busy !== null}
-                  onClick={() => { keep(entry, allOf(entry)) }}>{t('review.selectAll')}</Button>
-                <Button variant="ghost" size="sm" disabled={busy !== null}
-                  onClick={() => { keep(entry, []) }}>{t('review.selectNone')}</Button>
-              </div>
-            </div>}
-            <ol className={css.reviewOperations}>
-              {entry.operations.map((operation, index) => <li key={index}>
-                {entry.status === 'accepted'
-                  ? <label>
-                      <input type="checkbox" checked={selection.includes(index)} disabled={busy !== null}
-                        onChange={() => { toggle(entry, index) }} />
-                      <span>{operationText(t, operation)}</span>
-                    </label>
-                  : <span>{operationText(t, operation)}</span>}
-                <small>{operation.reason}</small>
-              </li>)}
-            </ol>
-            <div className={css.reviewOpinions}>
-              <strong>{t('review.opinions')}</strong>
-              {entry.opinions.length === 0
-                ? <small>{t('review.noOpinions')}</small>
-                : entry.opinions.map(item => <div key={item.id}>
-                    <strong>{item.author === 'agent' ? t('review.authorAgent') : t('review.authorUser')}</strong>
-                    <span>{item.text}</span>
-                  </div>)}
-            </div>
-            <div className={css.reviewOpinionForm}>
-              <input type="text" value={opinion} placeholder={t('review.opinionPlaceholder')} aria-label={t('review.opinions')}
-                disabled={busy !== null} onChange={event => setOpinion(event.target.value)} />
-              <Button variant="outline" size="sm" disabled={busy !== null || opinion.trim() === ''}
-                onClick={() => { leaveOpinion(entry.id) }}>{t('review.opinionSend')}</Button>
-            </div>
-          </>}
-        </div>
-      })}
-    </div>}
+    {current.length > 0 && <div className={css.reviewList}>{current.map(renderEntry)}</div>}
+    {/* A plan that already ran is history: it stays readable in its own popup, so it stops
+        crowding the plans that still need an answer. */}
+    {historyOpen && <MnemonDialog title={t('review.historyTitle')} closeLabel={t('common.close')} busy={busy !== null}
+      onClose={() => { setHistoryOpen(false) }}>
+      <div className={css.syncDialogBody}>
+        <small>{t('review.historyHint')}</small>
+        {history.length === 0
+          ? <small>{t('review.historyEmpty')}</small>
+          : <div className={css.reviewList}>{history.map(renderEntry)}</div>}
+      </div>
+    </MnemonDialog>}
   </div>
 }

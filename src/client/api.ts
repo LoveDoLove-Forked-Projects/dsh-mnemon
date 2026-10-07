@@ -266,8 +266,12 @@ export class MnemonClient {
     return this.call(MNEMON_SYNC_CHANNEL, 'diff', this.scoped())
   }
 
-  pullSync(components?: MnemonPackComponent[]): Promise<MnemonSyncPullResult> {
-    return this.call(MNEMON_SYNC_CHANNEL, 'pull', this.scoped({ ...(components === undefined ? {} : { components }), confirmed: true }))
+  pullSync(components?: MnemonPackComponent[], revive?: boolean): Promise<MnemonSyncPullResult> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'pull', this.scoped({
+      ...(components === undefined ? {} : { components }),
+      ...(revive === true ? { revive: true } : {}),
+      confirmed: true,
+    }))
   }
 
   /** Whether GitHub sign-in is possible here, and how far it has come. */

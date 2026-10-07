@@ -361,6 +361,7 @@ function differenceOf(overrides: Record<string, unknown> = {}) {
     conflicts: [{ target: 'user', local: here, remote: { ...there, origin: { machine: 'machine-b', label: 'desktop', at: '2026-08-13T09:00:00.000Z' } }, similarity: 0.698 }],
     shared: 0,
     truncated: false,
+    heldBack: 0,
     remoteTombstones: [],
     ...overrides,
   }
@@ -483,6 +484,57 @@ describe('the branch history and the memories that differ', () => {
     await waitFor(() => expect(within(dialog).getByText('本机与远端没有需要合并的记忆。')).toBeTruthy())
   })
 
+  it('says how many of the branch memories this installation deleted, and offers to bring them back', async () => {
+    // A merge honors this machine's own deletions, so "add them" would write nothing and
+    // the count would never move. The page has to say that, and offer the one action that
+    // overrules the deletion.
+    const state = { difference: differenceOf({ localOnly: [], remoteOnly: [there], conflicts: [], heldBack: 1 }) }
+    const { connection, calls } = syncHost(state, {
+      '/dsh-mnemon-sync pull': () => {
+        state.difference = differenceOf({ localOnly: [], remoteOnly: [], conflicts: [], heldBack: 0, shared: 1 })
+        return { imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [], runtime: { added: 1, held: 0 } }
+      },
+    })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    expect(await within(dialog).findByText('远端还有 1 条记忆是本机以前删掉的；直接新增会按删除处理，把它们留在原处。')).toBeTruthy()
+    // Nothing left to add, so the plain add button is gone and only the revival is offered.
+    expect(screen.queryByRole('button', { name: '直接新增' })).toBeNull()
+
+    fireEvent.click(await idle('恢复这些记忆'))
+    await waitFor(() => expect(syncCalls(calls, 'pull').length).toBe(1))
+    expect(syncCalls(calls, 'pull')[0]?.payload).toEqual({ revive: true, confirmed: true })
+    expect(await screen.findByText('已新增远端 abcdef12 的记忆到 /data/mnemon。')).toBeTruthy()
+  })
+
+  it('counts only what a merge would write and says what it left out', async () => {
+    // The count the reader is shown is what a merge would write, not what the branch holds:
+    // two entries arrive, one of them was deleted here earlier, so one is what gets added.
+    const second = { target: 'memory', content: 'Deploy on Fridays', importance: 'critical' }
+    const state = { difference: differenceOf({ localOnly: [], remoteOnly: [there, second], conflicts: [], heldBack: 1 }) }
+    const { connection, calls } = syncHost(state, {
+      '/dsh-mnemon-sync pull': () => ({ imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [], runtime: { added: 1, held: 1 } }),
+    })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('备份历史'))
+    const dialog = await screen.findByRole('dialog', { name: '备份历史' })
+    // Two entries arrive, one stays behind, so the offer is for the one that would be written.
+    expect(await within(dialog).findByText('远端还有 1 条本机没有的记忆，可以直接新增。')).toBeTruthy()
+    expect(within(dialog).getByText('远端还有 1 条记忆是本机以前删掉的；直接新增会按删除处理，把它们留在原处。')).toBeTruthy()
+
+    fireEvent.click(await idle('直接新增'))
+    await waitFor(() => expect(syncCalls(calls, 'pull').length).toBe(1))
+    expect(syncCalls(calls, 'pull')[0]?.payload).toEqual({ confirmed: true })
+    // The reader is told both what was written and what stayed behind.
+    expect(await screen.findByText(/已新增远端 abcdef12 的记忆到 \/data\/mnemon。/u)).toBeTruthy()
+    expect(screen.getByText(/其中 1 条本机以前删过，仍留在原处；要加回请点“恢复这些记忆”。/u)).toBeTruthy()
+  })
+
   it('reconciles a conflict, records an opinion, and writes only after approval', async () => {
     const { connection, calls } = syncHost({ difference: differenceOf() })
     render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
@@ -588,7 +640,7 @@ describe('the branch history and the memories that differ', () => {
     expect(await within(dialog).findByText('本机已改写；推送后远端才会一致。')).toBeTruthy()
   })
 
-  it('keeps the newest plan in the review list and folds the applied history behind one button', async () => {
+  it('keeps the newest plan in the review list and moves the applied history into its own popup', async () => {
     const older = { ...planEntry, id: 'review-0', title: 'An older plan', status: 'accepted' as const, appliedAt: '2026-08-13T12:00:00.000Z' }
     const state = { entry: { ...planEntry, status: 'accepted' as const, appliedAt: '2026-08-14T12:05:00.000Z' } }
     const host = reviewHost(state, {
@@ -596,12 +648,15 @@ describe('the branch history and the memories that differ', () => {
     })
     render(<MnemonReviewSection connection={host.connection} disabled={false} t={translateZh} />)
 
-    // The plan the reader just acted on stays readable; only the older one is folded away.
+    // The plan the reader just acted on stays readable; only the older one leaves the page.
     expect(await screen.findByText('Keep one wording of the preference')).toBeTruthy()
     expect(screen.queryByText('An older plan')).toBeNull()
     expect(screen.getByText('已执行的历史方案（1）')).toBeTruthy()
 
+    // It leaves the page, not the ledger: the popup still shows it, and says what it is for.
     fireEvent.click(button('已执行的历史方案（1）'))
-    expect(await screen.findByText('An older plan')).toBeTruthy()
+    const dialog = await screen.findByRole('dialog', { name: '已执行的历史方案' })
+    expect(within(dialog).getByText('An older plan')).toBeTruthy()
+    expect(within(dialog).getByText('这些方案已经执行过，只供回看；重新打开不会撤销已经写入的改动。')).toBeTruthy()
   })
 })

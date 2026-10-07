@@ -199,7 +199,7 @@ With `writeEnabled=false`, the activation and write channels stay registered but
 | `target` | Effective root, scope, and the default root a Default location resolves to |
 | `export` | Export a complete ZIP with manifest and SHA-256 checksums |
 | `inspect` | Parse and verify an import ZIP, returning component and occupancy preview |
-| `import` | Safely merge into the effective root; rejected in read-only mode |
+| `import` | Safely merge into the effective root; rejected in read-only mode. Its `runtime` answer reports how many entries the merge added and how many stayed out because this installation had deleted them, and an optional `revive: true` overrules those deletions for this import |
 | `storage-plan` | Inspect a proposed data directory: what it holds, how many files and bytes would move, and why the move is impossible; read-only, and it never requires `writeEnabled` |
 | `storage-migrate` | Copy the whole data directory to the proposed path, verify every file by SHA-256, and only then delete the original; on success the Host records the new path as the `custom` data directory and rebuilds its runtime on it, so later calls never read the removed one; requires `confirmed: true`, `writeEnabled`, and a writable settings profile, which is checked before anything is copied |
 
@@ -214,8 +214,8 @@ Backups contain private memory, so callers must treat the authenticated DSH brow
 | `push` | Export the full Mnemon Pack payload into the mirror, commit it and push the branch; requires `confirmed: true` |
 | `preview` | Read the remote manifest and its SHA-256 inventory and report which components differ from local; read-only |
 | `backups` | Walk the branch history newest first and name each commit by the Pack manifest it carries: commit, message, time, the machine that published it, the push time and the component summary. An optional `limit` bounds the page and `truncated` says the branch holds more; a commit whose manifest cannot be read is skipped; read-only |
-| `diff` | Compare the local payload with the branch payload entry by entry: both sides' export time, entry count and machine, the entries only here, the entries only there, how many they share, and the removals the branch recorded that this installation has not carried out yet; read-only |
-| `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts an optional one-off `components` parameter |
+| `diff` | Compare the local payload with the branch payload entry by entry: both sides' export time, entry count and machine, the entries only here, the entries only there, how many they share, `heldBack` for the entries the branch holds that this installation's own tombstones keep out, and the removals the branch recorded that this installation has not carried out yet; read-only |
+| `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts optional one-off `components` and `revive` parameters, the latter overruling this installation's recorded deletions so the entries they hid are written this time |
 | `github-status` | Whether this Host mounts a credentials store, whether an account is signed in, whether that store is writable, the account login and scopes, and the pending device-flow code; read-only |
 | `github-start` | Ask GitHub for a device code and return the code, the verification URL and the poll interval; requires `writeEnabled: true` |
 | `github-poll` | Ask once whether the browser step finished, at the cadence GitHub asked for; on success it stores the grant; requires `writeEnabled: true` |

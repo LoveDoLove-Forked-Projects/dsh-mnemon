@@ -544,7 +544,14 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
         requireWritable(runtime)
         if (payload.confirmed !== true) throw new Error('Importing the remote Mnemon payload requires confirmation')
         const components = requestedComponents(payload.components)
-        const result = await sync.pull({ mode: 'merge', ...(components === undefined ? {} : { components }), ...(signal === undefined ? {} : { signal }) })
+        const result = await sync.pull({
+          mode: 'merge',
+          ...(components === undefined ? {} : { components }),
+          // Adding the branch's memories normally honors this machine's own deletions.
+          // The reader can overrule that once, for the entries the difference counted.
+          ...(payload.revive === true ? { revive: true } : {}),
+          ...(signal === undefined ? {} : { signal }),
+        })
         if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
         return success(result)
       }

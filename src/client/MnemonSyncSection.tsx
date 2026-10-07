@@ -13,6 +13,7 @@ import {
   type MnemonSyncGitHubRepository,
   type MnemonSyncGitHubStatus,
   type MnemonSyncPreview,
+  type MnemonSyncPullResult,
   type MnemonSyncStatus,
 } from '../host/protocol.ts'
 import { MnemonClient } from './api.ts'
@@ -53,6 +54,21 @@ function draftOf(config: MnemonSyncConfigView | undefined): SyncDraft {
 /** A repository is the one thing a save cannot invent, so it gates the save button. */
 function configured(draft: SyncDraft): boolean {
   return draft.repoUrl.trim() !== ''
+}
+
+/**
+ * What a merge actually did. The Host states it as counts, because "added the branch's
+ * memories" is false when this machine's own deletions kept every one of them out, and a
+ * reader who is told the wrong thing will not look for the button that overrules them.
+ */
+function addedNotice(t: MnemonTranslate, result: MnemonSyncPullResult): string {
+  const report = result.runtime
+  const commit = result.commit.slice(0, 8)
+  const root = result.targetRoot
+  if (report !== undefined && report.added === 0 && report.held > 0) return t('config.syncDiffAddHeld', { count: report.held })
+  const parts = [t('config.syncDiffAdded', { commit, root })]
+  if (report !== undefined && report.held > 0) parts.push(t('config.syncDiffAddHeld', { count: report.held }))
+  return parts.join(' ')
 }
 
 function stamp(value: string | undefined): string {
@@ -100,7 +116,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SyncDraft>(() => draftOf(undefined))
   const [pending, setPending] = useState<MnemonSyncPreview | null>(null)
-  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'backups' | 'diff' | 'add' | 'plan' | 'apply' | 'github' | 'repos' | 'create' | null>(null)
+  const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'backups' | 'diff' | 'add' | 'revive' | 'plan' | 'apply' | 'github' | 'repos' | 'create' | null>(null)
   const [failed, setFailed] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [github, setGithub] = useState<MnemonSyncGitHubStatus | null>(null)
@@ -283,12 +299,12 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
    * is stated twice. Merging is additive and honors the branch's removals, so there is
    * nothing to decide - the entries are simply added.
    */
-  const addRemote = async (): Promise<void> => {
+  const addRemote = async (revive = false): Promise<void> => {
     if (client === null || busy !== null || difference === null) return
-    setBusy('add'); setFailed(null); setNotice(null)
+    setBusy(revive ? 'revive' : 'add'); setFailed(null); setNotice(null)
     try {
-      const result = await client.pullSync()
-      setNotice(t('config.syncDiffAdded', { commit: result.commit.slice(0, 8), root: result.targetRoot }))
+      const result = await client.pullSync(undefined, revive)
+      setNotice(addedNotice(t, result))
       setPending(null)
       await refresh()
       try {
@@ -533,6 +549,10 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const conflicts = difference?.conflicts ?? []
   const conflicted = new Set(conflicts.flatMap(conflict => [conflict.target + '\u0000' + conflict.local.content, conflict.target + '\u0000' + conflict.remote.content]))
   const additions = difference === null ? 0 : difference.remoteOnly.filter(entry => !conflicted.has(entry.target + '\u0000' + entry.content)).length
+  // The branch's entries this machine once deleted: a merge honors those deletions, so
+  // offering to "add" them is an offer that would write nothing at all.
+  const heldBack = difference?.heldBack ?? 0
+  const addable = Math.max(additions - heldBack, 0)
   const onlyHere = difference === null ? 0 : difference.localOnly.filter(entry => !conflicted.has(entry.target + '\u0000' + entry.content)).length
   const rejected = plan !== null && plan.status === 'rejected'
   // A decided proposal is answered by its decision, so its opinions only reach the next
@@ -742,7 +762,10 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
               {conflicts.length === 0
                 ? <p className={css.syncDialogNote}>{additions === 0 ? t('config.syncDiffNothing') : t('config.syncDiffClear')}</p>
                 : <p className={css.syncDialogNote}>{t('config.syncDiffConflicts', { count: conflicts.length })}</p>}
-              {conflicts.length === 0 && additions > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffAdditions', { count: additions })}</p>}
+              {conflicts.length === 0 && addable > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffAdditions', { count: addable })}</p>}
+              {/* Entries this machine deleted itself: a merge leaves them out, and only an
+                  explicit revival puts them back, so the page says so before it offers it. */}
+              {conflicts.length === 0 && heldBack > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffHeldBack', { count: heldBack })}</p>}
               {conflicts.length === 0 && onlyHere > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffLocalOnlyNote', { count: onlyHere })}</p>}
               {conflicts.length > 0 && <div className={css.syncConflictList}>
                 {conflicts.map(conflict => <div key={conflict.target + '\u0000' + conflict.local.content} className={css.syncConflict} data-target={conflict.target}>
@@ -762,9 +785,11 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
                   </div>
                 </div>)}
               </div>}
-              {additions > 0 && conflicts.length === 0 && <div className={css.rowActions}>
-                <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote()}>
-                  {busy === 'add' ? t('config.syncDiffAdding') : t('config.syncDiffAdd')}</Button>
+              {conflicts.length === 0 && (addable > 0 || heldBack > 0) && <div className={css.rowActions}>
+                {addable > 0 && <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote()}>
+                  {busy === 'add' ? t('config.syncDiffAdding') : t('config.syncDiffAdd')}</Button>}
+                {heldBack > 0 && <Button variant="outline" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote(true)}>
+                  {busy === 'revive' ? t('config.syncDiffReviving') : t('config.syncDiffRevive')}</Button>}
               </div>}
               {conflicts.length > 0 && <div className={css.syncPlan}>
                 <header>

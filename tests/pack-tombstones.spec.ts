@@ -231,6 +231,37 @@ describe('Mnemon Pack deletion tombstones', () => {
     expect(packed(exported.base64, 'payload/runtime/memories.json')).toMatchObject({ entries: [{ content: 'Keep the changelog short' }] })
   })
 
+  it('brings a deleted entry back on request, and stops hiding it afterwards', async () => {
+    const desktop = await machine('pack-tombstone-revive-desktop')
+    await add(desktop, 'Keep the changelog short')
+    const published = await desktop.manager.exportPack('runtime')
+
+    const laptop = await machine('pack-tombstone-revive-laptop')
+    await add(laptop, 'Keep the changelog short')
+    await laptop.manager.exportPack('runtime')
+    await remove(laptop, 'Keep the changelog short')
+    await laptop.manager.exportPack('runtime')
+
+    // A plain merge honours this machine's own deletion: the entry stays out, and the
+    // answer says so, which is the difference between "nothing to do" and "nothing written".
+    const held = await laptop.manager.importPack(published.base64, { mode: 'merge' })
+    expect(held.runtime).toEqual({ added: 0, held: 1 })
+    expect(entries(laptop.root)).toEqual([])
+    expect(tombstones(laptop.root)).toHaveLength(1)
+
+    // Reviving is the reader overruling that deletion, once.
+    const revived = await laptop.manager.importPack(published.base64, { mode: 'merge', revive: true })
+    expect(revived.runtime).toEqual({ added: 1, held: 0 })
+    expect(entries(laptop.root).map(entry => entry.content)).toEqual(['Keep the changelog short'])
+    // The overruled tombstone leaves the state this import commits, so the merge that
+    // follows behaves the same way instead of hiding the entry all over again.
+    expect(tombstones(laptop.root)).toEqual([])
+
+    const again = await laptop.manager.importPack(published.base64, { mode: 'merge' })
+    expect(again.runtime).toEqual({ added: 0, held: 0 })
+    expect(entries(laptop.root).map(entry => entry.content)).toEqual(['Keep the changelog short'])
+  })
+
   it('keeps the newest deletion when two installations deleted the same entry', async () => {
     const desktop = await machine('pack-tombstone-newer-desktop')
     await add(desktop, 'Keep the changelog short')
