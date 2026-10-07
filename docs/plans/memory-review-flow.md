@@ -146,15 +146,19 @@ and the removals the branch recorded that this installation has not applied. A p
 entries whose texts overlap by at least `0.6` in character bigrams is a conflict: the two sides are
 shown with their similarity, and the pair stays out of the "only here" count and out of the
 additions count, so a direct add never writes the second wording of a subject in as well. Only a
-conflict offers `Ask AI to reconcile`; with none, the branch's additions are simply added. A
-rejected plan waits for an opinion and is reopened before the AI is asked again, because a decided
-proposal is answered by its decision and its opinions are otherwise not part of the next run's
-evidence.
+conflict needs reconciling, and the dialog does not offer a run of its own: it names the **Memory
+reconciliation** row and offers to go there, because one place runs the plan is one place to keep it
+right. With no conflict, the branch's additions are simply added. A rejected plan waits for an
+opinion and is reopened before the AI is asked again, because a decided proposal is answered by its
+decision and its opinions are otherwise not part of the next run's evidence.
 
 **Memory reconciliation** gains a guidance field above the button: `整理记忆` sends whatever is in it,
 and the answer says whether the model had guidance to follow. A pending review lists its operations
 with a checkbox each; `执行` applies the checked ones and reports how many were carried out and how
-many are left. The opinions list already shows what was written and by whom.
+many are left. The ledger records the positions that ran (`appliedOperations`), so a plan applied in
+part stays in the list with only its remaining positions offered, and a plan whose every operation ran
+moves to the **Applied plans** dialog. Reopening clears that record, because reopening is a decision
+about the plan as a whole. The opinions list already shows what was written and by whom.
 
 ## Tests
 

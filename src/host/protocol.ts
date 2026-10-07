@@ -716,6 +716,12 @@ export interface MnemonReviewEntry {
   opinions: MnemonReviewOpinion[]
   decidedAt?: string
   appliedAt?: string
+  /**
+   * The positions in `operations` that have already run. Applying a plan is repeatable
+   * because a reviewer can keep only part of it: a position written here is never offered
+   * again, and a plan whose every operation ran is history rather than work.
+   */
+  appliedOperations?: number[]
   failure?: string
 }
 

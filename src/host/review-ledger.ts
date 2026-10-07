@@ -63,6 +63,9 @@ function parseEntry(value: unknown): MnemonReviewEntry | undefined {
     opinions: parseOpinions(entry.opinions),
     ...(typeof entry.decidedAt === 'string' ? { decidedAt: entry.decidedAt } : {}),
     ...(typeof entry.appliedAt === 'string' ? { appliedAt: entry.appliedAt } : {}),
+    ...(Array.isArray(entry.appliedOperations)
+      ? { appliedOperations: entry.appliedOperations.filter((index): index is number => Number.isInteger(index) && index >= 0) }
+      : {}),
     ...(typeof entry.failure === 'string' ? { failure: text(entry.failure) } : {}),
   }
 }
@@ -142,18 +145,30 @@ export class MnemonReviewLedger {
     })
   }
 
-  /** Reopening is how an opinion that changes a decision is honoured. */
+  /**
+   * Reopening is how an opinion that changes a decision is honoured. It also starts the
+   * plan over: what a reviewer answers is the plan as a whole, so a position that ran
+   * under the old decision is offered again and read against the new one.
+   */
   reopen(id: string): MnemonReviewEntry {
     return this.update(id, entry => {
-      const { decidedAt: _decidedAt, appliedAt: _appliedAt, failure: _failure, ...rest } = entry
+      const { decidedAt: _decidedAt, appliedAt: _appliedAt, appliedOperations: _appliedOperations, failure: _failure, ...rest } = entry
       return { ...rest, status: 'pending' }
     })
   }
 
-  applied(id: string, failure?: string): MnemonReviewEntry {
+  /**
+   * Records one run of the plan: which positions committed, and - when one failed - what
+   * stopped it. Those positions are what keeps a partly applied plan in the worklist and
+   * takes a finished one out of it.
+   */
+  applied(id: string, failure?: string, committed: readonly number[] = []): MnemonReviewEntry {
     return this.update(id, entry => {
       const { appliedAt: _appliedAt, failure: _failure, ...rest } = entry
-      return failure === undefined ? { ...rest, appliedAt: new Date().toISOString() } : { ...rest, failure }
+      const done = [...new Set([...(entry.appliedOperations ?? []), ...committed])].sort((left, right) => left - right)
+      return failure === undefined
+        ? { ...rest, appliedAt: new Date().toISOString(), appliedOperations: done }
+        : { ...rest, appliedOperations: done, failure }
     })
   }
 

@@ -237,11 +237,11 @@ Configuration, credentials and the failure semantics are described under [Backup
 | `view` | The review ledger: its path, every proposal and the pending count; read-only |
 | `opinion` | Append one opinion to a proposal; the author is `user` unless the caller asks for `agent` |
 | `decide` | Accept or reject a pending proposal |
-| `reopen` | Return a decided proposal to `pending` |
+| `reopen` | Return a decided proposal to `pending` and clear the record of what ran, so the whole plan is a fresh decision |
 | `reconcile` | Run one reconciliation over the merged local memory and stage the plan as a new pending entry. An optional `guidance` string states what the plan should accomplish, and the evidence then also carries what the sync branch holds and this installation does not, plus the opinions already recorded on pending proposals; requires `writeEnabled` |
-| `apply` | Apply the operations of an accepted proposal, stopping at the first failure. An optional `operations` array of plan positions applies only those, so a reviewer can take part of a plan; requires `writeEnabled` |
+| `apply` | Apply the operations of an accepted proposal, stopping at the first failure. An optional `operations` array of plan positions applies only those, so a reviewer can take part of a plan. Positions the entry already ran are skipped, and an entry with nothing left to run is refused rather than replayed; requires `writeEnabled` |
 
-A reconciliation never writes memory by itself: the model returns a plan, the plan is recorded as a proposal, and only `apply` on an accepted proposal touches a Source. `view`, `opinion`, `decide` and `reopen` work on a read-only Host as well, because they only edit the ledger under `state/`. The ledger is not a Pack component, so no proposal ever syncs to another machine.
+A reconciliation never writes memory by itself: the model returns a plan, the plan is recorded as a proposal, and only `apply` on an accepted proposal touches a Source. An entry records which plan positions ran in `appliedOperations`, so applying part of a plan is repeatable and the remainder is what a caller still sees offered. `view`, `opinion`, `decide` and `reopen` work on a read-only Host as well, because they only edit the ledger under `state/`. The ledger is not a Pack component, so no proposal ever syncs to another machine.
 
 ### Settings channel
 

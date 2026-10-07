@@ -12,7 +12,7 @@ import type { RuntimeMemoryMutation } from 'dsh-mnemon-source-runtime/contracts'
 import type { DocumentMutation } from 'dsh-mnemon-source-documents/contracts'
 import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_REVIEW_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus, type MnemonPackComponent, type MnemonPackImportMode } from './protocol.ts'
 import { MNEMON_PACK_COMPONENTS } from './protocol.ts'
-import { applyReconcileOperations, sourceApplier, type MnemonReconcileSessions } from './reconcile.ts'
+import { applyReconcileOperations, selectReconcileOperations, sourceApplier, type MnemonReconcileSessions } from './reconcile.ts'
 import { migrateStorageRoot, planMigration } from './storage-migration.ts'
 import { withMemoryStorageLock } from '../sdk/storage-lock.ts'
 export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_REVIEW_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
@@ -607,9 +607,17 @@ export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: Mnemon
         if (selection !== undefined && (!Array.isArray(selection) || selection.some(index => typeof index !== 'number'))) {
           throw new Error('the operations to apply must be a list of operation indexes')
         }
-        const outcome = await applyReconcileOperations(entry.operations, sourceApplier(sessions), signal ?? new AbortController().signal, selection as number[] | undefined)
+        const chosen = selection as number[] | undefined
+        // Running an operation twice is how a plan stops meaning what its author read: the
+        // second run addresses text the first one already replaced. So the ledger decides
+        // what is left to do, and a plan with nothing left is refused rather than replayed.
+        const pending = selectReconcileOperations(entry.operations, chosen).filter(index => !(entry.appliedOperations ?? []).includes(index))
+        if (pending.length === 0) {
+          throw new Error('every operation in this review has already run: ' + entry.id)
+        }
+        const outcome = await applyReconcileOperations(entry.operations, sourceApplier(sessions), signal ?? new AbortController().signal, pending)
         const failure = outcome.failures.length === 0 ? undefined : outcome.failures.join('; ')
-        const applied = ledger.applied(entry.id, failure)
+        const applied = ledger.applied(entry.id, failure, pending.slice(0, outcome.applied))
         if (failure !== undefined) throw new Error(failure)
         if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
         return success({ entry: applied, applied: outcome.applied, failures: outcome.failures })

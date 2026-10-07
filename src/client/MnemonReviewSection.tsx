@@ -103,10 +103,17 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
     void work(client).then(refresh).catch(reason => setFailed(message(reason))).finally(() => setBusy(null))
   }
 
-  /** Every position the plan holds, which is what an untouched review applies. */
-  const allOf = (entry: MnemonReviewEntry): number[] => entry.operations.map((_, index) => index)
+  /**
+   * Every position the plan holds that has not run yet. An untouched review applies all of
+   * them, and the ones already written are never offered again: running them a second time
+   * would address text the first run replaced.
+   */
+  const restOf = (entry: MnemonReviewEntry): number[] => {
+    const done = entry.appliedOperations ?? []
+    return entry.operations.map((_operation, index) => index).filter(index => !done.includes(index))
+  }
 
-  const selectionOf = (entry: MnemonReviewEntry): number[] => chosen[entry.id] ?? allOf(entry)
+  const selectionOf = (entry: MnemonReviewEntry): number[] => chosen[entry.id] ?? restOf(entry)
 
   const keep = (entry: MnemonReviewEntry, next: number[]): void => {
     setChosen(previous => ({ ...previous, [entry.id]: next.sort((left, right) => left - right) }))
@@ -151,20 +158,28 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
     if (selection.length === 0) { setComplaint(t('review.noSelection')); return }
     submit(entry.id, api => api.applyReview(entry.id, selection).then(result => {
       setNotice(t('review.applied', { count: result.applied }))
-      // The applied positions leave the plan; what stays is what is left to decide.
-      const rest = allOf(entry).filter(index => !selection.includes(index))
-      setChosen(previous => ({ ...previous, [entry.id]: rest }))
+      // What ran is what the ledger now records; the ledger is re-read, so the plan keeps
+      // only the positions still left to decide.
+      setChosen(previous => {
+        const next = { ...previous }
+        delete next[entry.id]
+        return next
+      })
     }))
   }
 
   const entries = ledger?.entries ?? []
   const pending = ledger?.pending ?? 0
-  // A plan that already ran is history: it moves to its own popup so it stops taking
-  // up the page. The most recent plan stays in the open list even after it ran,
-  // because that is the one the reader just acted on. A refusal stays open too: the
-  // next run waits for the opinion it was refused for.
-  const applied = entries.filter(entry => entry.status === 'accepted' && entry.appliedAt !== undefined)
-  const history = applied.filter(entry => entry !== entries[0])
+  // A plan that already ran is history: it leaves the list entirely and stays readable
+  // in its own popup, so the list holds only what still needs an answer. A plan that was
+  // refused stays in the list, because it is still waiting for the opinion the next run
+  // reads back.
+  // History is a plan with nothing left to decide: every operation ran, or - for an entry
+  // written before the ledger recorded positions - one that has been applied at all. A plan
+  // applied only in part is still work, and it stays where the reviewer can finish it.
+  const finished = (entry: MnemonReviewEntry): boolean => (entry.appliedOperations ?? []).length >= entry.operations.length
+  const history = entries.filter(entry => entry.status === 'accepted'
+    && (finished(entry) || (entry.appliedAt !== undefined && entry.appliedOperations === undefined)))
   const current = entries.filter(entry => !history.includes(entry))
   /** One plan, as it reads in the open list and in the history popup alike. */
   const renderEntry = (entry: MnemonReviewEntry): JSX.Element => {
@@ -188,7 +203,7 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
             onClick={() => { apply(entry) }}>
             {busy === entry.id
               ? t('review.applying')
-              : selection.length > 0 && selection.length < entry.operations.length ? t('review.applyCount', { count: selection.length }) : t('review.apply')}</Button>}
+              : selection.length > 0 && selection.length < restOf(entry).length ? t('review.applyCount', { count: selection.length }) : t('review.apply')}</Button>}
           {entry.status !== 'pending' && <Button variant="ghost" size="sm" disabled={busy !== null}
             onClick={() => { submit(entry.id, api => api.reopenReview(entry.id)) }}>{t('review.reopen')}</Button>}
         </div>
@@ -196,28 +211,33 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
       <small>{t('review.meta', { count: entry.operations.length, machine: entry.machine.label, time: stamp(entry.createdAt) })}</small>
       {entry.foreignMachines.length > 0 && <small>{t('review.foreign', { machines: entry.foreignMachines.join(', ') })}</small>}
       {entry.appliedAt !== undefined && <small className={css.syncSuccess}>{t('review.appliedAt', { time: stamp(entry.appliedAt) })}</small>}
+      {(entry.appliedOperations ?? []).length > 0 && <small>{t('review.appliedCount', { count: (entry.appliedOperations ?? []).length, total: entry.operations.length })}</small>}
       {entry.failure !== undefined && <p className={css.error} role="alert">{t('review.applyFailed', { error: entry.failure })}</p>}
+      {entry.status === 'rejected' && <small>{t('review.rejectedHint')}</small>}
       {open && <>
         <p>{entry.summary}</p>
         {entry.status === 'accepted' && <div className={css.reviewSelection}>
           <small>{t('review.selectHint')}</small>
           <div className={css.rowActions}>
-            <span className={css.reviewSelected}>{t('review.selected', { count: selection.length, total: entry.operations.length })}</span>
+            <span className={css.reviewSelected}>{t('review.selected', { count: selection.length, total: restOf(entry).length })}</span>
             <Button variant="ghost" size="sm" disabled={busy !== null}
-              onClick={() => { keep(entry, allOf(entry)) }}>{t('review.selectAll')}</Button>
+              onClick={() => { keep(entry, restOf(entry)) }}>{t('review.selectAll')}</Button>
             <Button variant="ghost" size="sm" disabled={busy !== null}
               onClick={() => { keep(entry, []) }}>{t('review.selectNone')}</Button>
           </div>
         </div>}
         <ol className={css.reviewOperations}>
-          {entry.operations.map((operation, index) => <li key={index}>
-            {entry.status === 'accepted'
-              ? <label>
-                  <input type="checkbox" checked={selection.includes(index)} disabled={busy !== null}
-                    onChange={() => { toggle(entry, index) }} />
-                  <span>{operationText(t, operation)}</span>
-                </label>
-              : <span>{operationText(t, operation)}</span>}
+          {entry.operations.map((operation, index) => <li key={index} data-applied={(entry.appliedOperations ?? []).includes(index)}>
+            {/* A position that already ran is shown for reading, never offered again. */}
+            {(entry.appliedOperations ?? []).includes(index)
+              ? <span>{operationText(t, operation)}</span>
+              : entry.status === 'accepted'
+                ? <label>
+                    <input type="checkbox" checked={selection.includes(index)} disabled={busy !== null}
+                      onChange={() => { toggle(entry, index) }} />
+                    <span>{operationText(t, operation)}</span>
+                  </label>
+                : <span>{operationText(t, operation)}</span>}
             <small>{operation.reason}</small>
           </li>)}
         </ol>

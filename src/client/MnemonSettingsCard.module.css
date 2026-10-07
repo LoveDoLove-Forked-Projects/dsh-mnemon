@@ -498,8 +498,11 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .syncSuccess { color: var(--dsw-alias-state-success-primary); }
 
 /* The chosen directory: the field and the shell's chooser beside it. */
-.directoryRow { display: flex; min-width: 0; align-items: center; gap: 8px; }
-.directoryRow > .directoryInput { flex: 1 1 auto; min-width: 0; }
+.directoryRow { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The field keeps a readable width and the row wraps before the button's own label
+   does: a chooser whose text breaks across two lines reads as a different control. */
+.directoryRow > .directoryInput { flex: 1 1 200px; min-width: 0; }
+.directoryRow > button { flex: none; white-space: nowrap; }
 
 /* Moving memory to another directory: what leaves, what arrives, and what stops it. */
 .moveSummary { display: grid; gap: 8px; }
@@ -539,6 +542,8 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .reviewOperations > li > label { display: flex; min-width: 0; align-items: flex-start; gap: 6px; cursor: pointer; }
 .reviewOperations > li > label > input { flex: none; margin: 3px 0 0; }
 .reviewOperations > li > label > input:disabled { cursor: default; opacity: .5; }
+/* A position that already ran is shown for reading, not as a choice. */
+.reviewOperations > li[data-applied='true'] { opacity: .55; }
 
 /* The branch's history and the entry-level difference: read-only answers, not state. */
 .syncBackups { display: grid; gap: 8px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
@@ -578,11 +583,10 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .syncConflictSides > div > small { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
 .syncConflictSides > div > span { font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .syncDialogNote { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+/* Where a conflict is answered: the review row below this dialog, named rather than copied. */
 .syncPlan { display: grid; gap: 8px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
-.syncPlan > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
-.syncPlan > header > strong { font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
 .syncPlan > p { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.syncPlan > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncPlan > .rowActions { justify-content: flex-start; }
 
 .selector:focus-visible {
   outline: none;
