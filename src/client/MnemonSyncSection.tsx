@@ -793,6 +793,8 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
                       </li>)}
                     </ol>
                     {plan.appliedAt !== undefined && <small className={css.syncSuccess}>{t('review.appliedAt', { time: stamp(plan.appliedAt) })}</small>}
+                    {/* Applying writes this installation only: the branch keeps the old text until a push. */}
+                    {plan.appliedAt !== undefined && conflicts.length > 0 && <small className={css.warning}>{t('config.syncDiffAppliedPush')}</small>}
                     {plan.status === 'rejected' && <small>{t('config.syncDiffPlanRejected')}</small>}
                     <div className={css.reviewOpinions}>
                       <strong>{t('review.opinions')}</strong>

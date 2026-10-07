@@ -584,5 +584,24 @@ describe('the branch history and the memories that differ', () => {
     expect(await within(dialog).findByText(/执行于/)).toBeTruthy()
     await waitFor(() => expect(screen.queryByRole('button', { name: '采纳并执行' })).toBeNull())
     expect(screen.queryByRole('button', { name: '满意，通过' })).toBeNull()
+    // The branch is not rewritten by an apply, so the dialog says what still has to happen.
+    expect(await within(dialog).findByText('本机已改写；推送后远端才会一致。')).toBeTruthy()
+  })
+
+  it('keeps the newest plan in the review list and folds the applied history behind one button', async () => {
+    const older = { ...planEntry, id: 'review-0', title: 'An older plan', status: 'accepted' as const, appliedAt: '2026-08-13T12:00:00.000Z' }
+    const state = { entry: { ...planEntry, status: 'accepted' as const, appliedAt: '2026-08-14T12:05:00.000Z' } }
+    const host = reviewHost(state, {
+      '/dsh-mnemon-review view': () => ({ path: '/data/state/review-ledger.json', entries: [state.entry, older], pending: 0, latest: state.entry }),
+    })
+    render(<MnemonReviewSection connection={host.connection} disabled={false} t={translateZh} />)
+
+    // The plan the reader just acted on stays readable; only the older one is folded away.
+    expect(await screen.findByText('Keep one wording of the preference')).toBeTruthy()
+    expect(screen.queryByText('An older plan')).toBeNull()
+    expect(screen.getByText('已执行的历史方案（1）')).toBeTruthy()
+
+    fireEvent.click(button('已执行的历史方案（1）'))
+    expect(await screen.findByText('An older plan')).toBeTruthy()
   })
 })

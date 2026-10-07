@@ -310,7 +310,7 @@ After the Memory Space directory has been established, long-term semantic operat
 
 Tidy names and descriptions, Ask Agent, Save to memory in the Memory System and in conversations, and document archiving create a clean independent top-level task Agent. It uses the selected workspace as its cwd, works even when no main Agent session is selected, and is disposed after the task finishes.
 
-The default `inherit` mode first uses the Provider / Model of the conversation the work belongs to, then the DSH Provider / Model selected for new sessions, then a complete route from the current available main Agent. Choosing **Choose a model** under **Background tasks → Task Agent model** on the Layered strategy's page stores a complete Provider + Model and overrides only Mnemon background tasks; it does not change the conversation Agent. When semantic judgment requires a bounded worker inside that task Agent, the worker inherits the task Agent route.
+The default `inherit` mode first uses the Provider / Model of the conversation the work belongs to, then the DSH Provider / Model selected for new sessions, then a complete route from the current available main Agent. The **Background tasks** card on the Memory System's status page is the everyday entry: it states the Provider / Model the current conversation actually uses and offers **Choose a model** directly; the same setting sits under **Background tasks → Task Agent model** on the Layered strategy's page. Choosing a model stores a complete Provider + Model and overrides only Mnemon background tasks; it does not change the conversation Agent. When semantic judgment requires a bounded worker inside that task Agent, the worker inherits the task Agent route.
 
 ```yaml
 mnemon:

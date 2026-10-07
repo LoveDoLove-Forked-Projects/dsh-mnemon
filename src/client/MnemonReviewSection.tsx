@@ -76,6 +76,7 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
   const [opinion, setOpinion] = useState('')
   const [guidance, setGuidance] = useState('')
   const [chosen, setChosen] = useState<Record<string, number[]>>({})
+  const [showHistory, setShowHistory] = useState(false)
 
   const refresh = useCallback(async (): Promise<void> => {
     if (client === null) return
@@ -157,6 +158,14 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
 
   const entries = ledger?.entries ?? []
   const pending = ledger?.pending ?? 0
+  // A plan that already ran is history: it stays readable, but it stops crowding
+  // the plans that still need an answer. The most recent plan stays in the open
+  // list even after it ran, because that is the one the reader just acted on. A
+  // refusal stays open too: the next run waits for the opinion it was refused for.
+  const applied = entries.filter(entry => entry.status === 'accepted' && entry.appliedAt !== undefined)
+  const history = applied.filter(entry => entry !== entries[0])
+  const current = entries.filter(entry => !history.includes(entry))
+  const shown = showHistory ? [...current, ...history] : current
   return <div className={css.syncRow} role="group" aria-labelledby="mnemon-review-heading">
     <SettingRow title={t('config.reconcileTitle')} titleId="mnemon-review-heading" hint={t('config.reconcileDescription')}>
       <div className={css.rowActions}>
@@ -178,8 +187,12 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
     {complaint !== null && <p className={css.error} role="alert">{complaint}</p>}
     {failed !== null && <p className={css.error} role="alert">{t('review.failed', { error: failed })}</p>}
     {notice !== null && <p className={css.syncSuccess} role="status">{notice}</p>}
-    {entries.length > 0 && <div className={css.reviewList}>
-      {entries.map(entry => {
+    {history.length > 0 && <div className={css.rowActions}>
+      <Button variant="ghost" size="sm" onClick={() => { setShowHistory(!showHistory) }}>
+        {t('review.history', { count: history.length })}</Button>
+    </div>}
+    {shown.length > 0 && <div className={css.reviewList}>
+      {shown.map(entry => {
         const open = openId === entry.id
         const selection = selectionOf(entry)
         return <div key={entry.id} className={css.reviewEntry} data-status={entry.status}>

@@ -312,7 +312,7 @@ Memory Space 目录建立后，长期语义操作使用明确的记忆空间 ID�
 
 整理名称与说明、Agent 查询、记忆系统与对话中的存入记忆和档案归档会创建一个无会话历史的独立顶层任务 Agent。它使用当前查看工作区作为 cwd；即使没有选中主 Agent session，也能落到左上角选定工作区。任务完成后 Agent 会被释放。
 
-默认的 `inherit` 先使用该工作所属会话的 Provider / Model，再使用 DSH“创建新会话”时的默认 Provider / Model；都不可用时才沿用当前可用主 Agent 的完整模型路由。在“分层策略”页面的“后台任务 → 任务 Agent 模型”中选择“指定模型”后，会保存完整的 Provider + Model，并只覆盖 Mnemon 后台任务，不改变对话主 Agent。独立任务 Agent 内部如需语义判断，仍可调度受限 worker；该 worker 继承任务 Agent 的模型路由。
+默认的 `inherit` 先使用该工作所属会话的 Provider / Model，再使用 DSH“创建新会话”时的默认 Provider / Model；都不可用时才沿用当前可用主 Agent 的完整模型路由。**记忆系统“状态”页的“后台任务”卡**是日常入口：它显示当前会话实际会使用的 Provider / Model，并可直接选择“指定模型”；同一设置在“分层策略”页面的“后台任务 → 任务 Agent 模型”中也有。选择“指定模型”后会保存完整的 Provider + Model，并只覆盖 Mnemon 后台任务，不改变对话主 Agent。独立任务 Agent 内部如需语义判断，仍可调度受限 worker；该 worker 继承任务 Agent 的模型路由。
 
 ```yaml
 mnemon:
