@@ -114,7 +114,13 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // that falls back to the system proxy bring the measured package to 1,751,495 bytes
 // (+111,703). Keep less than 1 KB of headroom; the ledger, the migration plan and the
 // proxy discovery stay in the Host bundle and add no endpoint to lib/client.js.
-const maximumUnpackedBytes = 1_752_000
+// One reconciliation plan in one place, with the ledger recording the positions that
+// ran, paging the backup history and wrapping the directory row bring it to
+// 1,830,440 bytes (+78,945 over the 1,751,495 measured before this work). The growth is
+// mostly the client bundle: the review row gained the applied-position rendering and the
+// copy that replaced the dialog's plan block. Keep less than 1 KB of headroom; no
+// endpoint, credential or payload shape enters lib/client.js.
+const maximumUnpackedBytes = 1_831_000
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)

@@ -207,7 +207,8 @@ describe('Mnemon review endpoints', () => {
     const applied = await handler('apply', { id: entry.id })
     expect(applied).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
     expect(f.runtimeSource.mutate).toHaveBeenCalledWith('mutate', { action: 'remove', target: 'user', oldText: 'Prefer short answers' }, expect.any(AbortSignal))
-    expect(f.ledger.get(entry.id)).toMatchObject({ status: 'accepted', appliedAt: expect.any(String) })
+    // The ledger records which position ran, so the plan is not offered whole a second time.
+    expect(f.ledger.get(entry.id)).toMatchObject({ status: 'accepted', appliedAt: expect.any(String), appliedOperations: [0] })
   })
 
   it('applies only the operations the reviewer selected, and refuses an index the plan does not hold', async () => {
@@ -230,8 +231,54 @@ describe('Mnemon review endpoints', () => {
     // The review stays accepted and keeps the operations that were not applied.
     expect(f.ledger.get(entry.id)).toMatchObject({ status: 'accepted', operations: [{ oldText: 'Prefer short answers' }, { oldText: 'Prefer concise answers' }] })
 
+    expect(f.ledger.get(entry.id)).toMatchObject({ appliedOperations: [1] })
+
     expect(await handler('apply', { id: entry.id, operations: [0] })).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
     expect(f.runtimeSource.mutate).toHaveBeenLastCalledWith('mutate', { action: 'remove', target: 'user', oldText: 'Prefer short answers' }, expect.any(AbortSignal))
+    expect(f.ledger.get(entry.id)).toMatchObject({ appliedOperations: [0, 1] })
+  })
+
+  it('never runs a position twice, and refuses a plan that has nothing left', async () => {
+    // Running an operation again addresses text the first run replaced, so the ledger is what
+    // decides what is left: a position that ran is skipped, and an exhausted plan is refused.
+    const f = fixture()
+    const entry = f.ledger.create({ ...proposal, operations: [
+      { kind: 'runtime-remove', target: 'user', oldText: 'Prefer short answers', reason: 'Superseded.' },
+      { kind: 'runtime-remove', target: 'user', oldText: 'Prefer concise answers', reason: 'Superseded.' },
+    ] })
+    f.ledger.decide(entry.id, 'accepted')
+    const handler = createReviewHandler(f.runtime, lifecycle())
+
+    expect(await handler('apply', { id: entry.id, operations: [0, 1] })).toMatchObject({ ok: true, value: { applied: 2, failures: [] } })
+    expect(f.runtimeSource.mutate).toHaveBeenCalledTimes(2)
+
+    expect(await handler('apply', { id: entry.id, operations: [0, 1] })).toMatchObject({ ok: false, error: { message: `every operation in this review has already run: ${entry.id}` } })
+    expect(f.runtimeSource.mutate).toHaveBeenCalledTimes(2)
+
+    // Asking for a position that already ran applies nothing from it: what is left is what runs.
+    expect(await handler('apply', { id: entry.id, operations: [0] })).toMatchObject({ ok: false, error: { message: `every operation in this review has already run: ${entry.id}` } })
+    expect(f.runtimeSource.mutate).toHaveBeenCalledTimes(2)
+  })
+
+  it('runs what is left of a partly applied plan, and reopening offers the whole plan again', async () => {
+    const f = fixture()
+    const entry = f.ledger.create({ ...proposal, operations: [
+      { kind: 'runtime-remove', target: 'user', oldText: 'Prefer short answers', reason: 'Superseded.' },
+      { kind: 'runtime-remove', target: 'user', oldText: 'Prefer concise answers', reason: 'Superseded.' },
+    ] })
+    f.ledger.decide(entry.id, 'accepted')
+    const handler = createReviewHandler(f.runtime, lifecycle())
+
+    expect(await handler('apply', { id: entry.id, operations: [0] })).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
+    // The rest is still there, so applying it is not a replay.
+    expect(await handler('apply', { id: entry.id })).toMatchObject({ ok: true, value: { applied: 1, failures: [] } })
+    expect(f.runtimeSource.mutate).toHaveBeenLastCalledWith('mutate', { action: 'remove', target: 'user', oldText: 'Prefer concise answers' }, expect.any(AbortSignal))
+    expect(f.ledger.get(entry.id)).toMatchObject({ appliedOperations: [0, 1] })
+
+    // Reopening is a decision about the whole plan, so the record of what ran goes with it.
+    expect(await handler('reopen', { id: entry.id })).toMatchObject({ ok: true, value: { status: 'pending' } })
+    expect(f.ledger.get(entry.id)).not.toHaveProperty('appliedOperations')
+    expect(f.ledger.get(entry.id)).not.toHaveProperty('appliedAt')
   })
 
   it('records the failure and stops at the operation that no longer holds', async () => {

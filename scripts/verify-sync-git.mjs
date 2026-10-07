@@ -505,12 +505,20 @@ try {
   const applied = expectOk(await call(a, '/dsh-mnemon-review', 'apply', { id: reconciled.entry.id }), 'review apply')
   check('the accepted review applied every operation',
     applied.applied === 1 && applied.failures.length === 0 && applied.entry.status === 'accepted'
-    && typeof applied.entry.appliedAt === 'string', JSON.stringify({ applied: applied.applied, failures: applied.failures }))
+    && typeof applied.entry.appliedAt === 'string' && JSON.stringify(applied.entry.appliedOperations) === '[0]',
+    JSON.stringify({ applied: applied.applied, failures: applied.failures, appliedOperations: applied.entry.appliedOperations }))
   const written = await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')
   check('the applied operation reached the working memory', written.includes(RECONCILE_MARKER))
+  // The ledger records the positions that ran, so the plan is never replayed against text
+  // the first run replaced.
+  const replayed = await call(a, '/dsh-mnemon-review', 'apply', { id: reconciled.entry.id })
+  expectFailure(replayed, /every operation in this review has already run/u, 'applying a plan with nothing left')
+  check('a plan whose operations all ran is refused rather than replayed',
+    replayed.error.code === 'internal' && written.includes(RECONCILE_MARKER), JSON.stringify(replayed.error))
   const reopened = expectOk(await call(a, '/dsh-mnemon-review', 'reopen', { id: reconciled.entry.id }), 'review reopen')
   check('reopening clears the decision and the application',
-    reopened.status === 'pending' && reopened.decidedAt === undefined && reopened.appliedAt === undefined, JSON.stringify({ status: reopened.status }))
+    reopened.status === 'pending' && reopened.decidedAt === undefined && reopened.appliedAt === undefined
+    && reopened.appliedOperations === undefined, JSON.stringify({ status: reopened.status, appliedOperations: reopened.appliedOperations }))
 
   console.log('\n8. GitHub sign-in answers over the channel without a browser')
   const signIn = expectOk(await sync(a, 'github-status'), 'github-status')
