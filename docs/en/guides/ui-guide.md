@@ -47,9 +47,9 @@ Each finished reply has a brain-shaped **Save to memory** in its action strip, t
 - **Candidate (editable)** starts with the whole reply; usually you keep only the sentence worth remembering. **Cancel** changes nothing.
 - **Save to** picks where it goes:
   - **Let the Agent decide** is the default while a task Agent can write. **Send to task Agent** hands the text to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
-  - **Working memory (MEMORY.md)**, **User profile (USER.md)** or an active Memory Space by name: **Save** writes the text there at once, through the same write as that place's page, without a task Agent. Working memory keeps it as one line and says first when it is too long for one entry or when the file is full and saving will make room.
+  - **Working memory (MEMORY.md)**, **User profile (USER.md)** or an active Memory Space by name: **Save** writes the text there at once, through the same write as that place's page; no task Agent decides where it goes. Working memory and the user profile keep it as one line. Before saving, the dialog says when the text is too long for one entry or for the file, and when the file is full: working memory then keeps part of its entries and moves the rest out, and a task Agent condenses the user profile, which needs one.
   - A place is listed while its layer is on, its component runs and its writes are not switched off.
-  - Without a task Agent, or without a Memory Space Provider, the dialog starts on **Working memory**.
+  - Without a task Agent, or without a Memory Space Provider, the dialog starts on **Working memory** while it is listed. With no place open at all, it says so and sending stays closed.
 - A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), a summary of where the text went, and a link to it: **View in Memory Spaces**, or Runtime Memory for working memory and the user profile. **Cancel** becomes **Close**. Sending the same text to the same place again needs an edit; another place, or a send that failed, takes it as it is.
 
 | Edit the candidate | The task Agent's receipt |

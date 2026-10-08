@@ -435,6 +435,7 @@ describe('conversation interaction surfaces', () => {
       // Runtime Memory switched off by its old layer flag, or its component stopped.
       { system: memorySystem({ layers: { runtime: { enabled: false, participation: { write: 'automatic' } } } }), taskAgent: true, places: ['agent', 'Lumen project'] },
       { system: memorySystem({ sources: ['documents', 'memory-spaces'] }), taskAgent: true, places: ['agent', 'Lumen project'] },
+      { system: memorySystem({ layers: { runtime: { enabled: true, participation: { write: 'off' } } } }), taskAgent: true, places: ['agent', 'Lumen project'] },
       // Memory Spaces taking no writes, or stopped: no space, and nothing for the task Agent to write to.
       { system: memorySystem({ layers: { 'memory-spaces': { enabled: true, participation: { write: 'off' } } } }), taskAgent: true, places: ['agent (closed)', 'memory', 'user'] },
       { system: memorySystem({ sources: ['runtime', 'documents'] }), taskAgent: true, places: ['agent (closed)', 'memory', 'user'] },
@@ -459,26 +460,34 @@ describe('conversation interaction surfaces', () => {
     }
   })
 
-  it('keeps sending closed while no place can take the text', async () => {
+  it.each([false, true])('keeps sending closed while no place can take the text, with a task Agent: %s', async taskAgent => {
     const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
-      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, memoryBodies: [], lifecycle: { taskAgentAvailable: false }, memorySystem: memorySystem({ sources: ['documents', 'memory-spaces'] }) } }
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, memoryBodies: [], lifecycle: { taskAgentAvailable: taskAgent }, memorySystem: memorySystem({ sources: ['documents', 'memory-spaces'] }) } }
       if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'A durable project decision.' } }
       throw new Error(`unexpected endpoint: ${endpoint}`)
     })
     openSaveAction(rpcCall)
-    await screen.findByText('taskAgent.unavailable')
+    // The note says why; no tag claims the task Agent is ready or missing.
+    await screen.findByText('saveAction.noPlace')
+    expect(screen.queryByText('taskAgent.ready')).toBeNull()
+    expect(screen.queryByText('taskAgent.unavailable')).toBeNull()
     expect((screen.getByRole('button', { name: 'saveAction.submit' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByRole('dialog', { name: 'saveAction.title' }).textContent).toContain('saveAction.hint')
+    expect(screen.getByText('saveAction.hint')).toBeTruthy()
   })
 
   it('names a queued Provider write as submitted, and a duplicate entry as skipped', async () => {
-    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string, input?: unknown) => {
       if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: true, memoryBodies: [lumen], lifecycle: { taskAgentAvailable: true }, memorySystem: memorySystem() } }
       if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'Checkout loads the payment SDK after interaction.' } }
       if (endpoint === 'source-management-read') return emptyRuntime
       if (endpoint === 'source-management-catalog') return runtimeCatalog()
       if (endpoint === 'source-management-mutate') return { ok: true as const, value: { revision: 's2', value: { action: 'queued', operationId: 'op-1', memoryBodyId: 'lumen' } } }
-      if (endpoint === 'source-assistance') return { ok: true as const, value: { revision: 'r1', value: { success: true, message: 'Entry already exists; no duplicate added.', target: 'memory', entryCount: 3 } } }
+      if (endpoint === 'source-assistance') {
+        const target = (input as { input: { target: string } }).input.target
+        return target === 'memory'
+          ? { ok: true as const, value: { revision: 'r1', value: { success: true, message: 'Entry already exists; no duplicate added.', target, entryCount: 3 } } }
+          : { ok: true as const, value: { revision: 'r2', value: { success: true, message: 'Entry added.', target, entryCount: 2, maintenance: { kind: 'local-compaction' } } } }
+      }
       throw new Error(`unexpected endpoint: ${endpoint}`)
     })
     openSaveAction(rpcCall)
@@ -488,10 +497,20 @@ describe('conversation interaction surfaces', () => {
     // Mem0, Supermemory and Hindsight queue their writes and confirm them later.
     await screen.findByText('receipt.pending')
     expect(screen.getByText('saveAction.saved.spacePending')).toBeTruthy()
+    // A working-memory place saves once its usage is read.
+    const saveWhenReady = async () => {
+      const save = screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+      await waitFor(() => expect(save.disabled).toBe(false))
+      fireEvent.click(save)
+    }
     choose(/^saveAction\.to\.memory/)
-    fireEvent.click(screen.getByRole('button', { name: 'saveAction.save' }))
+    await saveWhenReady()
     await screen.findByText('receipt.skipped')
     expect(screen.getByText('saveAction.saved.duplicate')).toBeTruthy()
+    // A save that made room says so.
+    choose(/^saveAction\.to\.user/)
+    await saveWhenReady()
+    await screen.findByText('saveAction.saved.runtimeMaintained')
   })
 
   it('says before saving when working memory cannot take the text, or will make room first', async () => {
@@ -514,6 +533,10 @@ describe('conversation interaction surfaces', () => {
     fireEvent.change(textarea, { target: { value: 'x'.repeat(8 * 1024 + 1) } })
     await screen.findByText('saveAction.place.tooLong')
     expect(save.disabled).toBe(true)
+    // A text that fills the file leaves every existing entry to move out; it still saves.
+    fireEvent.change(textarea, { target: { value: 'y'.repeat(7_200) } })
+    await screen.findByText('saveAction.place.fullAll')
+    expect(save.disabled).toBe(false)
     cleanup()
     // A full user profile makes room only through a task Agent.
     taskAgent = false
@@ -521,6 +544,49 @@ describe('conversation interaction surfaces', () => {
     await screen.findByRole('button', { name: 'saveAction.save' })
     choose(/^saveAction\.to\.user/)
     await screen.findByText('saveAction.place.userFull')
+    expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('holds the user profile to its own limit, and says when a task Agent will condense it', async () => {
+    let user = { used: 0, limit: 4_096 }
+    const snapshot = deferred<{ ok: true; value: { revision: string; value: Record<string, unknown> } }>()
+    let reads = 0
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, memoryBodies: [], lifecycle: { taskAgentAvailable: true }, memorySystem: memorySystem() } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'z'.repeat(4_200) } }
+      if (endpoint === 'source-management-read') {
+        reads += 1
+        const value = { revision: 'r1', value: { targets: { memory: { used: 0, limit: 10_240 }, user } } }
+        return reads === 1 ? snapshot.promise : { ok: true as const, value }
+      }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    openSaveAction(rpcCall)
+    const save = await screen.findByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+    // The save waits for the usage, so its note comes first.
+    await waitFor(() => expect(reads).toBe(1))
+    expect(save.disabled).toBe(true)
+    await act(async () => { snapshot.resolve({ ok: true, value: { revision: 'r1', value: { targets: { memory: { used: 0, limit: 10_240 }, user } } } }) })
+    await waitFor(() => expect(save.disabled).toBe(false))
+    cleanup()
+    // 4.2 KB fits one entry but not a 4 KB user profile.
+    openSaveAction(rpcCall)
+    await screen.findByRole('button', { name: 'saveAction.save' })
+    choose(/^saveAction\.to\.user/)
+    await screen.findByText('saveAction.place.tooLong')
+    expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true)
+    cleanup()
+    // A profile at 3 KB: a short text is condensed in; a long one cannot fit after making room.
+    user = { used: 3_000, limit: 4_096 }
+    openSaveAction(rpcCall)
+    await screen.findByRole('button', { name: 'saveAction.save' })
+    choose(/^saveAction\.to\.user/)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'u'.repeat(1_200) } })
+    await screen.findByText('saveAction.place.userCondense')
+    expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.change(textarea, { target: { value: 'u'.repeat(2_900) } })
+    await screen.findByText('saveAction.place.userTooLong')
     expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true)
   })
 
@@ -536,13 +602,17 @@ describe('conversation interaction surfaces', () => {
       throw new Error(`unexpected endpoint: ${endpoint}`)
     })
     openSaveAction(rpcCall)
-    fireEvent.click(await screen.findByRole('button', { name: 'saveAction.save' }))
+    const first = await screen.findByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Release gates close at 18:00 sharp.' } })
+    await waitFor(() => expect(first.disabled).toBe(false))
+    fireEvent.click(first)
     await waitFor(() => expect(writes).toHaveLength(1))
-    // Closed and opened again while the write runs: the dialog still shows it, on its place.
+    // Closed and opened again while the write runs: the dialog still shows it, on its text and place.
     fireEvent.click(screen.getByRole('button', { name: 'saveAction.close' }))
     fireEvent.click(screen.getByRole('button', { name: 'saveAction.button' }))
     expect((await screen.findByRole('button', { name: 'saveAction.saving' }) as HTMLButtonElement).disabled).toBe(true)
     expect(screen.getByRole('button', { name: /saveAction\.to/ }).textContent).toContain('saveAction.to.memory')
+    await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('Release gates close at 18:00 sharp.'))
     await act(async () => { writes[0]!.resolve({ ok: true, value: { revision: 'r9', value: { success: true, message: 'Entry added.', target: 'memory', entryCount: 1 } } }) })
     await screen.findByText('receipt.written')
     expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true)

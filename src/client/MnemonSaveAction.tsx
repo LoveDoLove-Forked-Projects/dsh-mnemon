@@ -117,27 +117,46 @@ async function saveDirectly(client: MnemonClient, destination: Exclude<SaveDesti
   return { action, note: { key, params: { space: place, action: answered } } }
 }
 
-/** What a working-memory place says about this text before it is saved, and whether it can take it at all. */
-function runtimePlaceNote(destination: SaveDestination, content: string, usage: RuntimeUsage | undefined, taskAgent: boolean | undefined, t: Translate): { text: string; blocked: boolean } | undefined {
+/**
+ * What a working-memory place says about this text before it is saved, and
+ * whether it can take it at all, by the Runtime Source's own rules: one line of
+ * at most 8 KiB and never more than its file, without the § delimiter. A full
+ * file keeps its entries within 70% of its limit, less the new one.
+ */
+function runtimePlaceNote(destination: SaveDestination, content: string, usage: RuntimeUsage | undefined, taskAgent: boolean | undefined, agentOpen: boolean, t: Translate): { text: string; blocked: boolean } | undefined {
   if (!isRuntimePlace(destination) || content === '') return undefined
+  const user = destination === 'runtime:user'
   const target = t(RUNTIME_PLACES[destination])
-  // Runtime Memory stores an entry as one line.
   const entry = content.replace(/\s+/gu, ' ')
   if (entry.includes('§')) return { text: t('saveAction.place.delimiter', { target }), blocked: true }
   const bytes = new TextEncoder().encode(entry).length
-  if (bytes > RUNTIME_ENTRY_BYTES) return { text: t('saveAction.place.tooLong', { target, size: humanBytes(bytes), limit: humanBytes(RUNTIME_ENTRY_BYTES) }), blocked: true }
-  const room = usage?.[destination === 'runtime:user' ? 'user' : 'memory']
+  const room = usage?.[user ? 'user' : 'memory']
+  const cap = Math.min(RUNTIME_ENTRY_BYTES, room?.limit ?? RUNTIME_ENTRY_BYTES)
+  const orAgent = agentOpen ? t('saveAction.place.orAgent') : ''
+  if (bytes > cap) {
+    // Rounded sizes that read the same name both in bytes.
+    const exact = humanBytes(bytes) === humanBytes(cap)
+    return { text: t('saveAction.place.tooLong', { target, size: exact ? `${bytes} B` : humanBytes(bytes), limit: exact ? `${cap} B` : humanBytes(cap) }) + orAgent, blocked: true }
+  }
   if (room === undefined || room.used + bytes + (room.used > 0 ? 4 : 0) <= room.limit) return undefined
-  // A full profile makes room only through a task Agent.
-  if (destination === 'runtime:user' && taskAgent === false) return { text: t('saveAction.place.userFull'), blocked: true }
-  return { text: t('saveAction.place.full', { target, used: humanBytes(room.used), limit: humanBytes(room.limit) }), blocked: false }
+  const kept = Math.floor(room.limit * 0.7) - 4
+  const keep = Math.max(0, kept - bytes)
+  const used = humanBytes(room.used)
+  const limit = humanBytes(room.limit)
+  if (user) {
+    // A full profile is condensed by a task Agent, and keeps no archive.
+    if (taskAgent === false) return { text: t('saveAction.place.userFull'), blocked: true }
+    if (keep === 0) return { text: t('saveAction.place.userTooLong', { size: humanBytes(bytes), max: humanBytes(Math.max(0, kept)) }) + orAgent, blocked: true }
+    return { text: t('saveAction.place.userCondense', { used, limit, keep: humanBytes(keep) }), blocked: false }
+  }
+  return { text: t(keep === 0 ? 'saveAction.place.fullAll' : 'saveAction.place.full', { target, used, limit, keep: humanBytes(keep) }), blocked: false }
 }
 
 /**
  * Save-to-memory action on finalized assistant messages. A task Agent decides
  * whether the (editable) reply is worth keeping and where it goes, or the user
- * names the place and the text is written there as it is. The dialog shows the
- * same receipt as Save to memory on the Memory Spaces page.
+ * names the place and the text goes there through that place's own write. The
+ * dialog shows the same receipt as Save to memory on the Memory Spaces page.
  */
 export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sessionId, connection, settingsScope, localeRuntime, t }: MnemonSaveActionProps): JSX.Element {
   const subscribeLocale = useCallback((listener: () => void) => localeRuntime.subscribe(listener), [localeRuntime])
@@ -161,9 +180,9 @@ export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sess
   const candidateId = useId()
   const openRef = useRef(false)
   const requestVersionRef = useRef(0)
-  // The place a running save writes to, and a direct save's result the dialog
-  // was closed for: neither is lost when the dialog closes and opens again.
-  const inFlightRef = useRef<SaveDestination | undefined>(undefined)
+  // The text and place a running save writes, and a direct save's result the
+  // dialog was closed for: neither is lost when the dialog closes and opens again.
+  const inFlightRef = useRef<{ content: string; destination: SaveDestination } | undefined>(undefined)
   const unseenRef = useRef<SaveOutcome | undefined>(undefined)
 
   const setPanelOpen = (next: boolean): void => {
@@ -191,10 +210,10 @@ export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sess
     setSubmitting(inFlightRef.current !== undefined)
     const unseen = unseenRef.current
     unseenRef.current = undefined
-    if (unseen !== undefined) {
-      setChosen(unseen.destination)
-      setOutcome(unseen)
-    } else if (inFlightRef.current !== undefined) setChosen(inFlightRef.current)
+    // The dialog opens again on the text and place it was writing, or wrote.
+    const restored = unseen ?? inFlightRef.current
+    if (restored !== undefined) setChosen(restored.destination)
+    if (unseen !== undefined) setOutcome(unseen)
     const client = new MnemonClient(connection, sessionId)
     client.status()
       .then(status => {
@@ -207,13 +226,18 @@ export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sess
     client.assistantMessageText(messageId)
       .then(result => {
         if (!alive || requestVersionRef.current !== requestVersion) return
-        if (result === null || result.text === '') setMissing(true)
+        if (restored !== undefined) setCandidate(restored.content)
+        else if (result === null || result.text === '') setMissing(true)
         else {
           setTruncated(result.text.length > PREVIEW_LIMIT)
           setCandidate(result.text.slice(0, PREVIEW_LIMIT))
         }
       })
-      .catch(() => { if (alive && requestVersionRef.current === requestVersion) setMissing(true) })
+      .catch(() => {
+        if (!alive || requestVersionRef.current !== requestVersion) return
+        if (restored !== undefined) setCandidate(restored.content)
+        else setMissing(true)
+      })
     return () => { alive = false }
   }, [open, connection, sessionId, messageId, managementWritable])
 
@@ -229,24 +253,29 @@ export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sess
   useEffect(() => {
     if (!open || runtimeTarget === undefined || usage !== undefined || status === undefined) return
     const runtime = status.memorySystem === undefined ? undefined : placeSource(status.memorySystem, 'runtime')
-    if (runtime === undefined) return
+    // With nothing to read, the save goes ahead without a note.
+    if (runtime === undefined) { setUsage({}); return }
     let alive = true
     new MnemonClient(connection, sessionId).readSourceManagement(runtime.sourceInstanceKey, 'snapshot')
       .then(result => { if (alive) setUsage((result.value as { targets?: RuntimeUsage } | null)?.targets ?? {}) }, () => { if (alive) setUsage({}) })
     return () => { alive = false }
   }, [open, runtimeTarget, usage, status, connection, sessionId])
-  const placeNote = runtimePlaceNote(destination, content, usage, taskAgent, t)
+  const agentOpen = options.some(option => option.value === 'agent' && option.disabled !== true)
+  const placeNote = runtimePlaceNote(destination, content, usage, taskAgent, agentOpen, t)
 
   // A result answers one text in one place: sending the same text there again
   // waits for an edit. A failure can be sent again as it is.
   const answered = outcome !== null && outcome.error === undefined && outcome.content === content && outcome.destination === destination
-  const canSubmit = content !== '' && !submitting && writeEnabled === true && selected !== undefined && selected.disabled !== true && placeNote?.blocked !== true && !answered
+  // A working-memory place waits for its usage, so its note comes before the save.
+  const placeReady = runtimeTarget === undefined || usage !== undefined
+  const canSubmit = content !== '' && !submitting && writeEnabled === true && selected !== undefined && selected.disabled !== true
+    && placeReady && placeNote?.blocked !== true && !answered
 
   const submit = (): void => {
     if (!canSubmit || inFlightRef.current !== undefined) return
     const requestVersion = requestVersionRef.current
     const target = destination
-    inFlightRef.current = target
+    inFlightRef.current = { content, destination: target }
     setSubmitting(true)
     setOutcome(null)
     const client = new MnemonClient(connection, sessionId)
@@ -319,7 +348,7 @@ export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sess
           <div className={css.candidate}>
             <div className={css.candidateHeading}>
               <label htmlFor={candidateId}>{t('saveAction.candidate')}</label>
-              {writeEnabled === true && !direct && taskAgent !== undefined && <TaskAgentTag available={taskAgent && selected?.disabled !== true} t={t} />}
+              {writeEnabled === true && !direct && taskAgent !== undefined && usable.length > 0 && <TaskAgentTag available={taskAgent && selected?.disabled !== true} t={t} />}
             </div>
             <textarea id={candidateId} rows={12} value={candidate} onChange={event => setCandidate(event.target.value)} autoFocus />
             {truncated && <small className={css.truncated}>{t('saveAction.truncated', { limit: PREVIEW_LIMIT })}</small>}
@@ -334,6 +363,7 @@ export const MnemonSaveAction = memo(function MnemonSaveAction({ messageId, sess
               />
             )}
             {writeEnabled === true && placeNote !== undefined && <small className={css.placeNote} data-tone={placeNote.blocked ? 'blocked' : 'caution'}>{placeNote.text}</small>}
+            {writeEnabled === true && status !== undefined && usable.length === 0 && <small className={css.placeNote} data-tone="blocked">{t('saveAction.noPlace')}</small>}
           </div>
         )}
         {outcome !== null && <WriteReceipt t={t} action={outcome.action} summary={receiptSummary} error={outcome.error} onView={viewMemory}
