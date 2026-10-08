@@ -77,6 +77,28 @@ describe('independent Native Provider', () => {
     expect(persisted.find(entry => entry.id === 'old')?.content).toBe(old)
   })
 
+  it('imports an entry again when the same import prunes the copy it reused (issue 339)', async () => {
+    const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
+    const kept = 'Release gates close at 18:00; the archive reuses this exact copy.'
+    const added = 'Canary deploys run for one hour before the full rollout.'
+    const drafts: string[][] = []
+    const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>(async args => {
+      if (args[0] === '--readonly') return [{ id: 'old-copy', content: kept }]
+      const draft = JSON.parse(readFileSync(args[1]!, 'utf8')) as { insights: Array<{ content: string }> }
+      drafts.push(draft.insights.map(entry => entry.content))
+      const results = draft.insights.map((entry, index) => ({ index, id: 'new-' + drafts.length + '-' + index, action: 'added', content: entry.content }))
+      // At its capacity Mnemon prunes its weakest memories after the first import, the reused copy among them.
+      return { imported: results.length, updated: 0, skipped: 0, errors: 0, results, auto_pruned_ids: drafts.length === 1 ? ['old-copy', 'unrelated'] : [] }
+    })
+    const provider = new MnemonNativeProvider({ runJson, runText: vi.fn() })
+    await expect(provider.rememberMany(body, [{ content: kept }, { content: added }, { content: kept }])).resolves.toMatchObject([
+      { action: 'added', id: 'new-2-0', content: kept },
+      { action: 'added', id: 'new-1-0', content: added },
+      { action: 'skipped', id: 'new-2-0', content: kept },
+    ])
+    expect(drafts).toEqual([[added], [kept]])
+  })
+
   it('does not import when the readonly exact-content snapshot fails', async () => {
     const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
     const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>().mockRejectedValue(new Error('snapshot unavailable'))
