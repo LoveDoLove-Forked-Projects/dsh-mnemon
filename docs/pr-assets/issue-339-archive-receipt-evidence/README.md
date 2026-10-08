@@ -4,7 +4,7 @@
 
 When MEMORY.md is full, the Host copies its entries into a Memory Space before compacting it. In the issue, every attempt failed with `runtime archive skipped an entry without exact durable recall evidence`: the space already held exact copies of most entries, the attempt removed what it had just written, and MEMORY.md stayed full. The reporter first saw four timeouts on the same path, with an external embedding service. With the fix, those entries are archived from the provider's own receipt, without searching for them.
 
-Baseline: main `2296898d` (dsh-mnemon 0.5.24). Fix: `0064b658`. The runs use macOS 15.6 arm64, Node 24.19.0, DSH 0.2.0-rc.2 (npm `latest` and `next`) in an isolated prefix, and Mnemon CLI 0.2.10.
+Baseline: main `2296898d` (dsh-mnemon 0.5.24). Fix: `0064b658`, with `6e2733ac` from review. The runs use macOS 15.6 arm64, Node 24.19.0, DSH 0.2.0-rc.2 (npm `latest` and `next`) in an isolated prefix, and Mnemon CLI 0.2.10.
 
 ## Method
 
@@ -39,14 +39,19 @@ The archive imports the entries with Mnemon Native's batch writer. That writer f
 
 A skipped receipt that carries the stored memory's id and exactly the entry's text is now the evidence for that entry. A receipt without them, for example from a Provider that reports only an id, is still verified by search, and that error now says whether the search was unavailable or returned no exact copy. A Document archive reads a skipped index receipt the same way. A Mnemon CLI timeout names its command, such as `mnemon import did not respond within 10000ms`, so a slow path is easier to tell from a broken one.
 
+Review found one case where such a receipt named a copy that was gone. Once a store holds more than its limit, 1,000 memories by default, Mnemon's import prunes up to ten of its weakest memories afterwards, and a copy the archive reused can be one of them. Mnemon Native's batch writer now reads the ids its import pruned and imports such an entry again in the same call, so every receipt names a memory that exists.
+
 ## Automated checks
 
 - `tests/subagent.spec.ts`, *takes a skipped receipt that names the exact stored memory as its evidence, without a search*: two skipped entries and one new one are archived with the receipts' ids, without a search. On main it fails with the reported error.
 - *still searches when a skipped receipt does not carry the exact text, and says what the search found*: a semantic match is not taken as a copy, the new entry is removed again and working memory is untouched; the error names an empty search or an unavailable one.
 - *takes a skipped document index receipt that names the exact stored index as its evidence*: fails on main.
 - `plugins/dsh-mnemon-source-memory-spaces/tests/runner.spec.ts`: a timeout names its command.
+- `plugins/dsh-mnemon-provider-mnemon-native/tests/provider.spec.ts`, *imports an entry again when the same import prunes the copy it reused*: fails before `6e2733ac`.
 
 A probe with the real Mnemon CLI (no embedding service) imported 14 MEMORY.md-sized entries twice next to 400 similar memories. The second attempt skipped all 14, and all 14 receipts carried the stored memory's id and exact text. Without a slow embedding service the verification search also found all 14, so the failure needs a recall that fails or ranks the copy out, which the fixture produces with a slow embedding service.
+
+A second probe with the real CLI set the capacity to 3 and the grace period for new memories to 2 seconds, then archived an entry whose stored copy was the weakest memory, together with one new entry. Before `6e2733ac`, the import pruned that copy and the receipt still named it; `mnemon show` found it deleted. With it, the entry was imported again, and both receipts named memories that exist with their exact text.
 
 ## Limits
 
