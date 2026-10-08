@@ -7,7 +7,7 @@ import { mutationResultCommitted } from './receipts.ts'
 import { SourceSession, sourceFailure } from './source-session.ts'
 import { threeTierActionWorkflow } from 'dsh-mnemon-strategy-default-three-tier/extension-sdk'
 import { receipt as mutationReceipt } from '../sdk/input.ts'
-import { assertParticipation } from './access.ts'
+import { allowsParticipation, assertParticipation } from './access.ts'
 import type { MemorySpaceMetadataMaintenanceResult, MemorySpaceMetadataUpdate, MemoryPlacementDecision, SubagentCounters } from './protocol.ts'
 import { DEFAULT_MEMORY_VIEW_BUDGET, type ComposableMemoryView, type MemoryEvidence, type MemoryJsonValue, type MemoryMigrationLineage, type MemoryMutationReceipt, type MemoryOperationScope, type MemorySourceManagementRequest, type MemorySourceManagementResult } from '../core/contracts/index.ts'
 import type { MemoryCompositionGeneration } from '../core/composition.ts'
@@ -24,7 +24,11 @@ type AgentRuntimeSource = MnemonAgentRuntimeSource
 
 type RuntimeModelResult = { provider: string; runId: string; result: HostSubagentResult }
 export type RuntimeMaintenanceTaskRunner = (scope: MemoryOperationScope, signal: AbortSignal, operation: (agent: HostAgent) => Promise<RuntimeModelResult>) => Promise<RuntimeModelResult>
-type RuntimeArchiveScope = { source: SourceSession; cleanup: SourceSession; memoryBodyIds?: ReadonlySet<string>; writeScope?: MemorySpaceWriteScopeRequest }
+type RuntimeArchiveScope = {
+  source: SourceSession; cleanup: SourceSession; memoryBodyIds?: ReadonlySet<string>; writeScope?: MemorySpaceWriteScopeRequest
+  /** Another Memory Spaces Source lists a space that could take the archive, so its absence here is no reason to archive locally. */
+  elsewhere?: boolean
+}
 
 interface RuntimeWriteContext {
   runtime: SourceSession
@@ -33,7 +37,8 @@ interface RuntimeWriteContext {
   expectedRevision?: string
   assertWritable?(): void
   commit(): Promise<RuntimeMemoryMutationResult>
-  memorySpaces(): Promise<RuntimeArchiveScope>
+  /** The Memory Spaces Source an archive writes to, or undefined when none in this View takes writes. */
+  memorySpaces(): Promise<RuntimeArchiveScope | undefined>
   model(operation: 'migration' | 'compaction', label: string, prompt: string, schema: Record<string, unknown>, persona: string): Promise<RuntimeModelResult>
 }
 
@@ -557,6 +562,17 @@ function pendingMutationContext(plan: RuntimeMemoryMaintenancePlan): string {
   ].join('\n')
 }
 
+/**
+ * A space that can take a MEMORY.md archive or a Document's index: active, its
+ * Provider enabled and ready, with exact writes and safe forget. A Mnemon Native
+ * space stays listed, and active, while its CLI is missing; it takes no writes then.
+ */
+function archivableSpace(directory: MemorySpaceCatalog, body: MemorySpaceCatalog['items'][number]): boolean {
+  return body.active && body.providerEnabled !== false && body.provider.capabilities.remember === true
+    && body.provider.capabilities.writeMode === 'exact' && body.provider.capabilities.forget === true
+    && directory.providers?.find(provider => provider.id === body.provider.id)?.serviceConfigured !== false
+}
+
 function compactedBudget(plan: RuntimeMemoryMaintenancePlan): number {
   const pendingBytes = plan.pending === undefined ? 0 : Buffer.byteLength(plan.pending.content, 'utf8')
   const separatorBytes = plan.pending === undefined || plan.entries.length === 0
@@ -739,6 +755,27 @@ function destinationFromCommittedMutation(
     layerId: 'memory-spaces',
     reference: `memory-space:${encodeURIComponent(memoryBodyId)}/${stableId === undefined ? `sha256:${digest}` : `item:${encodeURIComponent(stableId)}`}`,
     digest,
+  }
+}
+
+/**
+ * The memory a skipped write names as already holding exactly this text, when
+ * its receipt carries that memory's id and stored text. Anything less proves
+ * nothing, and the caller verifies by search instead.
+ */
+function skippedExactDestination(
+  result: unknown,
+  memoryBodyId: string,
+  content: string,
+): MemoryMigrationLineage['destination'] | undefined {
+  const value = optionalObject(result)
+  const id = typeof value?.id === 'string' ? value.id.trim() : ''
+  if (id === '' || value?.content !== content) return undefined
+  if (value.memoryBodyId !== undefined && value.memoryBodyId !== memoryBodyId) return undefined
+  return {
+    layerId: 'memory-spaces',
+    reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(id)}`,
+    digest: sha256(content),
   }
 }
 
@@ -1026,9 +1063,13 @@ export class MnemonSubagentCoordinator {
         commit: () => runtime.mutate('mutate', request, signal),
         memorySpaces: async () => {
           if (!graph.config.writeEnabled || !this.runtimeSource.config.writeEnabled) throw new Error('dsh-mnemon is configured read-only')
-          assertParticipation(graph.config, 'memory-spaces', 'write', 'automatic')
+          // Memory Spaces switched off, taking no automatic writes or not installed
+          // leave the archive to the Runtime Source, as in a turn's View (#336).
+          if (!allowsParticipation(graph.config, 'memory-spaces', 'write', 'automatic')
+            || !lease.generation.sourceInstances().some(source => source.sourceTypeId === 'memory-spaces')) return undefined
           const source = graph.source('memory-spaces', scope).forGeneration(lease.generation)
-          return { source, cleanup: source }
+          const { sourceInstanceKey } = await source.identity()
+          return { source, cleanup: source, elsewhere: await this.archivableElsewhere(graph, scope, lease.generation, sourceInstanceKey, signal) }
         },
         model: (...args) => this.runtimeModel(scope, parent, signal, ...args),
       }
@@ -1073,7 +1114,7 @@ export class MnemonSubagentCoordinator {
         assertWritable: () => { if (!authorize()) throw new Error('Runtime capacity maintenance is no longer authorized') },
         memorySpaces: async () => {
           if (!authorize()) throw new Error('Runtime capacity maintenance is no longer authorized')
-          return this.runtimeArchiveSource(graph, turn.scope, turn.view, lease.generation, turn)
+          return this.runtimeArchiveSource(graph, turn.scope, turn.view, lease.generation, turn, signal)
         },
         model: (...args) => this.runtimeModel(turn.scope, parent, signal, ...args),
       }, input as unknown as RuntimeMemoryMutation, signal)
@@ -1109,7 +1150,7 @@ export class MnemonSubagentCoordinator {
         },
         memorySpaces: async () => {
           view ??= await generation.compose({ scope: request.scope, scenario: 'management.runtime-capacity', budget: DEFAULT_MEMORY_VIEW_BUDGET }, signal)
-          return this.runtimeArchiveSource(graph, request.scope, view, generation)
+          return this.runtimeArchiveSource(graph, request.scope, view, generation, undefined, signal)
         },
         model: (...args) => this.runtimeModel(request.scope, undefined, signal, ...args),
       }, request.input as unknown as RuntimeMemoryMutation, signal)
@@ -1119,19 +1160,63 @@ export class MnemonSubagentCoordinator {
     } finally { lease.release() }
   }
 
-  private async runtimeArchiveSource(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, view: ComposableMemoryView, generation: MemoryCompositionGeneration, turn?: ComposableMemoryTurn): Promise<RuntimeArchiveScope> {
+  private async runtimeArchiveSource(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, view: ComposableMemoryView, generation: MemoryCompositionGeneration, turn?: ComposableMemoryTurn, signal?: AbortSignal): Promise<RuntimeArchiveScope | undefined> {
     if (!graph.config.writeEnabled || !this.runtimeSource.config.writeEnabled) throw new Error('dsh-mnemon is configured read-only')
-    assertParticipation(graph.config, 'memory-spaces', 'write', 'automatic')
+    // Memory Spaces switched off, or taking no automatic writes, leave the archive
+    // to the Runtime Source (#336).
+    if (!allowsParticipation(graph.config, 'memory-spaces', 'write', 'automatic')) return undefined
     const candidates = generation.sourceInstances().filter(source => source.sourceTypeId === 'memory-spaces'
       && view.actionOffers.some(offer => offer.sourceInstanceKey === source.sourceInstanceKey && offer.sourceActionId === 'remember' && offer.authority === undefined))
-    if (candidates.length === 0) throw new Error('Source Action is not offered by the current View: memory-spaces/remember')
+    if (candidates.length === 0) {
+      // So does a layer with no space anywhere that could take it. A space this View
+      // does not offer, or a directory that cannot be read now, keeps the refusal and
+      // the retry in a new turn it asks for.
+      if (await this.noArchivableMemorySpace(graph, scope, generation, signal)) return undefined
+      throw new Error('Source Action is not offered by the current View: memory-spaces/remember')
+    }
     if (candidates.length !== 1) throw new Error('Runtime archival requires one unambiguous writable Memory Spaces Source')
     const cleanup = graph.source('memory-spaces', scope).forInstance(candidates[0]!.sourceInstanceKey).forGeneration(generation)
     let source = cleanup
     if (turn !== undefined) source = source.forTurn(turn)
     const grant = view.readGrants.find(grant => grant.sourceInstanceKey === candidates[0]!.sourceInstanceKey && grant.schema === 'dsh-mnemon.memory-spaces/v1')
     if (grant === undefined) throw new Error('Runtime archival requires the selected Memory Spaces namespace scope')
-    return { source, cleanup, memoryBodyIds: new Set(strings(object(grant.value).memoryBodyIds)), writeScope: { viewId: view.id, grant } }
+    return { source, cleanup, memoryBodyIds: new Set(strings(object(grant.value).memoryBodyIds)), writeScope: { viewId: view.id, grant },
+      elsewhere: await this.archivableElsewhere(graph, scope, generation, candidates[0]!.sourceInstanceKey, signal) }
+  }
+
+  /**
+   * MEMORY.md keeps working without a Memory Space to archive into: the Runtime
+   * Source moves the entries compaction leaves out to its local archive, as exact
+   * text, in the same commit as the compaction and the pending write (#336).
+   */
+  private async archiveRuntimeLocally(context: RuntimeWriteContext, request: RuntimeMemoryMutation, plan: RuntimeMemoryMaintenancePlan, reason: string, signal: AbortSignal): Promise<CoordinatedRuntimeMemoryResult> {
+    signal.throwIfAborted()
+    // A Runtime Source from before the local archive would compact without keeping what it leaves out.
+    if (plan.localArchive !== true) {
+      throw new Error(`runtime memory archival found no Memory Space that can take the archive (${reason}), and this Runtime Source cannot archive locally; pending write was not committed and existing runtime entries are unchanged; update dsh-mnemon-source-runtime, activate a supported Memory Space, or increase runtimeMemory.memoryLimitBytes`)
+    }
+    context.assertWritable?.()
+    const runId = `host-${randomUUID()}`
+    const compacted = plan.entries.map(({ content, importance, branches }): RuntimeMemoryCompactedEntry => ({ content, importance, ...(branches === undefined ? {} : { branches }) }))
+    const mutation = await context.runtime.mutateResult<RuntimeMemoryMutationResult>('compact-and-mutate', {
+      revision: plan.revision, mutation: request, compacted, maxBytes: compactedBudget(plan), archive: 'local',
+    }, signal)
+    const archived = mutation.value.archived?.entries ?? 0
+    this.counters.migrations += 1
+    this.counters.lastRunId = runId
+    this.counters.lastOperation = 'migration'
+    this.counters.lastAt = new Date().toISOString()
+    return {
+      ...mutation.value,
+      revision: mutation.revision,
+      maintenance: {
+        kind: 'local-archive',
+        runId,
+        provider: 'host',
+        summary: `Moved ${archived} MEMORY.md ${archived === 1 ? 'entry' : 'entries'} to the local archive${mutation.value.archived === undefined ? '' : ` ${mutation.value.archived.path}`}, since ${reason}.`,
+        memoryBodyIds: [],
+      },
+    }
   }
 
   private runtimeModel(scope: MemoryOperationScope, parent: HostAgent | undefined, signal: AbortSignal, operation: 'migration' | 'compaction', label: string, prompt: string, schema: Record<string, unknown>, persona: string): Promise<RuntimeModelResult> {
@@ -1281,7 +1366,9 @@ ${naturalRequest(request)}`
       const document = await controller.read<DocumentView>('document', { id }, signal)
       if (document.status !== 'active') throw new Error('only active documents can be archived')
       const source = documentMigrationSource(document)
-      const memoryService = (await this.assertAutomaticMemoryWrite(parent)).forGeneration(lease.generation)
+      const indexSpaces = await this.documentIndexSpaces(parent, lease.generation, signal)
+      if (indexSpaces === undefined) return this.archiveDocumentLocally(controller, document, 'no Memory Spaces layer takes writes here', signal)
+      const memoryService = indexSpaces.forGeneration(lease.generation)
       const identity = await memoryService.identity()
       // Compensation owns this exact Source instance, generation and storage scope,
       // even if the caller's View ends or a later configuration replaces it.
@@ -1290,11 +1377,19 @@ ${naturalRequest(request)}`
       const grant = authority?.context.view.readGrants.find(grant => grant.sourceInstanceKey === identity.sourceInstanceKey && grant.schema === 'dsh-mnemon.memory-spaces/v1')
       if (authority !== undefined && grant === undefined) throw new Error('document archive requires a Memory Space namespace grant')
       const allowed = grant === undefined ? undefined : new Set(strings(object(grant.value).memoryBodyIds))
-      const eligible = (body: MemorySpaceCatalog['items'][number]) => body.active && body.providerEnabled !== false
-        && body.provider.capabilities.remember && body.provider.capabilities.forget && body.provider.capabilities.writeMode === 'exact'
-        && (allowed === undefined || allowed.has(body.id))
-      const bodies = (await memoryService.read<MemorySpaceCatalog>('body-directory', null, signal)).items.filter(eligible)
-      if (bodies.length === 0) throw new Error('document archive requires an existing active Memory Space with exact writes and safe forget')
+      const directory = await memoryService.read<MemorySpaceCatalog>('body-directory', null, signal)
+      const indexable = (body: MemorySpaceCatalog['items'][number]) => archivableSpace(directory, body)
+      const eligible = (body: MemorySpaceCatalog['items'][number]) => indexable(body) && (allowed === undefined || allowed.has(body.id))
+      const bodies = directory.items.filter(eligible)
+      if (bodies.length === 0) {
+        // With no Memory Space at all for its index, the Document is archived
+        // locally and the write that needed room goes ahead (#336). One outside
+        // this View's scope is still worth the retry the error asks for.
+        if (!directory.items.some(indexable) && !await this.archivableElsewhere(graph, agentScope(parent, graph.config), lease.generation, identity.sourceInstanceKey, signal)) {
+          return this.archiveDocumentLocally(controller, document, 'no Memory Space can take its index', signal)
+        }
+        throw new Error('document archive requires an existing active Memory Space with exact writes and safe forget')
+      }
       const { provider, runId, result } = await this.delegate(
         parent, 'document-archive', 'Plan managed document archive', documentArchivePrompt(document, source, bodies),
         [], DOCUMENT_ARCHIVE_SCHEMA, signal, 'spawn', DOCUMENT_ARCHIVE_PERSONA,
@@ -1340,12 +1435,17 @@ ${naturalRequest(request)}`
           if (isNew && receiptId !== undefined) {
             destination = destinationFromCommittedMutation(receipt, memoryBodyId, content)!
           } else if (states.includes('skipped')) {
-            const recalled = await memoryService.read<{ results: Insight[] }>('search', {
-              query: document.contentHash, mode: 'keyword', limit: 50, memoryBodyIds: [memoryBodyId],
-            }, signal)
-            const exact = recalled.results.find(item => item.memoryBodyId === memoryBodyId && item.id === receiptId && item.content === content)
-            if (exact === undefined) throw new Error(`document archive skipped index lacks exact durable evidence in Memory Space ${memoryBodyId}`)
-            destination = { layerId: 'memory-spaces', reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(exact.id)}`, digest: sha256(exact.content) }
+            // The receipt can name the stored index itself, as a runtime archive's can.
+            const named = skippedExactDestination(receipt, memoryBodyId, content)
+            if (named !== undefined) destination = named
+            else {
+              const recalled = await memoryService.read<{ results: Insight[] }>('search', {
+                query: document.contentHash, mode: 'keyword', limit: 50, memoryBodyIds: [memoryBodyId],
+              }, signal)
+              const exact = recalled.results.find(item => item.memoryBodyId === memoryBodyId && item.id === receiptId && item.content === content)
+              if (exact === undefined) throw new Error(`document archive skipped index lacks exact durable evidence in Memory Space ${memoryBodyId}`)
+              destination = { layerId: 'memory-spaces', reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(exact.id)}`, digest: sha256(exact.content) }
+            }
           } else {
             throw new Error(`document archive received no reversible committed index receipt in Memory Space ${memoryBodyId}`)
           }
@@ -1393,6 +1493,7 @@ ${naturalRequest(request)}`
     if (request.target === 'user') return this.compactUserAndCommit(context, request, plan, signal)
 
     const archive = await context.memorySpaces()
+    if (archive === undefined) return this.archiveRuntimeLocally(context, request, plan, 'no Memory Space takes automatic writes here', signal)
     const memoryService = archive.source
     let allowed = archive.memoryBodyIds
     const readDirectory = async () => {
@@ -1413,12 +1514,14 @@ ${naturalRequest(request)}`
     const catalog = await readDirectory()
     // A Source that predates writeScope retains the narrower pinned read namespace.
     // An empty scope always denies every destination; never replace it with the live catalog.
+    // A Mnemon Native space stays listed, and active, while its CLI is missing; it takes no writes then.
+    const ready = (body: MemorySpaceCatalog['items'][number]) => catalog.providers?.find(provider => provider.id === body.provider.id)?.serviceConfigured !== false
     const writable = (body: MemorySpaceCatalog['items'][number]) => (
-      body.active && body.providerEnabled !== false && body.provider.capabilities.remember === true
+      body.active && body.providerEnabled !== false && body.provider.capabilities.remember === true && ready(body)
       && (allowed === undefined || allowed.has(body.id))
     )
-    const eligible = (body: MemorySpaceCatalog['items'][number]) => writable(body)
-      && body.provider.capabilities.writeMode === 'exact' && body.provider.capabilities.forget === true
+    const exact = (body: MemorySpaceCatalog['items'][number]) => body.provider.capabilities.writeMode === 'exact' && body.provider.capabilities.forget === true
+    const eligible = (body: MemorySpaceCatalog['items'][number]) => writable(body) && exact(body)
     const eligibleBodies = catalog.items.filter(eligible)
     if (eligibleBodies.length === 0) {
       const writableBodies = catalog.items.filter(writable)
@@ -1428,6 +1531,10 @@ ${naturalRequest(request)}`
         : allowed !== undefined && catalog.items.some(body => body.active && body.providerEnabled !== false && body.provider.capabilities.remember && !allowed?.has(body.id)) && writableBodies.length === 0
           ? 'current View write scope excludes the active writable Memory Spaces'
           : writableBodies.length === 0 ? 'no active writable Memory Space in the authorized scope' : 'authorized destinations lack exact writes or safe forget'
+      // With no Memory Space at all that could take this archive, MEMORY.md archives
+      // locally and keeps working (#336). One outside this View's write scope is
+      // still worth the retry in a new turn that the error asks for.
+      if (!catalog.items.some(body => archivableSpace(catalog, body)) && archive.elsewhere !== true) return this.archiveRuntimeLocally(context, request, plan, `${reason}${unsupported === '' ? '' : ` (${unsupported})`}`, signal)
       const scope = archive.writeScope === undefined ? 'management' : `${archive.writeScope.grant.sourceInstanceKey}/${catalog.writeScope === undefined ? 'pinned-read' : 'source-write'}`
       throw new Error(`runtime memory archival requires an existing active writable Memory Space with exact writes and safe forget; ${reason}; scope=${scope}, catalog=${catalog.items.length}, authorized=${allowed?.size ?? 'management'}, writable=${writableBodies.length}; pending write was not committed and existing runtime entries are unchanged; retry the same request in a new turn after activating a supported authorized Memory Space, or increase runtimeMemory.memoryLimitBytes${unsupported === '' ? '' : `; unsupported destinations: ${unsupported}`}`)
     }
@@ -1694,13 +1801,23 @@ ${runtimeSnapshotContext('user', plan.entries)}`
     if (!mutationStates(result).includes('skipped')) {
       throw new Error(`runtime archive write did not commit synchronously for Memory Space ${memoryBodyId}`)
     }
-    const recalled = await service.read<{ results: Insight[] }>('search', {
+    // A write skipped because the space already holds this exact text can name
+    // that memory itself, as Mnemon Native does after matching its stored
+    // contents byte for byte. A ranked search could miss it (#339).
+    const named = skippedExactDestination(result, memoryBodyId, entry.content)
+    if (named !== undefined) return named
+    const recalled = await service.read<{ results: Insight[]; sources?: Array<{ status?: string; hint?: string }> }>('search', {
       query: entry.content.slice(0, 500),
       limit: 20,
       memoryBodyIds: [memoryBodyId],
     }, signal)
     const exact = recalled.results.find(candidate => candidate.memoryBodyId === memoryBodyId && candidate.content.trim() === entry.content)
-    if (exact === undefined) throw new Error(`runtime archive skipped an entry without exact durable recall evidence in Memory Space ${memoryBodyId}`)
+    if (exact === undefined) {
+      const unavailable = recalled.sources?.find(source => source.status === 'unavailable')
+      throw new Error(`runtime archive skipped an entry without exact durable recall evidence in Memory Space ${memoryBodyId}: ${unavailable === undefined
+        ? `its search returned ${recalled.results.length} results, none with that exact text`
+        : `its search was unavailable (${safeFailureDetail(unavailable.hint ?? 'no detail')})`}`)
+    }
     return {
       layerId: 'memory-spaces',
       reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(exact.id)}`,
@@ -1968,6 +2085,62 @@ This is the only completion channel for this run. Do not finish with a plain-tex
     const source = authority.graph.source(typeId, authority.context.scope).forTurn(authority.context)
     await source.assertActionOffered(actionId, offer => authority.graph.config.writeEnabled && offer.authority === undefined)
     return source
+  }
+
+  /**
+   * The Memory Spaces Source a Document archive indexes into, or undefined when
+   * that layer is off, not installed, takes no automatic writes, or has no space
+   * anywhere that could take the index (#336). A space this View does not offer
+   * keeps the refusal, as before.
+   */
+  private async documentIndexSpaces(parent: HostAgent, generation: MemoryCompositionGeneration, signal: AbortSignal): Promise<SourceSession | undefined> {
+    const graph = this.runtimeSource.forAgent(parent)
+    if (!graph.config.writeEnabled || !this.runtimeSource.config.writeEnabled) throw new Error('dsh-mnemon is configured read-only')
+    if (!allowsParticipation(graph.config, 'memory-spaces', 'write', 'automatic')) return undefined
+    const installed = generation.sourceInstances().filter(source => source.sourceTypeId === 'memory-spaces')
+    if (installed.length === 0) return undefined
+    const authority = this.turnAuthority(parent, false)
+    if (authority !== undefined && !authority.context.view.actionOffers.some(offer => offer.sourceActionId === 'remember' && offer.authority === undefined
+      && installed.some(source => source.sourceInstanceKey === offer.sourceInstanceKey))
+      && await this.noArchivableMemorySpace(graph, agentScope(parent, graph.config), generation, signal)) return undefined
+    return this.writableSourceFor(parent, 'memory-spaces', 'remember')
+  }
+
+  /** Whether a Memory Spaces Source other than the one in use lists a space that could take the archive. */
+  private async archivableElsewhere(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, generation: MemoryCompositionGeneration, sourceInstanceKey: string, signal?: AbortSignal): Promise<boolean> {
+    if (!generation.sourceInstances().some(source => source.sourceTypeId === 'memory-spaces' && source.sourceInstanceKey !== sourceInstanceKey)) return false
+    return !await this.noArchivableMemorySpace(graph, scope, generation, signal, sourceInstanceKey)
+  }
+
+  /**
+   * True only when no installed Memory Spaces Source lists a space that could take
+   * an archive (#336). A directory that cannot be read counts as one that could:
+   * the caller then refuses as before, and nothing leaves working memory.
+   */
+  private async noArchivableMemorySpace(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, generation: MemoryCompositionGeneration, signal?: AbortSignal, except?: string): Promise<boolean> {
+    for (const instance of generation.sourceInstances().filter(source => source.sourceTypeId === 'memory-spaces' && source.sourceInstanceKey !== except)) {
+      try {
+        const directory = await graph.source('memory-spaces', scope).forInstance(instance.sourceInstanceKey).forGeneration(generation).read<MemorySpaceCatalog>('body-directory', null, signal)
+        if (directory.items.some(body => archivableSpace(directory, body))) return false
+      } catch {
+        signal?.throwIfAborted()
+        return false
+      }
+    }
+    return true
+  }
+
+  /** A Project Document archived without a Mnemon index keeps its original under .mnemon/documents/archived. */
+  private async archiveDocumentLocally(controller: SourceSession, document: DocumentView, reason: string, signal: AbortSignal): Promise<CoordinatedDocumentResult> {
+    signal.throwIfAborted()
+    const summary = `Archived locally without a Mnemon index, since ${reason}.`
+    const archived = await controller.mutate<DocumentMutationResult>('archive', { id: document.id, documentRevision: document.revision, summary, memoryBodyIds: [] }, signal)
+    const runId = `host-${randomUUID()}`
+    this.counters.documentArchives += 1
+    this.counters.lastRunId = runId
+    this.counters.lastOperation = 'document-archive'
+    this.counters.lastAt = new Date().toISOString()
+    return { ...archived, maintenance: { runId, provider: 'host', summary, memoryBodyIds: [], archivedDocumentIds: [document.id] } }
   }
 
   private async assertAutomaticMemoryWrite(parent: HostAgent): Promise<SourceSession> {

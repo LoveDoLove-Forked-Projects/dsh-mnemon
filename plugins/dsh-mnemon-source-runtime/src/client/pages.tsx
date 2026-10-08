@@ -66,6 +66,8 @@ export function RuntimePage(props: { client: RuntimePageClient; revision: number
       ? t(`runtime.result.${request.action}` as MnemonKey, { target: t(`runtime.target.${request.target}` as MnemonKey), count: result.entryCount })
       : result.maintenance.kind === 'local-compaction'
         ? t('runtime.result.localCompaction', { target: t(`runtime.target.${request.target}` as MnemonKey), count: result.entryCount })
+        : result.maintenance.kind === 'local-archive'
+          ? t('runtime.result.localArchive', { target: t(`runtime.target.${request.target}` as MnemonKey), count: result.entryCount, archived: result.archived?.entries ?? 0 })
         : t('runtime.result.maintenance', { target: t(`runtime.target.${request.target}` as MnemonKey), count: result.entryCount, spaces: result.maintenance.memoryBodyIds.join(', ') || '—' }))
     await load()
     props.onMutate()

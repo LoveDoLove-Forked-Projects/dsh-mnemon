@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -260,6 +260,33 @@ describe('Mnemon Pack', () => {
 
     expect(readFileSync(join(target.root, 'data', 'target', 'mnemon.db'))).toEqual(beforeDatabase)
     expect(readdirSync(join(target.root, 'data')).filter(name => !name.startsWith('.'))).toEqual(['target'])
+  })
+
+  it.each(['replace', 'merge'] as const)('keeps the local MEMORY.md archive through a %s import (issue 336)', async mode => {
+    const source = await fixture(`pack-archive-source-${mode}`, 12, 'source')
+    const target = await fixture(`pack-archive-target-${mode}`, 13, 'target')
+    // The only copy of what left MEMORY.md while no Memory Space could take it.
+    const archive = join(target.root, 'runtime', 'archived')
+    mkdirSync(archive, { recursive: true })
+    writeFileSync(join(archive, 'MEMORY.md'), '# MEMORY.md archive\n\n## 2026-10-08T00:00:00.000Z\n\nArchived durable fact.\n')
+    writeFileSync(join(archive, 'memories.jsonl'), '{"content":"Archived durable fact."}\n')
+    mkdirSync(join(archive, 'notes'))
+    writeFileSync(join(archive, 'notes', 'kept.md'), 'A note kept beside the archive.\n')
+    // A link in the archive is not carried, and what it points at is left alone.
+    const outside = join(temporary(`pack-archive-outside-${mode}`), 'outside.md')
+    writeFileSync(outside, 'Outside the archive.\n')
+    symlinkSync(outside, join(archive, 'linked.md'))
+    const exported = await source.manager.exportPack('full')
+
+    await target.manager.importPack(exported.base64, { mode, components: ['runtime'] })
+
+    expect(readFileSync(join(archive, 'MEMORY.md'), 'utf8')).toContain('Archived durable fact.')
+    expect(readFileSync(join(archive, 'memories.jsonl'), 'utf8')).toBe('{"content":"Archived durable fact."}\n')
+    expect(statSync(join(archive, 'MEMORY.md')).mode & 0o777).toBe(0o600)
+    expect(readFileSync(join(archive, 'notes', 'kept.md'), 'utf8')).toBe('A note kept beside the archive.\n')
+    expect(existsSync(join(archive, 'linked.md'))).toBe(false)
+    expect(readFileSync(outside, 'utf8')).toBe('Outside the archive.\n')
+    expect(readdirSync(target.root).some(name => name.startsWith('.dsh-pack-stage-') || name.startsWith('.dsh-pack-backup-'))).toBe(false)
   })
 
   it('refuses to replace an initialized root with an empty Memory Space set', async () => {

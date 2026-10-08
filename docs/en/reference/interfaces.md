@@ -58,7 +58,7 @@ Model tools, lifecycle hooks, and system scheduling use an `automatic` trigger. 
 | Tool | Purpose | Root Agent path |
 |---|---|---|
 | `mnemon_runtime_memory` | `add` / `replace` / `remove` hot memory | Deterministic control; add overflow may start a worker |
-| `mnemon_document_manage` | Create, update, or archive a Document | Create/update deterministic; archive uses a worker |
+| `mnemon_document_manage` | Create, update, or archive a Document | Create/update deterministic; archive uses a worker, or archives locally without one when no Memory Space can take the index |
 | `mnemon_document_create` | Create a separate Document without updating or archiving existing ones | Deterministic Source `create` Action; available to idle review |
 | `mnemon_remember` | Retain one insight under Provider semantics; distinguish acceptance from durable completion | `spawn` write worker |
 | `mnemon_link` | Create a typed relationship where the provider supports it | `spawn` write worker |

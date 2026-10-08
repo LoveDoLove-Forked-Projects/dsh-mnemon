@@ -307,6 +307,13 @@ export interface SearchRequest {
   source?: Source
   intent?: Intent
   memoryBodyIds?: string[]
+  /**
+   * A look at the memory rather than a use of it, such as the Memory System's
+   * own searches. Providers that record reads, as access counts or a query
+   * log, leave it out, and may answer from a snapshot that lags a write still
+   * in flight; a check that must see a write leaves the flag unset.
+   */
+  inspect?: boolean
 }
 
 export interface RememberRequest {

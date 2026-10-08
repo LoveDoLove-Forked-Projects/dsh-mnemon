@@ -70,6 +70,7 @@ DSH 的“工作区”模式不会统一重写所有 Provider 命名空间。Mne
 - Hindsight 使用轻量存活检查，并从 Provider 的 bank stats、实体目录与图谱响应读取真实统计、实体和关系；旧版缺少统计接口时仍可使用召回与图谱表面。
 - ByteRover 只开放聚焦的 `status`、`query` 与 `curate`；不会虚构广域知识树浏览和删除能力。
 - Supermemory 的浏览结果合并已抽取 memory entries 与仍可浏览的 ingested documents，并按 Provider ID 去重；文档未完成抽取时也不会从“内容”页消失。
+- Mnemon Native 会记录使用。Agent、`/mnemon recall` 或 **Agent 查询**发起的召回，会把查询写入存储的操作日志（`mnemon log`，保留最近 5,000 条操作），并把返回的记忆计为已访问；Mnemon 的保留策略会参考访问次数（`mnemon gc` 不会建议清理访问过三次的记忆）。记忆系统自身的检索（记忆空间页上的**直接检索**和实体页上的**查找相关记忆**）改为用 `mnemon --readonly` 读取快照，与它的列表和图谱一样，不做任何改动。Host 归档时核验自身写入的检查读取实时存储，因为其他进程写入期间，快照不一定与存储一致。
 - Mnemon Pack 包含 Mnemon Native 记忆空间、运行时与档案；三方连接、凭据、本地三方 Store 与远程数据都不进入 Pack。
 - 外部产品的可用性、价格、隐私、保留策略和许可证由各自运营方决定。把私有记忆发送给远程 Provider 前应先评估这些边界。
 

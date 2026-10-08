@@ -188,6 +188,12 @@ snapshot revision + committed entries eligible for archival
           v
 Host selects existing active writable Memory Spaces within this operation's Source and namespace scope
           |
+          +-- none anywhere (layer off or no automatic writes, no ready Provider,
+          |   no active space with exact writes and safe forget)
+          |     -> Runtime Source appends the entries compaction leaves out to
+          |        runtime/archived/, then commits the compaction and the pending
+          |        mutation under the same lock; no model and no Provider writes
+          |
           v
 One destination: Host routes directly
 Several destinations: independent no-tool worker returns source-index routes only
@@ -231,6 +237,9 @@ capacityPlan using rendered UTF-8 bytes
                v
           snapshot document + revision
                |
+               +-- no Memory Space anywhere can take the index
+               |     -> move file to archived without an index, no worker
+               |
                v
           spawn archive worker
                |
@@ -256,7 +265,7 @@ capacityPlan using rendered UTF-8 bytes
                     retry original mutation
 ```
 
-Manual archiving uses the same “index first, move second” path. When the Mnemon index succeeds but a revision conflict occurs, the index is not rolled back, so a safe duplicate reference may remain while the active original text is never lost.
+Manual archiving uses the same “index first, move second” path, and the same local archive when no Memory Space can take the index. When the Mnemon index succeeds but a revision conflict occurs, the index is not rolled back, so a safe duplicate reference may remain while the active original text is never lost.
 
 ## Deterministic Activity Scoring and Background Review
 

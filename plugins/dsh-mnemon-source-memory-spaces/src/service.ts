@@ -474,11 +474,14 @@ export class MemorySpacesService {
   }
 
   /** One local metadata observation supplies membership and its revision. */
-  memoryState(): { all: MemorySpace[]; active: MemorySpace[]; revision: string } {
+  memoryState(): { all: MemorySpace[]; active: MemorySpace[]; providerReady: boolean; revision: string } {
     const all = this.memorySpaces.list()
     const serviceItems = this.memorySpaces.providerServices().items
     const enabled = new Set(serviceItems.filter(service => service.enabled).map(service => service.providerId))
-    const active = all.filter(body => body.active && (this.isNativeSpace(body) || enabled.has(body.provider.id)))
+    const commandFound = this.runner.commandFound
+    // A Mnemon Native space takes part only while its CLI is found: without it,
+    // every read and write of that space fails (#336).
+    const active = all.filter(body => body.active && (this.isNativeSpace(body) ? commandFound : enabled.has(body.provider.id)))
       .sort((left, right) => left.id.localeCompare(right.id))
     const spaces = [...all]
       .sort((left, right) => left.id.localeCompare(right.id))
@@ -494,7 +497,9 @@ export class MemorySpacesService {
     const services = serviceItems
       .map(service => ({ providerId: service.providerId, enabled: service.enabled, configured: service.configured }))
       .sort((left, right) => left.providerId.localeCompare(right.providerId))
-    return { all, active, revision: createHash('sha256').update(JSON.stringify({ bodies: spaces, services })).digest('hex') }
+    // The revision stays as it was while the CLI is found, so a working setup sees no change.
+    const revision = createHash('sha256').update(JSON.stringify({ bodies: spaces, services, ...(commandFound ? {} : { nativeUnavailable: true }) })).digest('hex')
+    return { all, active, providerReady: this.memorySpaces.defaultProviderId() !== undefined, revision }
   }
 
   /** Return a usable system snapshot without waiting for any Provider I/O. */
@@ -698,6 +703,7 @@ export class MemorySpacesService {
       ...(category === undefined ? {} : { category }),
       ...(source === undefined ? {} : { source }),
       ...(intent === undefined ? {} : { intent }),
+      ...(request.inspect === true ? { inspect: true } : {}),
     }
     let batches = await Promise.all(spaces.map(async body => {
       if (!body.provider.capabilities.search) {
@@ -762,6 +768,7 @@ export class MemorySpacesService {
             query: recoveryPlan.query,
             mode: 'keyword',
             limit: Math.min(limit, preparedPolicy.candidateLimit),
+            ...(request.inspect === true ? { inspect: true } : {}),
           }, signal)
           const admitted = recovered.results.some(insight => recoveryMatchCount(insight.content, recoveryPlan) >= recoveryPlan.requiredMatches)
           const results = mergeRecoveryResults(batch.result.results, recovered.results, recoveryPlan, preparedPolicy.candidateLimit)
@@ -1017,8 +1024,9 @@ export class MemorySpacesService {
       const display = mergeEntityCounts(read.indexes).names.get(key) ?? selected
       const readableIds = read.readable.map(body => body.id)
       if (readableIds.length === 0) return { entity: display, items: [], sources: [] }
+      // The Entities page looks; it does not use what it shows.
       const result = await this.search(
-        { query: selected, intent: 'ENTITY', limit: integer(limit, 20, 1, 50), memoryBodyIds: readableIds },
+        { query: selected, intent: 'ENTITY', limit: integer(limit, 20, 1, 50), memoryBodyIds: readableIds, inspect: true },
         combined,
         { exclude: carrying },
       )
@@ -1196,6 +1204,27 @@ export class MemorySpacesService {
     }
 
     return results
+  }
+
+  /**
+   * The memories held under an exact id among the given spaces that can be
+   * read now, asked of the Providers that can look ids up.
+   */
+  async locate(id: string, memoryBodyIds: readonly string[], signal?: AbortSignal): Promise<Insight[]> {
+    const exact = required(id, 'id', 2000)
+    const readable = new Map(this.memorySpaces.active()
+      .filter(body => this.isNativeSpace(body) || this.memorySpaces.providerServiceEnabled(body.provider.id))
+      .map(body => [body.id, body]))
+    const found: Insight[] = []
+    for (const memoryBodyId of new Set(memoryBodyIds)) {
+      const body = readable.get(memoryBodyId)
+      if (body === undefined) continue
+      const provider = this.providerFor(body)
+      if (provider.get === undefined) continue
+      const insight = await provider.get(body, exact, signal)
+      if (insight !== undefined && insight.id === exact) found.push(this.annotate(insight, body))
+    }
+    return found
   }
 
   async related(id: string, depth = 2, edge?: EdgeType, signal?: AbortSignal, memoryBodyId?: string): Promise<Insight[]> {
