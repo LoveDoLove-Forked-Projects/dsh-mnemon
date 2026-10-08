@@ -43,10 +43,13 @@ Temporary progress, guesses and secrets are not written.
 
 Each finished reply has a brain-shaped **Save to memory** in its action strip, the same mark as the Memory System; the database icon beside it is DSH's usage, not memory. Selecting it reads that reply and opens a dialog:
 
-- The title is **Save to memory**, with one line on what the task Agent does. **Task Agent ready** means you can send.
+- The title is **Save to memory**, with one line on what happens to the text. **Task Agent ready** means the task Agent can take it.
 - **Candidate (editable)** starts with the whole reply; usually you keep only the sentence worth remembering. **Cancel** changes nothing.
-- **Send to task Agent** hands it to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
-- A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), the task Agent's summary of where it went, in the candidate's language, and **View in Memory Spaces**. **Cancel** becomes **Close**, and sending again needs an edit to the candidate.
+- **Save to** picks where it goes:
+  - **Let the Agent decide** is the default while a task Agent can write. **Send to task Agent** hands the text to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
+  - **Working memory (MEMORY.md)**, **User profile (USER.md)** or a Memory Space by name: **Save** writes the text there as it is, at once, without a task Agent.
+  - Without a task Agent, or without a Memory Space Provider, the dialog starts on **Working memory**.
+- A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), a summary of where the text went, and a link to it: **View in Memory Spaces**, or Runtime Memory for working memory and the user profile. **Cancel** becomes **Close**. Sending the same text to the same place again needs an edit; another place, or a send that failed, takes it as it is.
 
 | Edit the candidate | The task Agent's receipt |
 |---|---|
@@ -279,7 +282,7 @@ Use the paired selector in an unlayered stylesheet. Its specificity `(0,2,0)` be
 Memory surfaces follow one set of conventions everywhere:
 
 - **One mark**: the turn memory bar, Save to memory and the Memory System in the sidebar share the brain mark; DSH's database icon means usage, not memory.
-- **One name, one dialog**: writing to long-term memory is called **Save to memory** everywhere and opens the same dialog, which a task Agent completes with a receipt.
+- **One name, one dialog**: writing to long-term memory is called **Save to memory** everywhere and opens the same dialog, which a task Agent, or the place you choose, answers with a receipt.
 - **Names over identifiers**: memories are referred to by title, content and space name, never by raw id or path; **Copy ID** stays on the cards for when you need one.
 - **The same controls**: search boxes, choices, switches and dialog buttons use DSH's input, selector, switch and outlined Cancel; menus and tooltips open above dialogs.
 - **Refresh lives in the header**: **Refresh** reloads the open page; pages carry no refresh or sync buttons of their own.

@@ -283,16 +283,90 @@ describe('conversation interaction surfaces', () => {
     unsubscribe()
   })
 
-  it('keeps sending closed while no task Agent can take the write', async () => {
-    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+  it('saves to working memory directly while no task Agent can take the write', async () => {
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string, input?: unknown) => {
       if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, lifecycle: { taskAgentAvailable: false } } }
       if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'A durable project decision.' } }
+      if (endpoint === 'source-management-catalog') return { ok: true as const, value: { generationId: 'g1', sources: [{ sourceInstanceKey: 'source:mnemon-source-runtime', sourceTypeId: 'runtime', revision: 'r1' }] } }
+      if (endpoint === 'source-management-mutate') return { ok: true as const, value: { revision: 'r2', value: { success: true, message: 'Entry added.', target: 'memory', entryCount: 4, added: (input as { input: { content: string } }).input.content } } }
       throw new Error(`unexpected endpoint: ${endpoint}`)
     })
     render(<MnemonSaveAction messageId="message-1" sessionId="session-a" connection={{ rpc: { call: rpcCall }, isLoopback: true } as ClientConnectionHandle} settingsScope={writableSettingsScope} localeRuntime={localeRuntime} t={translate as never} />)
     fireEvent.click(screen.getByRole('button', { name: 'saveAction.button' }))
-    await screen.findByText('taskAgent.unavailable')
-    expect((screen.getByRole('button', { name: 'saveAction.submit' }) as HTMLButtonElement).disabled).toBe(true)
+    // Without a task Agent the dialog still saves, to working memory, as written.
+    const save = await screen.findByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+    expect(screen.getByRole('dialog', { name: 'saveAction.title' }).textContent).toContain('saveAction.hintDirect')
+    expect(screen.queryByText('taskAgent.unavailable')).toBeNull()
+    await waitFor(() => expect(save.disabled).toBe(false))
+    fireEvent.click(save)
+    await screen.findByText('receipt.written')
+    expect(screen.getByText('saveAction.saved.runtime')).toBeTruthy()
+    // The receipt leads to where the text went: Runtime Memory.
+    expect(screen.getByRole('button', { name: 'receipt.viewRuntime' })).toBeTruthy()
+    expect(rpcCall).toHaveBeenCalledWith(expect.anything(), 'source-management-mutate', expect.objectContaining({
+      sourceInstanceKey: 'source:mnemon-source-runtime', operation: 'mutate', expectedRevision: 'r1', confirmed: true,
+      input: { action: 'add', target: 'memory', content: 'A durable project decision.' },
+    }))
+    expect(rpcCall.mock.calls.filter(call => call[1] === 'supervise')).toHaveLength(0)
+    // The Agent choice stays listed, closed.
+    fireEvent.click(screen.getByRole('button', { name: /saveAction\.to/ }))
+    expect((screen.getByRole('menuitem', { name: /saveAction\.to\.agent/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('writes the text as it is to the place the user picks, and sends a failure again as it is', async () => {
+    let remembered = 0
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string, input?: unknown) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, lifecycle: { taskAgentAvailable: true },
+        providerServices: [{ providerId: 'holographic', label: 'Holographic', enabled: true, configured: true, status: 'idle', memoryBodyCount: 1, activeMemoryBodyCount: 1 }],
+        memoryBodies: [
+          { id: 'lumen', name: 'Lumen project', active: true, providerEnabled: true, provider: { id: 'holographic', label: 'Holographic', capabilities: { remember: true } } },
+          { id: 'native', name: 'Native space', active: true, providerEnabled: true, provider: { id: 'mnemon-native', label: 'Mnemon Native', capabilities: { remember: true } } },
+        ] } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'Checkout loads the payment SDK after interaction.' } }
+      if (endpoint === 'source-management-catalog') return { ok: true as const, value: { generationId: 'g1', sources: [
+        { sourceInstanceKey: 'source:mnemon-source-runtime', sourceTypeId: 'runtime', revision: 'r1' },
+        { sourceInstanceKey: 'source:mnemon-source-memory-spaces', sourceTypeId: 'memory-spaces', revision: 's1' },
+      ] } }
+      if (endpoint === 'source-management-mutate') {
+        if ((input as { operation: string }).operation !== 'remember') throw new Error('unexpected write')
+        remembered += 1
+        if (remembered === 1) return { ok: false as const, error: { message: 'Memory Spaces management revision changed' } }
+        return { ok: true as const, value: { revision: 's2', value: { action: 'added', id: 'm1', memoryBodyId: 'lumen' } } }
+      }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    const received: string[] = []
+    const unsubscribe = subscribeMnemonAnchor('session-a', anchor => received.push(anchor.page))
+    render(<MnemonSaveAction messageId="message-1" sessionId="session-a" connection={{ rpc: { call: rpcCall }, isLoopback: true } as ClientConnectionHandle} settingsScope={writableSettingsScope} localeRuntime={localeRuntime} t={translate as never} />)
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.button' }))
+    // The task Agent stays the default while it can write.
+    await screen.findByText('taskAgent.ready')
+    fireEvent.click(screen.getByRole('button', { name: /saveAction\.to/ }))
+    expect(screen.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+      'saveAction.to.agentsaveAction.to.agentDetail', 'saveAction.to.memory', 'saveAction.to.user', 'Lumen projectsaveAction.to.space',
+    ])
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Lumen project/ }))
+    const save = screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+    fireEvent.click(save)
+    await screen.findByText('receipt.failed')
+    // A failure answers nothing: the same text can be sent again without an edit.
+    await waitFor(() => expect(save.disabled).toBe(false))
+    fireEvent.click(save)
+    await screen.findByText('receipt.written')
+    expect(rpcCall).toHaveBeenLastCalledWith(expect.anything(), 'source-management-mutate', expect.objectContaining({
+      sourceInstanceKey: 'source:mnemon-source-memory-spaces', operation: 'remember', expectedRevision: 's1',
+      input: { content: 'Checkout loads the payment SDK after interaction.', memoryBodyId: 'lumen', source: 'user' },
+    }))
+    // A receipt answers one text in one place: another place takes it again.
+    expect(save.disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: /saveAction\.to/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'saveAction.to.user' }))
+    expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(false)
+    // The receipt still leads to what it answers.
+    fireEvent.click(screen.getByRole('button', { name: 'receipt.view' }))
+    expect(received).toEqual(['memory-spaces/content'])
+    expect(rpcCall.mock.calls.filter(call => call[1] === 'supervise')).toHaveLength(0)
+    unsubscribe()
   })
 
   it('opens a centered modal and prevents a second supervised write while it is closed', async () => {

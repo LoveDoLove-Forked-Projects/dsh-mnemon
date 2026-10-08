@@ -104,6 +104,11 @@
   border-color: var(--dsw-alias-state-business-primary);
 }
 
+/* Where the candidate goes: the task Agent, or a place the user names. */
+.destination {
+  margin-top: 12px;
+}
+
 .truncated {
   display: block;
   margin-top: 6px;
