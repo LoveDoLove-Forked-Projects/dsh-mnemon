@@ -1198,6 +1198,31 @@ export class MemorySpacesService {
     return results
   }
 
+  /**
+   * Where an exact id lives among the given spaces that can be read now: the
+   * memories found under it, and the spaces whose Provider cannot look an id up.
+   */
+  async locate(id: string, memoryBodyIds: readonly string[], signal?: AbortSignal): Promise<{ found: Insight[]; unsupported: string[] }> {
+    const exact = required(id, 'id', 2000)
+    const readable = new Map(this.memorySpaces.active()
+      .filter(body => this.isNativeSpace(body) || this.memorySpaces.providerServiceEnabled(body.provider.id))
+      .map(body => [body.id, body]))
+    const found: Insight[] = []
+    const unsupported: string[] = []
+    for (const memoryBodyId of new Set(memoryBodyIds)) {
+      const body = readable.get(memoryBodyId)
+      if (body === undefined) continue
+      const provider = this.providerFor(body)
+      if (provider.get === undefined) {
+        unsupported.push(body.id)
+        continue
+      }
+      const insight = await provider.get(body, exact, signal)
+      if (insight !== undefined && insight.id === exact) found.push(this.annotate(insight, body))
+    }
+    return { found, unsupported }
+  }
+
   async related(id: string, depth = 2, edge?: EdgeType, signal?: AbortSignal, memoryBodyId?: string): Promise<Insight[]> {
     const body = this.readSpace(memoryBodyId)
     const selectedEdge = allowed(edge, EDGE_TYPES, 'edge')

@@ -70,6 +70,74 @@ describe('standalone Memory Spaces Source', () => {
     } finally { await runner.dispose(); rmSync(directory, { recursive: true, force: true }) }
   })
 
+  it('acts on a memory named by exact id that this View has not returned (issue 337)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mnemon-spaces-exact-id-'))
+    const runner = new MemoryCompositionRunner()
+    const scope = { storage: 'custom' as const }
+    // `written` exists only in Notes; `twin` exists in both spaces.
+    const stored: Record<string, Array<{ id: string; content: string }>> = {
+      notes: [{ id: 'written', content: 'Written a moment ago' }, { id: 'twin', content: 'Twin in Notes' }],
+      archive: [{ id: 'twin', content: 'Twin in Archive' }],
+    }
+    const forget = vi.fn(async () => ({ action: 'deleted' }))
+    const related = vi.fn(async () => [])
+    const link = vi.fn(async () => ({ action: 'linked' }))
+    const exactProvider = defineMemorySpaceProvider<undefined>({ id: 'exact', apply(ctx, host) {
+      host.install(ctx, {
+        manifest: { apiVersion: MEMORY_SPACE_PROVIDER_API_VERSION, kind: 'provider', typeId: 'exact',
+          packageName: 'dsh-mnemon-provider-exact-test', version: '1.0.0', label: 'Exact fixture', summary: 'Looks memories up by id.',
+          origin: 'third-party', locality: 'remote', workspaceBinding: 'provider-global', fields: [], secrets: [], scoreSemantics: 'normalized-relevance',
+          capabilities: { ...descriptor.capabilities, related: true, link: true, forget: true, deletionMode: 'soft' },
+        },
+        create: () => ({ id: 'exact', scoreSemantics: NORMALIZED_RELEVANCE_SCORE,
+          discover: async () => [
+            { externalId: 'notes', name: 'Notes', description: 'Fixture namespace', connection: {} },
+            { externalId: 'archive', name: 'Archive', description: 'Fixture namespace', connection: {} },
+          ],
+          status: async () => ({ healthy: true }), list: async () => [], search: async () => ({ results: [] }),
+          graph: async () => ({ nodes: [], edges: [], generatedAt: new Date().toISOString() }),
+          remember: async () => ({ action: 'stored' }),
+          get: async (body, id) => stored[body.name.toLowerCase()]?.find(item => item.id === id),
+          related, link, forget,
+        }),
+      })
+    } })
+    try {
+      await runner.mount(strategy, { instanceId: 'strategy' })
+      await runner.mount({ inject: ['mnemonMemory'], async apply(ctx: Context) {
+        await installMemorySpaces(ctx, [{ instanceId: 'account', module: exactProvider, config: undefined }], { config: { dataDir: directory } })
+      } }, { instanceId: 'work' })
+      const source = (await runner.managementCatalog(scope)).sources[0]!
+      await runner.executeManagement({ scope, sourceInstanceKey: source.sourceInstanceKey, mode: 'mutate', confirmed: true,
+        expectedRevision: source.revision, operation: 'provider-service-update', input: { providerId: 'account', settings: {}, enabled: true } })
+      const directoryRead = await runner.executeManagement({ scope, sourceInstanceKey: source.sourceInstanceKey, mode: 'read', confirmed: false, operation: 'body-directory', input: null })
+      const spaces = (directoryRead.value as unknown as { items: Array<{ id: string; name: string }> }).items
+      const notes = spaces.find(space => space.name === 'Notes')!.id
+      const archive = spaces.find(space => space.name === 'Archive')!.id
+      const turn = await runner.beginTurn({ scope })
+      const offer = (id: string) => turn.view.actionOffers.find(action => action.sourceActionId === id)!.id
+      const route = turn.view.routes.find(item => item.sourceRouteId === 'related')!.id
+
+      // Nothing was recalled in this View: the Provider finds the id, in one space only.
+      await expect(turn.executeAction(offer('forget'), { id: 'written' }, () => true)).resolves.toMatchObject({ completion: 'committed' })
+      expect(forget.mock.calls.at(-1)?.slice(0, 2)).toEqual([expect.objectContaining({ id: notes }), 'written'])
+      // An id no authorized space holds, or one two spaces hold, is not guessed.
+      await expect(turn.executeAction(offer('forget'), { id: 'missing' }, () => true)).rejects.toThrow('already admitted')
+      await expect(turn.executeAction(offer('forget'), { id: 'twin' }, () => true)).rejects.toThrow('already admitted')
+      expect(forget).toHaveBeenCalledOnce()
+      // Naming the space settles it.
+      await turn.executeAction(offer('forget'), { id: 'twin', memoryBodyId: archive }, () => true)
+      expect(forget.mock.calls.at(-1)?.slice(0, 2)).toEqual([expect.objectContaining({ id: archive }), 'twin'])
+      // The same holds for traversal and links within one space.
+      await turn.executeRoute(route, { id: 'twin', memoryBodyId: notes })
+      expect(related.mock.calls.at(-1)?.slice(0, 3)).toEqual([expect.objectContaining({ id: notes }), 'twin', 2])
+      await turn.executeAction(offer('link'), { sourceId: 'written', targetId: 'twin', memoryBodyId: notes }, () => true)
+      expect(link.mock.calls.at(-1)?.slice(0, 3)).toEqual([expect.objectContaining({ id: notes }), 'written', 'twin'])
+      await expect(turn.executeAction(offer('link'), { sourceId: 'written', targetId: 'twin', memoryBodyId: archive }, () => true)).rejects.toThrow('link requires two evidence items')
+      turn.release()
+    } finally { await runner.dispose(); rmSync(directory, { recursive: true, force: true }) }
+  })
+
   it('owns two isolated Provider trees, storage roots, management and LLM routes', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'mnemon-spaces-source-'))
     const runner = new MemoryCompositionRunner()

@@ -302,6 +302,17 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
     }
   }
 
+  /** One stored memory by exact id, read from a snapshot without touching access counts or the log. */
+  async get(body: MemorySpace, id: string, signal?: AbortSignal): Promise<Insight | undefined> {
+    try {
+      return normalizeInsight(await this.runner.runJson(['--readonly', 'show', id], { ...(signal === undefined ? {} : { signal }), store: body.id }))
+    } catch (error) {
+      // `mnemon show` exits 1 with SQL's "no rows" for an id the store does not hold, or has forgotten.
+      if (error instanceof Error && /no rows in result set/u.test(error.message)) return undefined
+      throw error
+    }
+  }
+
   async related(body: MemorySpace, id: string, depth: number, edge?: EdgeType, signal?: AbortSignal): Promise<Insight[]> {
     const args = ['related', id, '--depth', String(depth)]
     if (edge !== undefined) args.push('--edge', edge)
