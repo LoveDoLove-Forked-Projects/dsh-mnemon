@@ -8,7 +8,7 @@ Baseline: main `2296898d` (dsh-mnemon 0.5.24). Fix: `90bf2e89`. The runs use mac
 
 ## Method
 
-The [test-only plugin](./mnemon-settings-embed-fixture/lib/client.js) adds a **插件配置** section to DSH's Settings, the way such a shell does. It mirrors dsh-mnemon's `plugins.bundle.config` entry into a slot of its own, with the same component, locale and services, and renders it there as the page view. DSH binds the services as usual, but the mirrored entry declares no child slots, so the page receives no `renderSlot`. The same capture script ran against main and the fix:
+The [test-only plugin](./mnemon-settings-embed-fixture/lib/client.js) adds a **插件配置** section to DSH's Settings, the way such a shell does. It mirrors dsh-mnemon's `plugins.bundle.config` entry into a slot of its own, with the same component, locale and services, and renders it there as the page view. DSH binds the services as usual, but the mirrored entry declares no child slots, so the page receives no `renderSlot`. The same capture script ran against the fix and against the baseline, which is this branch with main's versions of the client files the fix changes swapped in, since main's `serve-e2e.mjs` has no `--plugin=` flag:
 
 ```sh
 pnpm e2e:serve --plugin=docs/pr-assets/issue-340-settings-outside-slots/mnemon-settings-embed-fixture

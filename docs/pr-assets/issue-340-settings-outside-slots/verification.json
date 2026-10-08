@@ -12,7 +12,7 @@
     "mnemonCli": "0.2.10",
     "browser": "headless Chrome, 1280x900, device scale 2, zh-CN, light"
   },
-  "fixture": "pnpm e2e:serve --plugin=docs/pr-assets/issue-340-settings-outside-slots/mnemon-settings-embed-fixture. The test-only plugin adds a 插件配置 Settings section that mirrors the dsh-mnemon plugins.bundle.config entry (component, locale, inject) into a slot of its own and renders it there with view: page. The mirrored entry declares no children, so DSH passes it no renderSlot.",
+  "fixture": "pnpm e2e:serve --plugin=docs/pr-assets/issue-340-settings-outside-slots/mnemon-settings-embed-fixture. The test-only plugin adds a 插件配置 Settings section that mirrors the dsh-mnemon plugins.bundle.config entry (component, locale, inject) into a slot of its own and renders it there with view: page. The mirrored entry declares no children, so DSH passes it no renderSlot. The baseline is this branch with main's versions of the client files the fix changes, since main's serve-e2e.mjs has no --plugin= flag.",
   "procedure": [
     "Open Plugins, then the dsh-mnemon page; list the gears of the composition board.",
     "Open Settings, then 插件配置; list the gears of the same board.",

@@ -8,7 +8,7 @@ Issue 比较了进入 dsh-mnemon 配置页的两条路径：从记忆系统打�
 
 ## 方法
 
-[测试用插件](./mnemon-settings-embed-fixture/lib/client.js)像这类外壳一样，在 DSH 的设置中加入**插件配置**分区。它把 dsh-mnemon 的 `plugins.bundle.config` 条目原样镜像到自己的 slot 中（组件、语言和服务都相同），并以页面视图渲染。DSH 照常绑定服务，但镜像条目没有声明子 slot，所以页面拿不到 `renderSlot`。同一个截图脚本分别在 main 和修复版本上运行：
+[测试用插件](./mnemon-settings-embed-fixture/lib/client.js)像这类外壳一样，在 DSH 的设置中加入**插件配置**分区。它把 dsh-mnemon 的 `plugins.bundle.config` 条目原样镜像到自己的 slot 中（组件、语言和服务都相同），并以页面视图渲染。DSH 照常绑定服务，但镜像条目没有声明子 slot，所以页面拿不到 `renderSlot`。同一个截图脚本分别在修复版本和基线上运行；基线是本分支把修复改动的客户端文件换回 main 的版本，因为 main 的 `serve-e2e.mjs` 还没有 `--plugin=` 参数：
 
 ```sh
 pnpm e2e:serve --plugin=docs/pr-assets/issue-340-settings-outside-slots/mnemon-settings-embed-fixture
