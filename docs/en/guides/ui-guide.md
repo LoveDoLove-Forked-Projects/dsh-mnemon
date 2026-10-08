@@ -83,7 +83,7 @@ Runtime memory is the compact context injected into every turn. **User profile**
 - Entries are newest first, with filters for target and text. Editing an older entry keeps its place. **Add memory** opens the dialog for a new runtime entry.
 - Keep entries short, independent and repeatedly useful; temporary progress and raw logs do not belong here.
 - A working-memory entry can be limited to git branches. It is then injected only while the session's workspace is on one of them; the page and the files on disk are unaffected.
-- When working memory reaches its limit, the Host archives the oldest entries into a memory space before adding the new one. With no memory space that can take them, for example without the Mnemon CLI or another Provider, it moves them to the local archive `runtime/archived/MEMORY.md` in the data directory instead.
+- When working memory reaches its limit, the Host archives its entries into a memory space, keeps the most important ones that fit in about 70% of the limit, and adds the new one. With no memory space that can take them, for example without the Mnemon CLI or another Provider, the entries it does not keep move to the local archive `runtime/archived/MEMORY.md` in the data directory instead.
 
 <details>
 <summary>Editing, capacity and branch details</summary>
