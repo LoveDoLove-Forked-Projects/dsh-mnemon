@@ -45,24 +45,24 @@ The same script ran on the change and, with main's versions of the client files 
 
 ## How it works
 
-- **Let the Agent decide** keeps the request and receipt it had. It is the default while a task Agent can write there: one is available, the Memory Spaces layer takes writes, and a space exists or a Provider is ready to create one. Otherwise it stays listed, closed, and the dialog starts on working memory. With no place open at all, sending stays closed.
+- **Let the Agent decide** keeps the request and receipt it had. It is the default while a task Agent can write there: one is available, the Memory Spaces layer takes writes, and a space exists or a Provider is ready to create one. Otherwise it stays listed, closed, and the dialog starts on working memory while that is listed. With no place open at all, the dialog says so and sending stays closed.
 - A place is listed while its layer is on, its component runs and its writes are not switched off. Spaces are listed while active, with their Provider enabled and able to remember; a Mnemon Native space only while its CLI is found.
 - A chosen place takes the text through the same write as its page, with a fresh revision of the default Source instance: Runtime Memory's `add` through Host assistance for `MEMORY.md` and `USER.md`, which checks the layer's write setting and makes room when the file is full, and Memory Spaces' `remember` with `source: user` for a space. No task Agent decides where it goes. Making room in a full file works as on the Runtime Memory page; for `USER.md` that needs a task Agent.
-- Working memory stores an entry as one line. Before saving there, the dialog says when the text cannot be one entry (over 8 KiB, or containing the section sign) and keeps **Save** closed, and when the file is full and saving will make room first. A full user profile without a task Agent keeps **Save** closed.
+- Working memory and the user profile store an entry as one line. Before saving there, the dialog reads the file's usage, and **Save** waits for it. It keeps **Save** closed when the text cannot be one entry: over 8 KiB, over the file's own limit, or containing the section sign. When the file is full it says what making room will do, by the Host's own budget: working memory keeps its entries within 70% of its limit, less the new text, and moves the rest out; a task Agent condenses the user profile to that budget, with no archive. A full user profile without a task Agent, or with a text too long for that budget, keeps **Save** closed.
 - A receipt answers one text in one place. The same text to the same place again needs an edit; another place takes it as it is, and so does a send that failed. A place that already holds the text says so, as on its own page: Runtime Memory skips an exact duplicate, and a Provider may skip or merge a similar memory. A Provider that queues writes, such as Mem0, Supermemory or Hindsight, shows **Submitted; the Provider confirms later**.
-- Closing the dialog while a direct save runs keeps it: opening it again shows the save on its place, then its receipt, so the same text is not written twice. The task Agent's request is keyed by its reply and keeps its behavior.
+- Closing the dialog while a direct save runs keeps it: opening it again shows the save on its text and place, then its receipt, so the same text is not written twice. The task Agent's request is keyed by its reply and keeps its behavior.
 - A status that does not say whether a layer, Provider or task Agent is there counts it as there, so the default never moves away from the task Agent by omission.
 
 ## Automated checks
 
 `tests/client-interaction-surfaces.spec.tsx`:
 
-- Without a task Agent, or with one but no Memory Space or Provider to write to, the dialog starts on working memory, lists **Let the Agent decide** closed and makes no task Agent request. The write goes through Host assistance to the default Runtime instance with a fresh revision, and the receipt's link opens Runtime Memory on the entry.
-- Places follow the layers: Runtime Memory switched off or stopped, Memory Spaces taking no writes or stopped, an inactive space, and nothing open at all, which keeps sending closed.
+- Without a task Agent, or with one but no Memory Space or Provider to write to, the dialog starts on working memory, lists **Let the Agent decide** closed and makes no task Agent request. The write goes to the default Runtime instance with a fresh revision, through Host assistance when the Source offers it, and the receipt's link opens Runtime Memory on the entry.
+- Places follow the layers: Runtime Memory switched off, stopped or taking no writes, Memory Spaces taking no writes or stopped, and an inactive space. With nothing open, with or without a task Agent, the dialog says so, shows no task Agent tag and keeps sending closed.
 - With a task Agent and two spaces, the Agent stays the default and a Native space is left out while its CLI is missing. A failed write can be sent again as it is; a receipt then closes sending for that place only.
-- A queued Provider write reads as submitted, a duplicate entry as skipped.
-- Before saving to working memory: a full file, a section sign, a text over 8 KiB, and a full user profile without a task Agent.
-- Every save reads the catalog again, and a direct save keeps its receipt when the dialog is closed while it runs or until it ends.
+- A queued Provider write reads as submitted, a duplicate entry as skipped, and a save that made room says so.
+- Before saving to working memory or the user profile: **Save** waits for the usage; a full file, a text that moves every entry out, a section sign, a text over 8 KiB or over the user profile's limit, a profile a task Agent will condense, a text too long for it after making room, and a full profile without a task Agent.
+- Every save reads the catalog again, and a direct save keeps its text and receipt when the dialog is closed while it runs or until it ends.
 - The existing Save to memory tests keep the task Agent as the default and its request unchanged.
 
 ## Limits
@@ -70,5 +70,7 @@ The same script ran on the change and, with main's versions of the client files 
 - A chosen place does not judge, deduplicate across spaces or distil; that is what **Let the Agent decide** is for.
 - The dialog does not remember the last place; each dialog starts on the default.
 - The Memory Spaces page's own **Save to memory** dialog has no **Save to** choice.
+- The Host does not check Memory Spaces' write setting on a management write, here or on the Memory Spaces page; the dialog lists no space while that setting is off, and the Host check is a separate change.
+- The guard against writing the same text twice lives in the dialog. If DSH unmounts the reply's action while a direct save runs, the guard goes with it.
 - On main, a full working memory with no Memory Space refuses the write, and the receipt shows the refusal. The local archive for that case is a separate change (#345).
 - Screenshots show DSH's default light theme and Chinese UI only.

@@ -107,11 +107,11 @@
       ],
       "memoryMd": "Release gates close at 18:00; approval needs the release owner.\n",
       "nativeStoreDefault": [
-        "Release gates close at 18:00; approval needs the release owner.",
-        "The release gate closes at 18:00 on release days.",
         "Atlas stores its index in SQLite.",
+        "Release candidates run the full verify before approval.",
+        "Release gates close at 18:00; approval needs the release owner.",
         "SQLite runs in WAL mode for the Atlas index.",
-        "Release candidates run the full verify before approval."
+        "The release gate closes at 18:00 on release days."
       ],
       "consoleErrors": []
     },
