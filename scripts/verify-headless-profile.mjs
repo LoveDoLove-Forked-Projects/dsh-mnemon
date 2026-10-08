@@ -169,6 +169,16 @@ try {
   ).join(''))
   await writeFile(profilePatchPath, profileOverrides)
 
+  if (extensionsEnabled) {
+    // Active capture records through Memory Spaces' remember Action, which a View
+    // offers only while a Provider can take writes. Without a Mnemon CLI, as on CI,
+    // connect the bundled local Holographic Provider so the contribution has a target.
+    await mkdir(join(storageRoot, 'state'), { recursive: true })
+    await writeFile(join(storageRoot, 'state', 'memory-providers.json'), `${JSON.stringify({
+      version: 4, services: { holographic: { dataPath: join(storageRoot, 'holographic-facts.json') } }, enabled: { holographic: true }, bodies: [],
+    })}\n`, { mode: 0o600 })
+  }
+
   const execution = await run(['--profile', 'headless', 'Verify that the Mnemon tool surface is available.'], {
     cwd: workspaceRoot,
     env,
