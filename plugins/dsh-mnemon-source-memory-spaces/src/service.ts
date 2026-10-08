@@ -703,6 +703,7 @@ export class MemorySpacesService {
       ...(category === undefined ? {} : { category }),
       ...(source === undefined ? {} : { source }),
       ...(intent === undefined ? {} : { intent }),
+      ...(request.inspect === true ? { inspect: true } : {}),
     }
     let batches = await Promise.all(spaces.map(async body => {
       if (!body.provider.capabilities.search) {
@@ -767,6 +768,7 @@ export class MemorySpacesService {
             query: recoveryPlan.query,
             mode: 'keyword',
             limit: Math.min(limit, preparedPolicy.candidateLimit),
+            ...(request.inspect === true ? { inspect: true } : {}),
           }, signal)
           const admitted = recovered.results.some(insight => recoveryMatchCount(insight.content, recoveryPlan) >= recoveryPlan.requiredMatches)
           const results = mergeRecoveryResults(batch.result.results, recovered.results, recoveryPlan, preparedPolicy.candidateLimit)
@@ -1022,8 +1024,9 @@ export class MemorySpacesService {
       const display = mergeEntityCounts(read.indexes).names.get(key) ?? selected
       const readableIds = read.readable.map(body => body.id)
       if (readableIds.length === 0) return { entity: display, items: [], sources: [] }
+      // The Entities page looks; it does not use what it shows.
       const result = await this.search(
-        { query: selected, intent: 'ENTITY', limit: integer(limit, 20, 1, 50), memoryBodyIds: readableIds },
+        { query: selected, intent: 'ENTITY', limit: integer(limit, 20, 1, 50), memoryBodyIds: readableIds, inspect: true },
         combined,
         { exclude: carrying },
       )
@@ -1201,6 +1204,27 @@ export class MemorySpacesService {
     }
 
     return results
+  }
+
+  /**
+   * The memories held under an exact id among the given spaces that can be
+   * read now, asked of the Providers that can look ids up.
+   */
+  async locate(id: string, memoryBodyIds: readonly string[], signal?: AbortSignal): Promise<Insight[]> {
+    const exact = required(id, 'id', 2000)
+    const readable = new Map(this.memorySpaces.active()
+      .filter(body => this.isNativeSpace(body) || this.memorySpaces.providerServiceEnabled(body.provider.id))
+      .map(body => [body.id, body]))
+    const found: Insight[] = []
+    for (const memoryBodyId of new Set(memoryBodyIds)) {
+      const body = readable.get(memoryBodyId)
+      if (body === undefined) continue
+      const provider = this.providerFor(body)
+      if (provider.get === undefined) continue
+      const insight = await provider.get(body, exact, signal)
+      if (insight !== undefined && insight.id === exact) found.push(this.annotate(insight, body))
+    }
+    return found
   }
 
   async related(id: string, depth = 2, edge?: EdgeType, signal?: AbortSignal, memoryBodyId?: string): Promise<Insight[]> {

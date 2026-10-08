@@ -367,6 +367,12 @@ export function apply(rawContext: unknown): void {
     componentChanges: seats.components,
     t: translate,
   })
+  // A child slot has one declaring entry, the configuration below. A page that
+  // is not that entry's own render renders what a component registered there
+  // as it was registered: DSH's row page for a component, and a shell that
+  // draws the configuration outside DSH's slot renderer, which then passes no
+  // renderSlot (#340).
+  const renderContributed = (packageName: string, owner: MemoryComponentSettingsProps) => renderComponentRegion(ctx, MNEMON_COMPONENT_SETTINGS_SLOT, packageName, owner)
   ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
     name: 'plugins.bundle.config',
     key: MNEMON_PACKAGE_NAME,
@@ -374,13 +380,10 @@ export function apply(rawContext: unknown): void {
     children: {
       [MNEMON_COMPONENT_SETTINGS_SLOT]: { kind: 'keyed', scope: 'root' },
     },
-    inject: configurationServices,
+    inject: () => ({ ...configurationServices(), renderContributed }),
   }, MnemonSettingsHost))
   // Each component row in DSH's list below opens a page of its own: the
   // component's page, with the settings it contributed, as the board opens it.
-  // A child slot has one declaring entry, the configuration above, so a row
-  // page renders what a component registered there as it was registered.
-  const renderContributed = (packageName: string, owner: MemoryComponentSettingsProps) => renderComponentRegion(ctx, MNEMON_COMPONENT_SETTINGS_SLOT, packageName, owner)
   for (const { rowId, packageName } of STARTER_COMPONENT_ROWS) {
     ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
       name: 'plugins.row.config',

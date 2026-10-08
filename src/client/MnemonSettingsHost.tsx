@@ -16,7 +16,11 @@ interface MnemonSettingsHostProps extends Omit<MnemonSettingsCardProps, 'session
   workspaces: MnemonClientContext['workspaces']
   /** The components that contributed settings to their pages. */
   componentSettingsDirectory?: ComponentSettingsDirectory
-  /** Renders a contribution on a page that does not own the settings region, such as DSH's row page. */
+  /**
+   * Renders a contribution on a page that does not own the settings region,
+   * such as DSH's row page, or the configuration when a shell draws it
+   * without DSH's renderSlot.
+   */
   renderContributed?: (packageName: string, props: MemoryComponentSettingsProps) => ReactNode
 }
 

@@ -46,7 +46,7 @@ Each finished reply has a brain-shaped **Save to memory** in its action strip, t
 - The title is **Save to memory**, with one line on what the task Agent does. **Task Agent ready** means you can send.
 - **Candidate (editable)** starts with the whole reply; usually you keep only the sentence worth remembering. **Cancel** changes nothing.
 - **Send to task Agent** hands it to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
-- A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), the task Agent's summary of where it went, in the candidate's language, and **View in Memory Spaces**. **Cancel** becomes **Close**, and sending again needs an edit to the candidate.
+- A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), the task Agent's summary of where it went, in the candidate's language, and **View in Memory Spaces**. **Cancel** becomes **Close**, and sending again needs an edit to the candidate: the edited text goes to the task Agent as a new candidate.
 
 | Edit the candidate | The task Agent's receipt |
 |---|---|

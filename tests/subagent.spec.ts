@@ -598,6 +598,18 @@ describe('Mnemon memory subagent coordinator', () => {
     expect((await f.controller.read<DocumentView>('document', { id: f.document.id })).status).toBe('active')
   })
 
+  it('takes a skipped document index receipt that names the exact stored index as its evidence', async () => {
+    const f = await documentArchiveFixture()
+    // As Mnemon Native answers when the space already holds this exact index text.
+    vi.mocked(f.spaces.rememberMany).mockImplementationOnce(async requests => [{ action: 'skipped', id: 'index-1', content: requests[0]!.content, memoryBodyId: 'project' }])
+    const result = await f.archive()
+    const request = vi.mocked(f.spaces.rememberMany).mock.calls[0]![0][0]!
+    expect(result.lineage![0]!.destination).toEqual({ layerId: 'memory-spaces', reference: 'memory-space:project/item:index-1', digest: createHash('sha256').update(request.content).digest('hex') })
+    // Only the lookup for an earlier index ran; nothing was searched again or removed.
+    expect(f.spaces.search).toHaveBeenCalledOnce()
+    expect(f.spaces.forget).not.toHaveBeenCalled()
+  })
+
   it.each(['inactive', 'disabled', 'async', 'no-forget'])('never indexes into an unsafe destination; archives locally before model work instead (issue 336): %s', async state => {
     const f = await documentArchiveFixture()
     const body = f.spaces.bodyDirectory().items[0]!
@@ -2485,6 +2497,75 @@ describe('Mnemon memory subagent coordinator', () => {
         digest: createHash('sha256').update(sourceEntry.content).digest('hex'),
       },
     }])
+  })
+
+  it('takes a skipped receipt that names the exact stored memory as its evidence, without a search', async () => {
+    // Issue #339: earlier attempts left exact copies; a ranked search missed one of them every time.
+    const entries = [
+      { content: 'Use SQLite for local storage.', importance: 'normal' as const },
+      { content: 'Release notes list blockers first.', importance: 'critical' as const },
+      { content: 'Builds run on Node 24.', importance: 'normal' as const },
+    ]
+    const plan = maintenancePlan('memory', entries)
+    const runtime = {
+      mutate: vi.fn().mockRejectedValueOnce(capacityError('memory', plan.used, plan.projected, plan.limit)),
+      planMaintenance: vi.fn(async () => plan),
+      compactAndMutate: vi.fn(async () => ({ success: true, target: 'memory', added: plan.pending!.content, usage: { used: 20, limit: 10_240 } })),
+    } as unknown as RuntimeOperations
+    const memoryService = service()
+    // As Mnemon Native answers: the two stored copies are named, the third is imported.
+    vi.mocked(memoryService.rememberMany).mockResolvedValueOnce([
+      { action: 'skipped', id: 'sqlite-1', content: entries[0]!.content, memoryBodyId: 'project' },
+      { action: 'skipped', id: 'release-1', content: entries[1]!.content, memoryBodyId: 'project' },
+      { action: 'added', id: 'node-1', content: entries[2]!.content, memoryBodyId: 'project' },
+    ])
+    vi.mocked(memoryService.search).mockResolvedValue({ query: '', mode: 'smart', results: [] } as never)
+    const coordinator = new MnemonSubagentCoordinator(subagents(undefined).value, runtimeSource(runtime, memoryService) as never, toolRegistry().value)
+
+    await expect(coordinator.runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
+      .resolves.toMatchObject({ maintenance: { kind: 'mnemon-archive', memoryBodyIds: ['project'] } })
+    expect(memoryService.search).not.toHaveBeenCalled()
+    expect(memoryService.forget).not.toHaveBeenCalled()
+    const lineage = vi.mocked(runtime.compactAndMutate).mock.calls[0]![4] as Array<{ destination: { reference: string; digest: string } }>
+    expect(lineage.map(item => item.destination)).toEqual(['sqlite-1', 'release-1', 'node-1'].map((id, index) => ({
+      layerId: 'memory-spaces',
+      reference: `memory-space:project/item:${id}`,
+      digest: createHash('sha256').update(entries[index]!.content).digest('hex'),
+    })))
+  })
+
+  it('still searches when a skipped receipt does not carry the exact text, and says what the search found', async () => {
+    const sourceEntry = { content: 'Use SQLite for local storage.', importance: 'normal' as const }
+    const plan = maintenancePlan('memory', [sourceEntry, { content: 'Builds run on Node 24.', importance: 'normal' as const }])
+    const runtime = () => ({
+      mutate: vi.fn().mockRejectedValueOnce(capacityError('memory', plan.used, plan.projected, plan.limit)),
+      planMaintenance: vi.fn(async () => plan),
+      compactAndMutate: vi.fn(),
+    }) as unknown as RuntimeOperations
+    const receipts = [
+      // A semantic match is not an exact copy of the runtime entry.
+      { action: 'skipped', id: 'sqlite-1', content: 'Use SQLite.', memoryBodyId: 'project' },
+      { action: 'added', id: 'node-1', content: 'Builds run on Node 24.', memoryBodyId: 'project' },
+    ]
+
+    const missing = service()
+    vi.mocked(missing.rememberMany).mockResolvedValueOnce(receipts)
+    vi.mocked(missing.search).mockResolvedValueOnce({ query: '', mode: 'smart', results: [{ id: 'sqlite-1', content: 'Use SQLite.', memoryBodyId: 'project' }] } as never)
+    const missingRuntime = runtime()
+    await expect(new MnemonSubagentCoordinator(subagents(undefined).value, runtimeSource(missingRuntime, missing) as never, toolRegistry().value)
+      .runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
+      .rejects.toThrow('without exact durable recall evidence in Memory Space project: its search returned 1 results, none with that exact text')
+    expect(missing.search).toHaveBeenCalledOnce()
+    // The entry this attempt created is removed again; the runtime file is unchanged.
+    expect(missing.forget).toHaveBeenCalledWith('node-1', expect.anything(), 'project')
+    expect(missingRuntime.compactAndMutate).not.toHaveBeenCalled()
+
+    const offline = service()
+    vi.mocked(offline.rememberMany).mockResolvedValueOnce(receipts)
+    vi.mocked(offline.search).mockResolvedValueOnce({ query: '', mode: 'smart', results: [], sources: [{ status: 'unavailable', hint: 'mnemon recall did not respond within 10000ms' }] } as never)
+    await expect(new MnemonSubagentCoordinator(subagents(undefined).value, runtimeSource(runtime(), offline) as never, toolRegistry().value)
+      .runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
+      .rejects.toThrow('its search was unavailable (mnemon recall did not respond within 10000ms)')
   })
 
   it('checks revision again before Provider writes and rejects asynchronous acceptance', async () => {

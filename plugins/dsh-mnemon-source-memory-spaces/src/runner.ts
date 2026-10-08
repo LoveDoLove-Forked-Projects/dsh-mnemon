@@ -49,10 +49,10 @@ const EMBEDDING_ENVIRONMENT_KEYS = new Set(['MNEMON_EMBED_ENDPOINT', 'MNEMON_EMB
 function processFailureMessage(error: unknown, args: readonly string[]): string {
   const detail = error instanceof Error ? error.message : String(error)
   const reason = error instanceof ProcessError ? error.reason : 'launch'
-  if (reason === 'output-limit') {
-    const command = args.find(arg => !arg.startsWith('-')) ?? 'command'
-    return `mnemon ${command} stopped: ${detail.replace(/^mnemon /u, '')}`
-  }
+  const command = args.find(arg => !arg.startsWith('-'))
+  if (reason === 'output-limit') return `mnemon ${command ?? 'command'} stopped: ${detail.replace(/^mnemon /u, '')}`
+  // A timeout names the command that ran out of time, such as an archive's import or a recall (#339).
+  if (reason === 'timeout' && command !== undefined) return detail.replace(/^mnemon /u, `mnemon ${command} `)
   if (reason !== 'launch') return detail
   const hint = process.platform === 'win32'
     ? 'Install the official Mnemon Windows release, ensure mnemon.exe is on PATH or under %LOCALAPPDATA%\\Programs\\mnemon, or set MNEMON_CLI_PATH or mnemon.cliPath to its absolute path.'
