@@ -270,6 +270,8 @@ describe('Mnemon Pack', () => {
     mkdirSync(archive, { recursive: true })
     writeFileSync(join(archive, 'MEMORY.md'), '# MEMORY.md archive\n\n## 2026-10-08T00:00:00.000Z\n\nArchived durable fact.\n')
     writeFileSync(join(archive, 'memories.jsonl'), '{"content":"Archived durable fact."}\n')
+    mkdirSync(join(archive, 'notes'))
+    writeFileSync(join(archive, 'notes', 'kept.md'), 'A note kept beside the archive.\n')
     // A link in the archive is not carried, and what it points at is left alone.
     const outside = join(temporary(`pack-archive-outside-${mode}`), 'outside.md')
     writeFileSync(outside, 'Outside the archive.\n')
@@ -281,6 +283,7 @@ describe('Mnemon Pack', () => {
     expect(readFileSync(join(archive, 'MEMORY.md'), 'utf8')).toContain('Archived durable fact.')
     expect(readFileSync(join(archive, 'memories.jsonl'), 'utf8')).toBe('{"content":"Archived durable fact."}\n')
     expect(statSync(join(archive, 'MEMORY.md')).mode & 0o777).toBe(0o600)
+    expect(readFileSync(join(archive, 'notes', 'kept.md'), 'utf8')).toBe('A note kept beside the archive.\n')
     expect(existsSync(join(archive, 'linked.md'))).toBe(false)
     expect(readFileSync(outside, 'utf8')).toBe('Outside the archive.\n')
     expect(readdirSync(target.root).some(name => name.startsWith('.dsh-pack-stage-') || name.startsWith('.dsh-pack-backup-'))).toBe(false)

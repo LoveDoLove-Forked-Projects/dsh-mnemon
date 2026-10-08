@@ -381,21 +381,22 @@ function readCurrentRuntime(root: string, limits: RuntimeMemoryLimits = RUNTIME_
 /**
  * A Pack carries no local archive: the one MEMORY.md wrote while no Memory Space
  * could take its entries holds their only copy, so an import keeps it (#336).
- * Only regular files are carried; a link is never followed.
+ * Its files and folders are carried; a link is neither carried nor followed.
  */
 function keepRuntimeArchive(root: string, stagedRuntime: string): void {
-  const archive = join(root, 'runtime', 'archived')
-  let stat
-  try { stat = lstatSync(archive) } catch { return }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) return
-  const kept = join(stagedRuntime, 'archived')
-  mkdirSync(kept, { recursive: true, mode: 0o700 })
-  for (const name of readdirSync(archive)) {
-    const source = join(archive, name)
-    if (!lstatSync(source).isFile()) continue
-    copyFileSync(source, join(kept, name))
-    chmodSync(join(kept, name), 0o600)
+  const copy = (from: string, to: string): void => {
+    let stat
+    try { stat = lstatSync(from) } catch { return }
+    if (stat.isSymbolicLink()) return
+    if (stat.isFile()) {
+      copyFileSync(from, to)
+      chmodSync(to, 0o600)
+    } else if (stat.isDirectory()) {
+      mkdirSync(to, { recursive: true, mode: 0o700 })
+      for (const name of readdirSync(from)) copy(join(from, name), join(to, name))
+    }
   }
+  copy(join(root, 'runtime', 'archived'), join(stagedRuntime, 'archived'))
 }
 
 function writeRuntime(directory: string, file: RuntimeFile): void {
