@@ -57,7 +57,7 @@ function fixture(writeEnabled = true): { service: MemorySpacesService; process: 
       exitCode: 0,
     }
     if (args.includes('recall')) return {
-      stdout: JSON.stringify({ results: args.includes('--readonly')
+      stdout: JSON.stringify({ results: args.includes('--basic')
         ? [
             { id: 'm1', content: 'Use SQLite for local-first storage.', category: 'decision', entities: ['SQLite'], tags: ['storage'] },
             { id: 'm2', content: 'Four graph memory', category: 'fact', entities: ['Mnemon'] },

@@ -204,9 +204,11 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
 
   async search(body: MemorySpace, request: SearchRequest, signal?: AbortSignal): Promise<ProviderSearchResult> {
     const mode = request.mode ?? 'smart'
+    // An inspection reads a snapshot: no access counts, no row in the store's operation log.
+    const readonly = request.inspect === true ? ['--readonly'] : []
     const args = mode === 'keyword'
-      ? ['search', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
-      : ['recall', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
+      ? [...readonly, 'search', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
+      : [...readonly, 'recall', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
     if (mode === 'basic') args.push('--basic')
     if (mode !== 'keyword') {
       if (request.category !== undefined) args.push('--cat', request.category)

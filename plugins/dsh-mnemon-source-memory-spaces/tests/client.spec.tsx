@@ -99,6 +99,8 @@ describe('independent Memory Spaces Source client', () => {
     fireEvent.click(screen.getByRole('button', { name: t('search.action') }))
     fireEvent.click(await screen.findByRole('button', { name: t('card.related') }))
     expect(await screen.findByText(t('search.noRelated'))).not.toBeNull()
+    // The page looks at memory: its searches do not count as uses (#338).
+    expect(read).toHaveBeenCalledWith('search', expect.objectContaining({ query: 'compatibility', inspect: true }))
     fireEvent.click(screen.getByRole('button', { name: t('search.closeRelated') }))
     expect(screen.queryByRole('heading', { name: t('search.related') })).toBeNull()
     // CI's packed-plugin job runs this in four parallel standalone installs, where it has taken 5-5.5 s.

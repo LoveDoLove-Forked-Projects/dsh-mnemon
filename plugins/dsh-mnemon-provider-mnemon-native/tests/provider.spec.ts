@@ -35,6 +35,22 @@ describe('independent Native Provider', () => {
     expect(runJson.mock.calls[1]?.[0]).toEqual(['--readonly', 'recall', '', '--basic', '--limit', '6'])
   })
 
+  it('reads a snapshot for an inspection and records a use otherwise', async () => {
+    const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
+    const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>(async () => ({ results: [] }))
+    const provider = new MnemonNativeProvider({ runJson, runText: vi.fn() })
+    await provider.search(body, { query: 'release gate' })
+    await provider.search(body, { query: 'release gate', inspect: true })
+    await provider.search(body, { query: 'release gate', mode: 'keyword', inspect: true })
+    await provider.search(body, { query: 'release gate', mode: 'keyword' })
+    expect(runJson.mock.calls.map(call => call[0].slice(0, 2))).toEqual([
+      ['recall', 'release gate'],
+      ['--readonly', 'recall'],
+      ['--readonly', 'search'],
+      ['search', 'release gate'],
+    ])
+  })
+
   it('validates batch receipts and removes its private draft after failure', async () => {
     const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused' })
     let draftPath = ''
