@@ -60,6 +60,10 @@ describe('standalone default three-tier Strategy', () => {
     expect(writeOnly?.routing).toBe(ROUTING_GUIDANCE_WITHOUT_RECALL)
     expect(writeOnly?.system).not.toContain('mnemon_recall')
     expect(writeOnly?.system).toContain('into one or more semantically appropriate Memory Spaces')
+    // Active spaces that only extract asynchronously cannot take an archive: it stays local.
+    const asyncOnly = compose(runtime, documents, { ...spaces(['inspect', 'recall'], ['remember'], 2), hints: { activeCount: 2, archivableCount: 0 } })
+    expect(asyncOnly?.system).toContain('call mnemon_recall instead of inferring')
+    expect(asyncOnly?.system).toContain('to a local archive file')
   })
 
   it('rejects ambiguous roles instead of selecting by mount order', () => {

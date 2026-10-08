@@ -460,7 +460,11 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
         return {
           sourceInstanceKey: context.sourceInstanceKey, sourceTypeId: 'memory-spaces', role: 'durable-evidence',
           availability: active.length === 0 ? 'degraded' : 'ready', revision, capabilities: [...capabilities], routeIds, actionIds,
-          hints: { activeCount: active.length, providerCount: new Set(active.map(body => body.provider.id)).size },
+          hints: {
+            activeCount: active.length, providerCount: new Set(active.map(body => body.provider.id)).size,
+            // Spaces that can take a MEMORY.md archive or a Document's index: exact writes and safe forget.
+            archivableCount: active.filter(body => body.provider.capabilities.remember && body.provider.capabilities.forget && body.provider.capabilities.writeMode === 'exact').length,
+          },
         }
       },
       project(request) {

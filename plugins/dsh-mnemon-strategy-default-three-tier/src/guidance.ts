@@ -39,7 +39,7 @@ export function boundedRuntimeMemoryProtocol(offers: { recall: boolean; archive:
   let protocol = BOUNDED_RUNTIME_MEMORY_PROTOCOL
   if (!offers.recall) protocol = replaced(protocol,
     'call mnemon_recall instead of inferring or filling the gap.',
-    'do not infer or fill the gap: search another offered memory Source, if any, or say that memory does not hold it.')
+    'do not infer or fill the gap: search another offered memory Source, if any, or say that the memory offered here does not hold it.')
   if (!offers.archive) protocol = replaced(protocol,
     'the tool archives committed working memories into one or more semantically appropriate Memory Spaces, then atomically applies compaction and the pending mutation only when the reviewed revision is still current.',
     'the tool moves the committed working memories that compaction leaves out to a local archive file, since no Memory Space takes writes here, then atomically applies compaction and the pending mutation only when the reviewed revision is still current.')

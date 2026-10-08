@@ -60,8 +60,12 @@ function composeThreeTier(request: MemoryViewRequest, sources: readonly MemorySo
     // View's facts, after the layer's participation settings.
     const recall = durable && memorySpaces.routeIds.includes('recall')
     const hints = memorySpaces?.hints
-    const activeCount = hints !== null && typeof hints === 'object' && !Array.isArray(hints) ? hints['activeCount'] : undefined
-    const archive = durable && memorySpaces.actionIds.includes('remember') && (typeof activeCount !== 'number' || activeCount > 0)
+    const count = (key: string): number | undefined => {
+      const value = hints !== null && typeof hints === 'object' && !Array.isArray(hints) ? hints[key] : undefined
+      return typeof value === 'number' ? value : undefined
+    }
+    const archivable = count('archivableCount') ?? count('activeCount')
+    const archive = durable && memorySpaces.actionIds.includes('remember') && (archivable === undefined || archivable > 0)
     const classicSources = runtime?.sourceTypeId === 'runtime' && documents?.sourceTypeId === 'documents' && durable
     const selected = [runtime, documents, memorySpaces].filter((source): source is MemorySourceFacts => source !== undefined)
     const projectionBudget = request.budget.maxProjectionCharacters
