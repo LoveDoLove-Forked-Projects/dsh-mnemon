@@ -30,6 +30,8 @@ import { archiveCopiesLimitBytes, archiveCopiesPending, seedArchiveCopies, slowE
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const flags = new Set(process.argv.slice(2))
 let betterSidebarRoot
+// Test-only plugins linked into the profile beside dsh-mnemon, for example a shell fixture.
+const extraPlugins = []
 let electronExecutable
 let trustedHost
 // Documentation media: a seeded fictional project and a model that reads it through the real tools.
@@ -65,6 +67,12 @@ for (const flag of flags) {
     const value = flag.slice('--electron='.length)
     if (value === '') throw new Error('--electron requires an Electron executable')
     electronExecutable = resolve(value)
+    continue
+  }
+  if (flag.startsWith('--plugin=')) {
+    const value = flag.slice('--plugin='.length)
+    if (value === '') throw new Error('--plugin requires a package directory')
+    extraPlugins.push(resolve(value))
     continue
   }
   if (flag.startsWith('--better-sidebar=')) {
@@ -260,6 +268,7 @@ try {
   const installer = spawn(process.execPath, [dshBin, 'plugin', '--profile', 'web', 'add',
     `link:${root}`, ...plugins.map(name => `link:${join(root, 'plugins', name)}`),
     ...(betterSidebarRoot === undefined ? [] : [`link:${betterSidebarRoot}`]),
+    ...extraPlugins.map(path => `link:${path}`),
   ], { env, cwd: workspace, stdio: 'inherit' })
   await new Promise((resolveInstall, reject) => {
     installer.once('error', reject)
