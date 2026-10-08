@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RUNTIME_ENTRY_DELIMITER } from '../src/contracts.ts'
 import {
   RuntimeMemoryCapacityError,
@@ -540,6 +540,44 @@ describe('RuntimeMemoryController', () => {
     expect(appended.match(/# MEMORY\.md archive/g)).toHaveLength(1)
     expect(appended.indexOf(third)).toBeLessThan(appended.lastIndexOf('## '))
     expect(readFileSync(join(directory, 'runtime', 'archived', 'memories.jsonl'), 'utf8').trim().split('\n').length).toBeGreaterThan(1)
+  })
+
+  it('keeps an entry in both places, never in neither, when the commit after the local archive fails (issue 336)', async () => {
+    const { directory, controller } = fixture()
+    for (const content of ['a'.repeat(5_050), 'b'.repeat(5_050)]) await controller.mutate({ action: 'add', target: 'memory', content, importance: 'normal' })
+    const request = { action: 'add', target: 'memory', content: 'c'.repeat(4_000) } as const
+    const plan = await controller.planMaintenance(request)
+    const before = controller.snapshot()
+    const persist = vi.spyOn(controller as unknown as { persist(file: unknown): void }, 'persist').mockImplementationOnce(() => { throw new Error('disk full') })
+    await expect(controller.compactAndMutate(plan.revision, request, plan.entries.map(({ content, importance }) => ({ content, importance })), 1_000, { archive: 'local' }))
+      .rejects.toThrow('disk full')
+    persist.mockRestore()
+    expect(controller.snapshot().entries).toEqual(before.entries)
+    expect(readFileSync(join(directory, 'runtime', 'archived', 'MEMORY.md'), 'utf8')).toContain('b'.repeat(5_050))
+  })
+
+  it('never follows a link at the local archive (issue 336)', async () => {
+    const { directory, controller } = fixture()
+    for (const content of ['a'.repeat(5_050), 'b'.repeat(5_050)]) await controller.mutate({ action: 'add', target: 'memory', content, importance: 'normal' })
+    const outside = mkdtempSync(join(tmpdir(), 'dsh-mnemon-outside-'))
+    directories.push(outside)
+    writeFileSync(join(outside, 'profile'), 'export PATH=/usr/bin\n')
+    const archive = join(directory, 'runtime', 'archived')
+    mkdirSync(archive, { recursive: true })
+    symlinkSync(join(outside, 'profile'), join(archive, 'memories.jsonl'))
+    const request = { action: 'add', target: 'memory', content: 'c'.repeat(4_000) } as const
+    const plan = await controller.planMaintenance(request)
+    const before = controller.snapshot()
+    const compact = () => controller.compactAndMutate(plan.revision, request, plan.entries.map(({ content, importance }) => ({ content, importance })), 1_000, { archive: 'local' })
+    await expect(compact()).rejects.toThrow()
+    expect(readFileSync(join(outside, 'profile'), 'utf8')).toBe('export PATH=/usr/bin\n')
+    expect(controller.snapshot().entries).toEqual(before.entries)
+    // A linked archive directory is refused the same way.
+    rmSync(archive, { recursive: true })
+    symlinkSync(outside, archive)
+    await expect(compact()).rejects.toThrow('Runtime Memory archive is not a directory')
+    expect(readdirSync(outside)).toEqual(['profile'])
+    expect(controller.snapshot().entries).toEqual(before.entries)
   })
 
   it('archives nothing locally unless asked, and never for USER.md', async () => {

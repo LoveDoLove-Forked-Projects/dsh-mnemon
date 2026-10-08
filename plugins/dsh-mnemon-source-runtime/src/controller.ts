@@ -1,7 +1,8 @@
 import {
-  appendFileSync,
   closeSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -9,6 +10,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
@@ -61,6 +63,15 @@ interface PreparedRuntimeMemoryMutation {
   pendingEntry?: RuntimeMemoryEntry
   excludedEntry?: RuntimeMemoryEntry
   fields: RuntimeMemoryResultFields
+}
+
+/** Append to a file that is not a symbolic link; the open fails on one. */
+function appendWithoutLinks(path: string, text: string): void {
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600)
+  try {
+    const bytes = Buffer.from(text, 'utf8')
+    for (let offset = 0; offset < bytes.length;) offset += writeSync(descriptor, bytes, offset, bytes.length - offset)
+  } finally { closeSync(descriptor) }
 }
 
 export class RuntimeMemoryCapacityError extends Error {
@@ -596,10 +607,14 @@ ${memory || '(empty)'}
 
   /** Append entries to the local archive: JSON Lines to restore from, and Markdown to read. */
   private archiveLocally(entries: readonly RuntimeMemoryEntry[], fromRevision: string, archivedAt: string): void {
-    mkdirSync(join(this.directory, 'archived'), { recursive: true, mode: 0o700 })
-    appendFileSync(this.archiveSourcePath, entries.map(entry => `${JSON.stringify({ archivedAt, fromRevision, ...entry })}\n`).join(''), { encoding: 'utf8', mode: 0o600 })
+    const directory = join(this.directory, 'archived')
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    // The data directory can sit in a workspace: an archive never follows a link out of it.
+    const stat = lstatSync(directory)
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Runtime Memory archive is not a directory: ${directory}`)
+    appendWithoutLinks(this.archiveSourcePath, entries.map(entry => `${JSON.stringify({ archivedAt, fromRevision, ...entry })}\n`).join(''))
     const header = existsSync(this.archivePath) ? '' : '# MEMORY.md archive\n\nEntries that left MEMORY.md at its limit while no Memory Space could take them, oldest first.\n'
-    appendFileSync(this.archivePath, `${header}\n## ${archivedAt}\n\n${entries.map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER)}\n`, { encoding: 'utf8', mode: 0o600 })
+    appendWithoutLinks(this.archivePath, `${header}\n## ${archivedAt}\n\n${entries.map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER)}\n`)
   }
 
   private initialize(): void {
