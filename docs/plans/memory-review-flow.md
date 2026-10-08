@@ -152,6 +152,12 @@ right. With no conflict, the branch's additions are simply added. A rejected pla
 opinion and is reopened before the AI is asked again, because a decided proposal is answered by its
 decision and its opinions are otherwise not part of the next run's evidence.
 
+**Memory reconciliation** states its own run rules above the guidance field, because a reader who
+cannot tell a timer from a plan waits for a proposal nothing scheduled: the background only repeats
+the push at the `Automatic backup` interval set under **Git sync** (and reads the remote branch
+into this machine on the way), a difference is read only by `Check remote` or by the merge before a
+push and is never written on its own, and a plan to answer appears only when `整理记忆` runs.
+
 **Memory reconciliation** gains a guidance field above the button: `整理记忆` sends whatever is in it,
 and the answer says whether the model had guidance to follow. A pending review lists its operations
 with a checkbox each; `执行` applies the checked ones and reports how many were carried out and how
@@ -179,3 +185,5 @@ about the plan as a whole. The opinions list already shows what was written and 
 - Restoring one backup over the current state (that is `pull`, and it is already confirmed).
 - Per-operation accept/reject as a stored state: a selection is applied, not remembered.
 - Any change to what a push publishes, or to the pack format.
+- A background reconciler: the timer repeats the push and nothing else, so no proposal ever appears
+  without `整理记忆` being pressed.

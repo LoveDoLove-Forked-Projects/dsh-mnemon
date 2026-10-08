@@ -126,7 +126,9 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
     +-- settings/mnemon.json      # 该 profile 的记忆设置，已剔除机器本地键
 ```
 
-- **Push**：把完整包导出到 `<storageRoot>/state/sync/git`，在其中提交并推送分支。必须显式确认，不会有任何定时推送。
+- **Push**：把完整包导出到 `<storageRoot>/state/sync/git`，在其中提交并推送分支。手动推送必须显式确认。
+- **自动备份**：**存储 → Git 同步**的配置表单里选择间隔（关闭 / 1、3、6、12 小时 / 1、3、7 天），选择即保存。开着时 Host 按该间隔在后台推送一次，读的是 `state/sync-git.json` 里保存的间隔，因此改完立即生效、不需要重启；关掉就是只能手动。后台跑的就是上面那次 push，所以它同样先读远端分支并与本机合并，再发布本机载荷——定时器从不写记忆，唯一会写入的动作是 push 自带的那次合并。
+- **备份体积**：Git 为每次 push 写入全新的 blob，而载荷是整包，因此镜像会随每次推送再存一份完整副本，而 clone 下载的是 pack。因此每次推送成功后会把镜像的零散对象收进一个 pack（`git repack -adf`），并在推送结果里回报收进了多少个对象、占用从多少变成多少。合并镜像本身不参与同步，删除它只多一次 fetch；这一收拢失败只会以警告回报，不会让已经成功的推送失败。
 - **Pull**：先读取远端 manifest 与 SHA-256 清单，预览将要发生的变更，确认后走与“导入 ZIP”相同的路径合并。manifest 或校验和不匹配属于硬失败，不会导入任何内容。
 - 载荷就是既有的 Mnemon Pack 载荷：同一个收集器、同一个校验器、同一个导入器。包内包含 `manifest.json`、SHA-256 清单与组件摘要，同步扩展字段记录通道、分支、目录与推送时间；不认识同步的读取方仍能读到合法的 Mnemon Pack manifest。
 - 载荷始终是完整包：runtime、documents、memory-spaces 与 settings，用户画像包含在 runtime 中。settings 组件承载 `mnemon` 命名空间的 `user` 层，让第二台机器继承同一份配置；机器本地键（`storageScope`、`dataDir`、`cliPath`、`customPackId`、`customPacks`）会被剔除，因为一台机器上的目录不一定是另一台机器上的目录。Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择；组件筛选只作为 pull 的一次性可选参数 `components` 存在。

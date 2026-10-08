@@ -489,8 +489,14 @@ function githubAuth(input: LiveMnemonRuntime): MnemonGitHubAuth {
   return auth
 }
 
-/** Git sync reads and writes the same storage root, under the same gates as Pack. */
-export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
+/**
+ * Git sync reads and writes the same storage root, under the same gates as Pack.
+ *
+ * `onConfigured` is the one thing the handler needs from outside the graph: the
+ * background timer is armed from the interval this endpoint just saved, and it
+ * lives beside the runtime rather than inside it.
+ */
+export function createSyncHandler(input: LiveMnemonRuntime, onConfigured?: () => void): HostRpcHandler {
   return async (endpoint, rawPayload, signal) => {
     try {
       const payload = object(rawPayload)
@@ -499,7 +505,11 @@ export function createSyncHandler(input: LiveMnemonRuntime): HostRpcHandler {
       if (endpoint === 'status') return success(await sync.status(signal))
       if (endpoint === 'configure') {
         requireWritable(runtime)
-        return success(await sync.configure(withoutScope(payload)))
+        const view = await sync.configure(withoutScope(payload))
+        // Re-arm from the interval that was just saved: shortening it should
+        // count from this moment, and turning it off should drop the timer.
+        onConfigured?.()
+        return success(view)
       }
       if (endpoint === 'push') {
         requireWritable(runtime)
@@ -627,7 +637,7 @@ export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: Mnemon
   }
 }
 
-export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager, relocation?: MnemonStorageRelocation): {
+export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager, relocation?: MnemonStorageRelocation, onSyncConfigured?: () => void): {
   read: HostRpcHandler
   activation: HostRpcHandler
   write: HostRpcHandler
@@ -640,7 +650,7 @@ export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonR
   const activationHandler = createActivationHandler(input)
   const writeHandler = createWriteHandler(input, lifecycle, versionManager)
   const packHandler = createPackHandler(input, relocation)
-  const syncHandler = createSyncHandler(input)
+  const syncHandler = createSyncHandler(input, onSyncConfigured)
   const reviewHandler = createReviewHandler(input, lifecycle)
   connection.rpc.handle(MNEMON_READ_CHANNEL, readHandler)
   connection.rpc.handle(MNEMON_ACTIVATION_CHANNEL, activationHandler)

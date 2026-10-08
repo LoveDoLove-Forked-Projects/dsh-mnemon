@@ -7,7 +7,7 @@ import { MnemonReviewSection } from '../src/client/MnemonReviewSection.tsx'
 import { MnemonSettingsCard } from '../src/client/MnemonSettingsCard.tsx'
 import { MnemonSyncSection } from '../src/client/MnemonSyncSection.tsx'
 import { translateEn, translateZh } from '../src/client/locales.ts'
-import { settingsScope } from './helpers/settings-scope.ts'
+import { liveSettingsScope, settingsScope } from './helpers/settings-scope.ts'
 
 afterEach(cleanup)
 
@@ -137,6 +137,31 @@ describe('the chosen data directory', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: '只改设置，不迁移' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(call).not.toHaveBeenCalledWith('/dsh-mnemon-pack', 'storage-migrate', expect.anything())
+  })
+
+  it('keeps the custom directory when the default one is chosen again', async () => {
+    // "Default" means memory stops using the custom directory; it never means
+    // forgetting which one was chosen, or the choice could not be taken back.
+    const mutate = vi.fn(async () => {})
+    const scope = liveSettingsScope<Config>({ status: 'ready' as const, value: { storageScope: 'custom' as const, dataDir: '/old/data' }, base: {}, user: {}, revision: 0, writable: true, mode: 'host' as const }, mutate)
+    render(<MnemonSettingsCard scope={scope} connection={host({ '/dsh-mnemon-pack target': () => target }).connection} />)
+    await waitFor(() => expect((screen.getByRole('textbox', { name: '数据目录' }) as HTMLInputElement).value).toBe('/old/data'))
+
+    fireEvent.click(directoryChoice('默认'))
+    // The field is gone from the page, but the value it held is still the draft's:
+    // nothing was typed, so nothing is thrown away.
+    expect(screen.queryByRole('textbox', { name: '数据目录' })).toBeNull()
+
+    // Applying records the scope alone. The saved directory stays in the file, which is
+    // what lets 自定义 put memory back on it without choosing it a second time.
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith([{ op: 'set', path: ['storageScope'], value: 'global' }]))
+
+    // The saved configuration publishes the new scope with the directory still in it,
+    // so choosing 自定义 again finds the directory already there.
+    await waitFor(() => expect(scope.snapshot.value).toEqual({ storageScope: 'global', dataDir: '/old/data' }))
+    fireEvent.click(directoryChoice('自定义'))
+    await waitFor(() => expect((screen.getByRole('textbox', { name: '数据目录' }) as HTMLInputElement).value).toBe('/old/data'))
   })
 
   it('says so when the picker is dismissed or the Host refuses the move', async () => {
@@ -359,6 +384,7 @@ const syncConfig = {
   credentialSource: 'none',
   authorName: 'Me',
   authorEmail: 'me@example.com',
+  autoBackupMinutes: 0,
 }
 
 const syncStatus = {
@@ -369,6 +395,7 @@ const syncStatus = {
   git: { available: true, required: '2.30' },
   remote: { reachable: true, branchExists: true, commit: 'abcdef1234567890' },
   machine: { id: 'machine-a', label: 'laptop', createdAt: '2026-08-14T12:00:00.000Z' },
+  autoBackup: { available: false },
 }
 
 const here = { target: 'user', content: 'Prefer concise answers for all replies', importance: 'normal', updatedAt: '2026-08-14T12:00:00.000Z' }
@@ -460,6 +487,30 @@ describe('the branch history and the memories that differ', () => {
     expect(syncCalls(calls, 'reconcile')).toEqual([])
     expect(syncCalls(calls, 'pull')).toEqual([])
     expect(syncCalls(calls, 'apply')).toEqual([])
+  })
+
+  it('turns the automatic backup on with one saved value', async () => {
+    const state = { difference: differenceOf({ conflicts: [], localOnly: [], remoteOnly: [] }) }
+    const { connection, calls } = syncHost(state, {
+      '/dsh-mnemon-sync configure': payload => ({ ...syncConfig, autoBackupMinutes: Number(payload.autoBackupMinutes) }),
+    })
+    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    await screen.findByText('远端 abcdef12')
+
+    fireEvent.click(button('配置'))
+    const select = await screen.findByLabelText('自动备份') as HTMLSelectElement
+    // A channel nobody configured is a manual one, and the page says so instead of
+    // naming a time that will never arrive.
+    expect(select.value).toBe('0')
+    expect(screen.getByText('自动备份已关闭，只有你点「立即备份」时才会推送')).toBeTruthy()
+
+    // The interval is one value with no half-typed state, so choosing it saves it:
+    // a reader who picks a cadence is not left believing it is already on.
+    fireEvent.change(select, { target: { value: '360' } })
+    await waitFor(() => expect(syncCalls(calls, 'configure').length).toBe(1))
+    expect(syncCalls(calls, 'configure')[0]?.payload).toEqual({ autoBackupMinutes: 360 })
+    expect(await screen.findByText('自动备份已设为 6 小时')).toBeTruthy()
+    expect((screen.getByLabelText('自动备份') as HTMLSelectElement).value).toBe('360')
   })
 
   it('reads older backups a page at a time instead of stopping at the first one', async () => {
@@ -580,6 +631,20 @@ describe('the branch history and the memories that differ', () => {
     expect(syncCalls(calls, 'decide')).toEqual([])
     expect(syncCalls(calls, 'apply')).toEqual([])
     expect(syncCalls(calls, 'opinion')).toEqual([])
+  })
+
+  it('states how the reconciliation area runs, so a timer is not mistaken for a plan', async () => {
+    const state = { entry: { ...entry } }
+    const host = reviewHost(state)
+    render(<MnemonReviewSection connection={host.connection} disabled={false} t={translateZh} />)
+    await screen.findByText('Merge the duplicated preference')
+
+    // The rules name the switch that decides the cadence instead of repeating its
+    // value, so the two places that talk about a schedule cannot drift apart.
+    expect(screen.getByText('运行规则')).toBeTruthy()
+    expect(screen.getByText('后台拉取：后台只按「Git 备份」里「自动备份」的间隔推送一次，推送前先读取远端分支并与本机合并；这一步不产生任何建议。自动备份关闭时，只有你点「立即备份」才会读取远端。')).toBeTruthy()
+    expect(screen.getByText('差异：只有点「检查远端」或推送前的合并才会读出远端与本机的差别；差别只显示出来，不会自动写入。')).toBeTruthy()
+    expect(screen.getByText('方案：只有点「整理记忆」才会生成待办方案，每条方案都要你接受并应用之后才会真正写入记忆。')).toBeTruthy()
   })
 
   it('moves every applied plan into its own popup, leaving the list what still needs an answer', async () => {

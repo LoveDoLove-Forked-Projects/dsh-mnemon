@@ -269,6 +269,17 @@ export function MnemonReviewSection(props: MnemonReviewSectionProps): JSX.Elemen
           onClick={() => { submit('load', refresh) }}>{t('review.refresh')}</Button>
       </div>
     </SettingRow>
+    {/* What the background actually does, in the order it does it: the two lines
+        above are buttons, and a reader who cannot tell a timer from a plan will
+        wait for a proposal that nothing scheduled. */}
+    <div className={css.reviewRules}>
+      <strong>{t('review.rulesTitle')}</strong>
+      <ul>
+        <li>{t('review.rulesPull')}</li>
+        <li>{t('review.rulesDiff')}</li>
+        <li>{t('review.rulesPlan')}</li>
+      </ul>
+    </div>
     <div className={css.reviewGuidance}>
       <label htmlFor="mnemon-review-guidance">{t('review.guidanceLabel')}</label>
       <input id="mnemon-review-guidance" type="text" value={guidance} placeholder={t('review.guidancePlaceholder')}

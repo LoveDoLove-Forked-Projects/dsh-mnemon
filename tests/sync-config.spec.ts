@@ -6,8 +6,8 @@ import { resolveConfig } from '../src/host/config.ts'
 import { createStorageRoot } from '../src/host/storage-root.ts'
 import {
   MnemonSyncSettingsStore, MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL, MNEMON_SYNC_DEFAULT_AUTHOR_NAME,
-  MNEMON_SYNC_DEFAULT_BRANCH, MNEMON_SYNC_DEFAULT_SUBDIR, MNEMON_SYNC_TOKEN_ENV,
-  syncBranch, syncRepositoryUrl, syncSubdirectory,
+  MNEMON_SYNC_DEFAULT_BRANCH, MNEMON_SYNC_DEFAULT_SUBDIR, MNEMON_SYNC_MAX_AUTO_BACKUP_MINUTES, MNEMON_SYNC_TOKEN_ENV,
+  syncAutoBackupMinutes, syncBranch, syncRepositoryUrl, syncSubdirectory,
 } from '../src/host/sync-config.ts'
 
 const directories: string[] = []
@@ -34,6 +34,8 @@ describe('Mnemon sync configuration', () => {
     expect(settings.read()).toEqual({
       branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR,
       authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL,
+      // A channel nobody configured is a manual one, not a channel with a cadence.
+      autoBackupMinutes: 0,
     })
     expect(settings.path()).toBe(join(root, 'state', 'sync-git.json'))
     expect(settings.mirror()).toBe(join(root, 'state', 'sync', 'git'))
@@ -53,7 +55,7 @@ describe('Mnemon sync configuration', () => {
     const { settings } = store()
     settings.write(settings.patch({ repoUrl: '/srv/memory.git', token: 'ghp_secret' }))
     const view = settings.view(settings.read())
-    expect(view).toEqual({ repoUrl: '/srv/memory.git', branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR, hasToken: true, credentialSource: 'token', authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL })
+    expect(view).toEqual({ repoUrl: '/srv/memory.git', branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR, hasToken: true, credentialSource: 'token', authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL, autoBackupMinutes: 0 })
     expect(JSON.stringify(view)).not.toContain('ghp_secret')
   })
 
@@ -91,6 +93,27 @@ describe('Mnemon sync configuration', () => {
     // Only the fields a patch names move; the branch on disk stays where the
     // earlier patch left it.
     expect(identity.branch).toBe('user/mnemon-sync')
+  })
+
+  it('keeps the automatic backup interval and clears it with an empty value', () => {
+    const { settings } = store()
+    expect(settings.patch({ autoBackupMinutes: 120 }).autoBackupMinutes).toBe(120)
+    settings.write(settings.patch({ autoBackupMinutes: 120, repoUrl: '/srv/memory.git' }))
+    // The interval is part of the file, so a Host that restarts keeps the cadence.
+    expect(JSON.parse(readFileSync(settings.path(), 'utf8'))).toMatchObject({ autoBackupMinutes: 120 })
+    expect(settings.read().autoBackupMinutes).toBe(120)
+    expect(settings.view(settings.read()).autoBackupMinutes).toBe(120)
+    // The field's own hint says an empty value turns the automatic backup off.
+    expect(settings.patch({ autoBackupMinutes: null }).autoBackupMinutes).toBe(0)
+    expect(settings.patch({ autoBackupMinutes: '' }).autoBackupMinutes).toBe(0)
+  })
+
+  it('refuses an interval that is not whole minutes inside the offered range', () => {
+    expect(syncAutoBackupMinutes(60)).toBe(60)
+    expect(syncAutoBackupMinutes(MNEMON_SYNC_MAX_AUTO_BACKUP_MINUTES)).toBe(MNEMON_SYNC_MAX_AUTO_BACKUP_MINUTES)
+    for (const value of [-1, 1.5, 10_081, 'often', {}]) {
+      expect(() => syncAutoBackupMinutes(value)).toThrow('auto backup interval must be a whole number of minutes')
+    }
   })
 
   it('rejects an unknown field, a malformed file and an unsafe directory', () => {

@@ -798,6 +798,8 @@ export interface MnemonSyncConfigView {
   credentialLogin?: string
   authorName: string
   authorEmail: string
+  /** Minutes between automatic backups; zero means the channel runs only when asked. */
+  autoBackupMinutes: number
 }
 
 /**
@@ -889,6 +891,49 @@ export interface MnemonSyncStatus {
   /** This installation's identity, which its entries and its commits carry. */
   machine: MnemonMachineIdentity
   lastCommit?: MnemonSyncCommit
+  /** The background cadence this Host keeps; absent when no timer runs for this runtime. */
+  autoBackup?: MnemonSyncAutoBackup
+}
+
+/**
+ * The background cadence one runtime keeps. The timer never writes memory: it
+ * repeats the same confirmed push the button runs, and the merge a push
+ * performs is the only thing that brings remote entries in.
+ */
+export interface MnemonSyncAutoBackup {
+  /** Whether this Host runs a background backup at all. */
+  available: boolean
+  /** When the last automatic run finished, as an ISO timestamp. */
+  lastAt?: string
+  /** When the next automatic run is due, as an ISO timestamp. */
+  nextAt?: string
+  /** Why the last automatic run failed, when it did. */
+  lastError?: string
+  /** The commit the last automatic run recorded. */
+  lastCommit?: string
+  /** Whether the last automatic run reached the branch. */
+  lastPushed?: boolean
+}
+
+/**
+ * What folding the mirror's loose objects into one pack recovered. Git keeps
+ * every payload as new blobs until a repack runs, so a mirror that is never
+ * repacked grows with every push while the pack is what a clone downloads.
+ */
+export interface MnemonSyncCompaction {
+  /** Loose objects before the repack. */
+  loose: number
+  /** What those loose objects weighed, in bytes; zero when none were loose. */
+  bytes: number
+  /** Objects the pack holds afterwards. */
+  packed: number
+  /**
+   * What a clone downloads, in bytes: the pack after the repack, or - when the
+   * push wrote nothing new - the pack that was already there.
+   */
+  packedBytes: number
+  /** Why the mirror was left alone, when it was; the push itself still succeeded. */
+  warning?: string
 }
 
 export interface MnemonSyncPushResult {
@@ -919,6 +964,8 @@ export interface MnemonSyncPushResult {
   }
   /** Why the branch was not published, when it was not. */
   reason?: string
+  /** What folding the mirror's loose objects into a pack recovered, when it ran. */
+  compaction?: MnemonSyncCompaction
 }
 
 export interface MnemonSyncComponentDelta extends MnemonPackComponentSummary {

@@ -244,7 +244,7 @@ export class MnemonClient {
   }
 
   /** Saves a patch; the answer never carries the token back. */
-  configureSync(patch: { repoUrl?: string | null; branch?: string; subdir?: string; token?: string | null; authorName?: string; authorEmail?: string }): Promise<MnemonSyncConfigView> {
+  configureSync(patch: { repoUrl?: string | null; branch?: string; subdir?: string; token?: string | null; authorName?: string; authorEmail?: string; autoBackupMinutes?: number }): Promise<MnemonSyncConfigView> {
     return this.call(MNEMON_SYNC_CHANNEL, 'configure', this.scoped(patch))
   }
 

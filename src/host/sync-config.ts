@@ -15,9 +15,11 @@ export {
   MNEMON_SYNC_DEFAULT_BRANCH, MNEMON_SYNC_DEFAULT_SUBDIR, MNEMON_SYNC_TOKEN_ENV,
 }
 export const MNEMON_SYNC_CONFIG_FILE = 'sync-git.json'
+/** Seven days: the longest automatic backup interval the settings form offers. */
+export const MNEMON_SYNC_MAX_AUTO_BACKUP_MINUTES = 10_080
 
 const STATE_DIRECTORY = 'state'
-const SETTING_KEYS = ['repoUrl', 'branch', 'subdir', 'token', 'authorName', 'authorEmail'] as const
+const SETTING_KEYS = ['repoUrl', 'branch', 'subdir', 'token', 'authorName', 'authorEmail', 'autoBackupMinutes'] as const
 const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/u
 const HTTPS = /^https:\/\/[^\s/]+(?::\d+)?\/[^\s]+$/u
 const SSH = /^ssh:\/\/[^\s/]+(?::\d+)?\/[^\s]+$/u
@@ -98,6 +100,20 @@ export function syncAuthorEmail(value: unknown): string {
   return email
 }
 
+/**
+ * The automatic backup interval in minutes, zero meaning off. An hour is the
+ * floor the settings form offers, so anything shorter is a typo rather than a
+ * choice; a week is the ceiling, because a longer wait is not a backup.
+ */
+export function syncAutoBackupMinutes(value: unknown): number {
+  if (value === null || value === undefined || value === '') return 0
+  const minutes = typeof value === 'number' ? value : Number(String(value).trim())
+  if (!Number.isInteger(minutes) || minutes < 0 || minutes > MNEMON_SYNC_MAX_AUTO_BACKUP_MINUTES) {
+    throw new Error('auto backup interval must be a whole number of minutes between 0 and ' + String(MNEMON_SYNC_MAX_AUTO_BACKUP_MINUTES))
+  }
+  return minutes
+}
+
 export interface MnemonSyncSettings {
   repoUrl?: string
   branch: string
@@ -105,6 +121,8 @@ export interface MnemonSyncSettings {
   token?: string
   authorName: string
   authorEmail: string
+  /** Minutes between automatic backups; zero keeps the sync manual. */
+  autoBackupMinutes: number
 }
 
 /**
@@ -139,6 +157,7 @@ export class MnemonSyncSettingsStore {
       subdir: MNEMON_SYNC_DEFAULT_SUBDIR,
       authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME,
       authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL,
+      autoBackupMinutes: 0,
     }
   }
 
@@ -161,6 +180,7 @@ export class MnemonSyncSettingsStore {
     if (stored.token !== undefined) settings.token = syncToken(stored.token)
     if (stored.authorName !== undefined) settings.authorName = syncAuthorName(stored.authorName)
     if (stored.authorEmail !== undefined) settings.authorEmail = syncAuthorEmail(stored.authorEmail)
+    if (stored.autoBackupMinutes !== undefined) settings.autoBackupMinutes = syncAutoBackupMinutes(stored.autoBackupMinutes)
     return settings
   }
 
@@ -168,11 +188,12 @@ export class MnemonSyncSettingsStore {
     const directory = this.directory()
     mkdirSync(directory, { recursive: true, mode: 0o700 })
     const temporary = join(directory, '.' + MNEMON_SYNC_CONFIG_FILE + '.' + String(process.pid) + '.tmp')
-    const file: Record<string, string> = {
+    const file: Record<string, string | number> = {
       branch: settings.branch,
       subdir: settings.subdir,
       authorName: settings.authorName,
       authorEmail: settings.authorEmail,
+      autoBackupMinutes: settings.autoBackupMinutes,
     }
     if (settings.repoUrl !== undefined) file.repoUrl = settings.repoUrl
     if (settings.token !== undefined) file.token = settings.token
@@ -187,8 +208,9 @@ export class MnemonSyncSettingsStore {
   /**
    * Apply one browser patch. An empty value means what the field's own hint
    * says: the repository and the token are cleared, the branch and the
-   * directory go back to the defaults, and an empty commit author falls back to
-   * the Git identity of the machine running the sync.
+   * directory go back to the defaults, an empty commit author falls back to the
+   * Git identity of the machine running the sync, and an empty backup interval
+   * turns the automatic backup off.
    */
   patch(patch: unknown): MnemonSyncSettings {
     const fields = record(patch)
@@ -207,6 +229,7 @@ export class MnemonSyncSettingsStore {
     }
     if ('authorName' in fields) next.authorName = syncAuthorName(fields.authorName)
     if ('authorEmail' in fields) next.authorEmail = syncAuthorEmail(fields.authorEmail)
+    if ('autoBackupMinutes' in fields) next.autoBackupMinutes = syncAutoBackupMinutes(fields.autoBackupMinutes)
     return next
   }
 
@@ -234,6 +257,7 @@ export class MnemonSyncSettingsStore {
         : 'none',
       authorName: settings.authorName,
       authorEmail: settings.authorEmail,
+      autoBackupMinutes: settings.autoBackupMinutes,
     }
   }
 

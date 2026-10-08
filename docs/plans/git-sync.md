@@ -53,10 +53,13 @@ history already provides retention, review and restore, so the Git channel does 
 6. **Git runs through the Host's existing runner.** `src/host/process.ts`'s `runProcess` (`spawn`
    with an argument array, `shell: false`, a timeout, an output cap) is the only process entry. No
    new dependency, no `simple-git`, no shell string interpolation.
-7. **Push is an explicit, confirmed action.** Nothing in this feature pushes on a timer, and a push
-   that would create a commit without remote credentials still commits locally and reports that the
-   push was skipped. Pull previews before it writes: `preview` returns what the remote holds and
-   what would change; `pull` requires `confirmed: true` and merges through the pack importer.
+7. **Push is an explicit, confirmed action; the automatic backup repeats exactly it.** A manual
+   push is confirmed by hand, and the optional automatic backup is that same confirmed push on a
+   timer the user set - it adds no second write path, so the merge inside a push remains the only
+   thing that ever brings remote entries in. A push that would create a commit without remote
+   credentials still commits locally and reports that the push was skipped. Pull previews before it
+   writes: `preview` returns what the remote holds and what would change; `pull` requires
+   `confirmed: true` and merges through the pack importer.
 8. **Read-only deployments stay read-only.** Both directions require `writeEnabled`; a
    `writeEnabled: false` profile refuses push and pull with the same message the pack import uses.
 9. **The payload is always the whole pack; scope is a pull-time filter.** Every push exports
@@ -136,6 +139,7 @@ RPC or a profile patch.
 | `subdir` | `mnemon/` | relative, no `..`, no absolute path; an empty value restores the default |
 | `token` | - | optional fallback; HTTPS remotes only; never returned by RPC. GitHub sign-in is the preferred credential and is stored outside this file |
 | `authorName` / `authorEmail` | `dsh-mnemon sync` / `mnemon@localhost` | commit identity for the sync branch; an empty value means the commit uses the identity this machine's Git already has |
+| `autoBackupMinutes` | `0` | minutes between automatic backups; `0` is off, which is what an unconfigured channel keeps. Whole minutes from `0` to `10080` (a week). The timer reads this file on every tick, so a save takes effect without a restart |
 
 ## RPC surface
 
@@ -144,8 +148,8 @@ New channel `MNEMON_SYNC_CHANNEL = '/dsh-mnemon-sync'`, handler `createSyncHandl
 | Endpoint | Payload | Answer |
 |---|---|---|
 | `status` | - | mirror path, configured repo/branch/subdir, `hasToken`, `credentialSource`, `credentialLogin`, remote reachability, last commit |
-| `configure` | `{ repoUrl?, branch?, subdir?, token?, authorName?, authorEmail? }` (`token: null` clears it) | saved view, token replaced by `hasToken` |
-| `push` | `{ message?, confirmed: true }` | commit id, file/byte summary, `pushed` flag and reason when the push was skipped |
+| `configure` | `{ repoUrl?, branch?, subdir?, token?, authorName?, authorEmail?, autoBackupMinutes? }` (`token: null` clears it; `autoBackupMinutes: 0` turns the automatic backup off) | saved view, token replaced by `hasToken`; the handler re-arms the background timer from the saved interval |
+| `push` | `{ message?, confirmed: true }` | commit id, file/byte summary, `pushed` flag and reason when the push was skipped, and `compaction` with how many loose objects the mirror's repack collected |
 | `preview` | `{ }` | remote manifest summary, component sizes, which components differ from local |
 | `pull` | `{ confirmed: true, components? }` | import result (components, summary) |
 | `github-status` | - | login availability, `signedIn`, the login name and scopes, and the live device flow when one is running |
@@ -238,7 +242,7 @@ Landed:
 
 ## Out of scope
 
-- Automatic or scheduled pushes (the config-manager autosync scheduler is a separate decision).
+- Scheduled pushes of anything other than this push, and the config-manager autosync scheduler: the automatic backup here only repeats the confirmed push at an interval the user set.
 - Encrypted snapshots, WebDAV, snapshot directories with a retention window.
 - Pushing anything other than memory: no DSH configuration, no credentials, no session history.
 - Making the storage root itself a Git repository.

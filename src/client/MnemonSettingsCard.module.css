@@ -529,6 +529,11 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .reviewOpinionForm > input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
 .reviewOpinionForm > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
 .reviewOpinionForm > input:disabled { cursor: default; opacity: .5; }
+/* How the reconciliation area runs: a short list, not another control. */
+.reviewRules { display: grid; gap: 4px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.reviewRules > strong { color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 500; line-height: 18px; }
+.reviewRules > ul { display: grid; gap: 2px; margin: 0; padding-left: 18px; }
+.reviewRules li { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .reviewGuidance { display: grid; gap: 4px; }
 .reviewGuidance > label { color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 500; line-height: 18px; }
 .reviewGuidance > input { box-sizing: border-box; width: 100%; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }

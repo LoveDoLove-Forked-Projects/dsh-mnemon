@@ -1,4 +1,4 @@
-import { isDefaultSourceInstance, isWorkspaceStorageScope } from './protocol.ts'
+import { isDefaultSourceInstance, isWorkspaceStorageScope, type MnemonSyncAutoBackup } from './protocol.ts'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type { HostAgent, HostAgentsService, HostWorkspace, HostWorkspaceRegistry } from './dsh.ts'
@@ -136,6 +136,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
   private readonly retiredGraphs = new Set<MnemonRuntimeGraph>()
   private githubAuth: MnemonGitHubAuth | undefined
   private settingsBridge: MnemonSettingsBridge | undefined
+  private autoBackupView: (() => MnemonSyncAutoBackup | undefined) | undefined
   private closed = false
 
   readonly config: ResolvedConfig
@@ -180,6 +181,20 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     if (this.settingsBridge !== undefined) graph.packs.useSettingsBridge(this.settingsBridge)
   }
 
+  /**
+   * Let the settings page read the background cadence without owning the timer.
+   * The timer belongs to the plugin root, one instance for the whole Host, so
+   * it is shared with every generation the same way the GitHub grant is.
+   */
+  useAutoBackup(view: (() => MnemonSyncAutoBackup | undefined) | undefined): void {
+    this.autoBackupView = view
+    if (view !== undefined) this.current.sync.useAutoBackup(view)
+  }
+
+  private applyAutoBackup(graph: MnemonRuntimeGraph): void {
+    if (this.autoBackupView !== undefined) graph.sync.useAutoBackup(this.autoBackupView)
+  }
+
   swap(next: MnemonRuntimeGraph): void {
     if (this.closed) {
       next.dispose()
@@ -189,6 +204,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     this.current = next
     this.applyGitHubAuth(next)
     this.applySettingsBridge(next)
+    this.applyAutoBackup(next)
     this.retireGraph(previous)
     for (const graph of this.workspaceGraphs.values()) this.retireGraph(graph)
     this.workspaceGraphs.clear()

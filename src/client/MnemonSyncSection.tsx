@@ -34,6 +34,23 @@ interface SyncDraft {
   clearToken: boolean
   authorName: string
   authorEmail: string
+  /** Minutes between automatic backups; zero keeps the channel manual. */
+  autoBackupMinutes: number
+}
+
+/**
+ * The intervals the form offers. The floor is an hour: a backup more often than
+ * that is a repository being rewritten, not a memory being kept. The ceiling is
+ * a week, and off is the first choice because it is what a channel that has
+ * never been configured does.
+ */
+const AUTO_BACKUP_CHOICES: readonly number[] = [0, 60, 180, 360, 720, 1_440, 4_320, 10_080]
+
+/** One interval as the reader reads it: off, whole days, or whole hours. */
+function intervalLabel(t: MnemonTranslate, minutes: number): string {
+  if (minutes <= 0) return t('config.syncAutoBackupOff')
+  if (minutes % 1_440 === 0) return t('config.syncAutoBackupDays', { days: minutes / 1_440 })
+  return t('config.syncAutoBackupHours', { hours: minutes / 60 })
 }
 
 function draftOf(config: MnemonSyncConfigView | undefined): SyncDraft {
@@ -49,6 +66,7 @@ function draftOf(config: MnemonSyncConfigView | undefined): SyncDraft {
     clearToken: false,
     authorName: config?.authorName ?? '',
     authorEmail: config?.authorEmail ?? '',
+    autoBackupMinutes: config?.autoBackupMinutes ?? 0,
   }
 }
 
@@ -132,6 +150,10 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   // share one dialog; the dialog opens as soon as either answer is asked for.
   const [dialog, setDialog] = useState(false)
   const [copied, setCopied] = useState(false)
+  // The automatic backup interval is written the moment it is chosen: it is one
+  // number with no half-typed state, and waiting for a Save would let a reader
+  // believe a cadence is on while the Host still holds the old one.
+  const [autoBackupSaving, setAutoBackupSaving] = useState(false)
   // The sign-in poll reschedules itself; a counter re-runs the effect after each answer.
   const [pollTick, setPollTick] = useState(0)
   const [pollMs, setPollMs] = useState(5_000)
@@ -169,14 +191,15 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
 
   // The saved configuration seeds the form; a repository typed here is not saved until the user saves it.
   const saved = status?.config
-  useEffect(() => { setDraft(draftOf(saved)) }, [saved?.repoUrl, saved?.branch, saved?.subdir, saved?.authorName, saved?.authorEmail, saved?.hasToken])
+  useEffect(() => { setDraft(draftOf(saved)) }, [saved?.repoUrl, saved?.branch, saved?.subdir, saved?.authorName, saved?.authorEmail, saved?.hasToken, saved?.autoBackupMinutes])
 
   const save = async (): Promise<void> => {
     if (client === null || busy !== null) return
     setBusy('save'); setFailed(null); setNotice(null)
     try {
-      const patch: { repoUrl?: string | null; branch?: string; subdir?: string; token?: string | null; authorName?: string; authorEmail?: string } = {
+      const patch: { repoUrl?: string | null; branch?: string; subdir?: string; token?: string | null; authorName?: string; authorEmail?: string; autoBackupMinutes?: number } = {
         branch: draft.branch, subdir: draft.subdir, authorName: draft.authorName, authorEmail: draft.authorEmail,
+        autoBackupMinutes: draft.autoBackupMinutes,
         repoUrl: draft.repoUrl.trim() === '' ? null : draft.repoUrl.trim(),
       }
       if (draft.clearToken) patch.token = null
@@ -195,15 +218,35 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     setBusy('push'); setFailed(null); setNotice(null); setPending(null); setBackups(null); setDifference(null)
     try {
       const result = await client.pushSync()
-      setNotice(result.pushed
+      const parts = [result.pushed
         ? t('config.syncPushed', { commit: result.commit.slice(0, 8), files: result.files, size: humanBytes(result.bytes) })
         : result.committed
           ? t('config.syncPushedLocal', { commit: result.commit.slice(0, 8), reason: result.reason ?? '' })
-          : t('config.syncPushIdle'))
+          : t('config.syncPushIdle')]
+      // Folding the mirror's loose objects is housekeeping the push did on its
+      // own; saying what it recovered is the only way the size is ever visible.
+      const compaction = result.compaction
+      if (compaction !== undefined && compaction.warning === undefined && compaction.loose > 0) {
+        parts.push(t('config.syncCompacted', { count: compaction.loose, before: humanBytes(compaction.bytes), after: humanBytes(compaction.packedBytes) }))
+      }
+      setNotice(parts.join(' '))
       await refresh()
     } catch (reason) {
       setFailed(message(reason))
     } finally { setBusy(null) }
+  }
+
+  /** Turning the automatic backup on, off or to another interval is one saved value. */
+  const setAutoBackup = async (minutes: number): Promise<void> => {
+    if (client === null || busy !== null || autoBackupSaving) return
+    setAutoBackupSaving(true); setFailed(null); setNotice(null)
+    try {
+      const next = await client.configureSync({ autoBackupMinutes: minutes })
+      setStatus(current => current === null ? current : { ...current, config: next })
+      setNotice(t('config.syncAutoBackupSaved', { interval: intervalLabel(t, minutes) }))
+    } catch (reason) {
+      setFailed(message(reason))
+    } finally { setAutoBackupSaving(false) }
   }
 
   const preview = async (): Promise<void> => {
@@ -469,6 +512,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     else if (credential === 'token') states.push(t('config.syncTokenSaved'))
     else states.push(t('config.syncTokenNone'))
   }
+  const autoBackup = status?.autoBackup
   const ready = client !== null && status !== null && status.configured && status.git.available
   const editable = !disabled && client !== null
   const changed = pending?.components.filter(component => component.changed).length ?? 0
@@ -528,6 +572,24 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
           </div>
         </>}
         {githubFailed !== null && <p className={css.error}>{t('config.syncGitHubFailed', { error: githubFailed })}</p>}
+      </div>
+      <div className={css.syncBlock}>
+        <header>
+          <strong>{t('config.syncAutoBackup')}</strong>
+        </header>
+        <small>{t('config.syncAutoBackupHint')}</small>
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-auto-backup">{t('config.syncAutoBackup')}</label>
+          <select id="mnemon-sync-auto-backup" value={String(draft.autoBackupMinutes)} disabled={!editable || autoBackupSaving}
+            onChange={event => void setAutoBackup(Number(event.target.value))}>
+            {AUTO_BACKUP_CHOICES.map(minutes => <option key={minutes} value={String(minutes)}>{intervalLabel(t, minutes)}</option>)}
+          </select>
+        </div>
+        {autoBackup !== undefined && <small>{autoBackup.available
+          ? (autoBackup.nextAt === undefined ? '' : t('config.syncAutoBackupNext', { at: stamp(autoBackup.nextAt) }))
+          : t('config.syncAutoBackupNever')}</small>}
+        {autoBackup?.lastAt !== undefined && <small>{t('config.syncAutoBackupLast', { at: stamp(autoBackup.lastAt) })}</small>}
+        {autoBackup?.lastError !== undefined && <small className={css.error}>{t('config.syncAutoBackupFailed', { error: autoBackup.lastError })}</small>}
       </div>
       {github !== null && github.available && <div className={css.syncBlock}>
         <header>

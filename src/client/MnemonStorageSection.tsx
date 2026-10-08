@@ -138,12 +138,24 @@ export function MnemonStorageSection(props: MnemonStorageSectionProps): JSX.Elem
     const operations: SettingsOperation[] = []
     const scope = storedScope(draft)
     if (scope !== savedScope(value)) operations.push({ op: 'set', path: ['storageScope'], value: scope })
-    // A workspace's own directory takes none; the others keep the one typed or return to the default.
+    // A workspace's own directory takes none; the others store the one typed.
     if (draft.scope !== 'workspace') {
-      const directory = draft.location === 'custom' ? draft.dataDir.trim() : ''
-      if (directory !== saved.dataDir.trim()) {
-        // A central root returns to the default as an empty value, which no lower settings layer can fill.
-        operations.push(directory === '' && draft.scope === 'global' ? { op: 'unset', path: ['dataDir'] } : { op: 'set', path: ['dataDir'], value: directory })
+      const typed = draft.dataDir.trim()
+      if (draft.scope === 'global') {
+        // A global scope reads its own default directory and ignores this value,
+        // so choosing the default stops memory from *using* a custom directory
+        // and nothing more: the choice stays saved, because forgetting it is
+        // exactly what would make it impossible to take back. Only the custom
+        // location writes the field at all.
+        if (draft.location === 'custom' && typed !== saved.dataDir.trim()) {
+          operations.push(typed === '' ? { op: 'unset', path: ['dataDir'] } : { op: 'set', path: ['dataDir'], value: typed })
+        }
+      } else {
+        // A central root stores the directory it uses, so returning to the
+        // default means storing none: an empty value is a value no lower
+        // settings layer could fill.
+        const directory = draft.location === 'custom' ? typed : ''
+        if (directory !== saved.dataDir.trim()) operations.push({ op: 'set', path: ['dataDir'], value: directory })
       }
     }
     if (operations.length === 0) return
@@ -159,7 +171,11 @@ export function MnemonStorageSection(props: MnemonStorageSectionProps): JSX.Elem
   const focusDirectory = useRef(false)
   const chooseLocation = (location: LocationChoice): void => {
     focusDirectory.current = location === 'custom'
-    storage.edit({ location, dataDir: saved.dataDir })
+    // Choosing the default stops memory from *using* a custom directory; it
+    // never means forgetting which one was chosen, or the choice could not be
+    // taken back. The field keeps whatever was typed, and falls back to the
+    // saved directory when the draft has not named one yet.
+    storage.edit({ location, dataDir: draft.dataDir.trim() === '' ? saved.dataDir : draft.dataDir })
   }
   // A picked directory becomes the draft's, and a move is offered whenever it
   // is not the one memory already uses.

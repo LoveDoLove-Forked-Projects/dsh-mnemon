@@ -497,6 +497,35 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     expect(await git(['show', 'mnemon-sync:mnemon/payload/runtime/USER.md'], origin)).toContain('Survives a polluted environment')
   })
 
+  it('collects the loose objects each push writes into one pack', async () => {
+    const origin = await repository('sync-compaction-remote')
+    const machineA = await machine('sync-compaction', origin)
+    const mirror = join(machineA.root, 'state', 'sync', 'git')
+    const loose = async (): Promise<number> => Number(/^count:s*(d+)$/mu.exec(await git(['count-objects', '-v'], mirror))?.[1] ?? '0')
+
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'First memory', importance: 'normal' }, { confirmed: true })
+    const first = await machineA.sync.push({ message: 'First' })
+    // Every push writes a whole new payload, so the mirror starts out holding loose
+    // objects: without a repack the mirror keeps a full copy of every generation.
+    expect(first.compaction?.loose).toBeGreaterThan(0)
+    expect(await loose()).toBe(0)
+    expect(first.compaction?.packed).toBeGreaterThan(0)
+    expect(first.compaction?.warning).toBeUndefined()
+    // The pack holds the whole history, so it is not smaller than the one loose
+    // generation it replaced; what the figures state is that nothing is loose and
+    // that a clone fetches the pack, not the objects the push wrote.
+    expect(first.compaction!.packedBytes).toBeGreaterThan(0)
+
+    await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Second memory', importance: 'normal' }, { confirmed: true })
+    const second = await machineA.sync.push({ message: 'Second' })
+    expect(second.compaction?.loose).toBeGreaterThan(0)
+    expect(await loose()).toBe(0)
+    // A clone still receives the whole history, so the repack must not have dropped any of it.
+    const clone = join(temporary('sync-compaction-clone'), 'clone')
+    await git(['clone', '--quiet', '--branch', 'mnemon-sync', origin, clone])
+    expect(readFileSync(join(clone, 'mnemon', 'payload', 'runtime', 'USER.md'), 'utf8')).toContain('Second memory')
+  })
+
   it('creates the branch on the first push and honours a nested directory', async () => {
     const origin = await repository('sync-branch-remote')
     const machineA = await machine('sync-branch', origin)

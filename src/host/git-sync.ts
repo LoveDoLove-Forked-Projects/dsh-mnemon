@@ -13,7 +13,8 @@ import type {
   MnemonPackComponent, MnemonPackImportMode, MnemonPackManifest, MnemonSyncBackup, MnemonSyncBackupList,
   MnemonSyncComponentDelta, MnemonSyncConfigView, MnemonSyncCredentialSource, MnemonSyncDiff, MnemonSyncDiffConflict,
   MnemonSyncDiffEntry,
-  MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview, MnemonSyncPullResult, MnemonSyncPushResult,
+  MnemonSyncAutoBackup, MnemonSyncCompaction, MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview,
+  MnemonSyncPullResult, MnemonSyncPushResult,
   MnemonSyncRemoteStatus, MnemonSyncStatus, MnemonTombstone, MnemonTombstoneFile,
 } from './protocol.ts'
 import { RUNTIME_MEMORY_LIMITS, type RuntimeMemoryLimits } from 'dsh-mnemon-source-runtime/contracts'
@@ -249,6 +250,28 @@ function parseJson(bytes: Uint8Array, label: string): unknown {
   }
 }
 
+/** The four numbers `git count-objects -v` reports about this mirror. */
+interface ObjectCount {
+  loose: number
+  bytes: number
+  packed: number
+  packedBytes: number
+}
+
+/**
+ * Read the loose and packed object counts out of `git count-objects -v`. An
+ * unrecognised shape returns undefined rather than a guess: the caller only
+ * needs to know whether it measured the mirror at all.
+ */
+function objectCount(output: string): ObjectCount | undefined {
+  const loose = /^count:\s*(\d+)$/mu.exec(output)
+  const bytes = /^size:\s*(\d+)$/mu.exec(output)
+  const packed = /^in-pack:\s*(\d+)$/mu.exec(output)
+  const packedBytes = /^size-pack:\s*(\d+)$/mu.exec(output)
+  if (loose === null || bytes === null || packed === null || packedBytes === null) return undefined
+  return { loose: Number(loose[1]), bytes: Number(bytes[1]), packed: Number(packed[1]), packedBytes: Number(packedBytes[1]) }
+}
+
 /** How many commits one page asks for: the caller's window, clamped to what one listing should carry. */
 function backupLimit(value: unknown): number {
   const requested = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : DEFAULT_BACKUP_LIMIT
@@ -432,6 +455,7 @@ export class MnemonGitSync {
   private readonly machine: MnemonMachineStore
   private sequence = 0
   private auth: MnemonGitHubAuth | undefined
+  private autoBackupView: (() => MnemonSyncAutoBackup | undefined) | undefined
 
   constructor(
     runner: StorageRoot,
@@ -462,6 +486,16 @@ export class MnemonGitSync {
   /** The sign-in surface, or undefined on a Host that provides no store. */
   github(): MnemonGitHubAuth | undefined {
     return this.auth
+  }
+
+  /**
+   * Report the background cadence the Host keeps for this channel. The timer
+   * lives beside the runtime instead of inside it, because a settings write
+   * builds a throwaway graph to validate itself and that graph must never own a
+   * timer; the view is how the one timer reaches whichever graph is current.
+   */
+  useAutoBackup(view: (() => MnemonSyncAutoBackup | undefined) | undefined): void {
+    this.autoBackupView = view
   }
 
   /**
@@ -500,6 +534,7 @@ export class MnemonGitSync {
         ? await this.remoteStatus({ ...settings, repoUrl }, signal)
         : { reachable: false, branchExists: false, error: git.issue ?? 'Git is not available on this Host' }
     const commit = existsSync(this.store.mirror()) && git.available ? await this.lastCommit(signal) : undefined
+    const autoBackup = this.autoBackupView?.()
     return {
       configured: repoUrl !== undefined,
       config: await this.credentialView(settings),
@@ -509,6 +544,7 @@ export class MnemonGitSync {
       remote,
       machine: this.machine.read(),
       ...(commit === undefined ? {} : { lastCommit: commit }),
+      ...(autoBackup === undefined ? {} : { autoBackup }),
     }
   }
 
@@ -577,6 +613,9 @@ export class MnemonGitSync {
       const published = committed
         ? await this.publish(settings, await this.credential(settings), input.signal)
         : { pushed: false, reason: prepared.tip === undefined ? 'nothing to publish' : 'the branch already holds this payload' }
+      // Collecting the loose objects the new commit just wrote happens after the
+      // branch has been updated, so a slow repack can never hold a publish back.
+      const compaction = await this.compact(input.signal)
       const summary = exported.manifest.summary.map(entry => ({ ...entry, changed: componentChanged(before, entries, entry.component) }))
       return {
         repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir,
@@ -586,6 +625,7 @@ export class MnemonGitSync {
         summary, pushed: published.pushed,
         ...(merged === undefined ? {} : { merged }),
         ...(published.reason === undefined ? {} : { reason: published.reason }),
+        ...(compaction === undefined ? {} : { compaction }),
       }
     })
   }
@@ -941,6 +981,50 @@ export class MnemonGitSync {
       return { pushed: false, reason: 'the commit stays local because no token is available: ' + (reason || 'git push failed') }
     }
     return { pushed: false, reason: reason || 'git push failed' }
+  }
+
+  /**
+   * Fold the mirror's loose objects into one pack and report what that recovered.
+   *
+   * Git stores every pushed payload as brand-new blobs, and a payload is the
+   * whole pack, so the mirror accumulates a complete copy of each generation
+   * until something repacks it. The pack is also the only thing a clone ever
+   * downloads, so collecting it is what keeps both this mirror and a fresh
+   * clone small. The mirror is disposable — a later fetch can always rebuild it
+   * — so the aggressive window and depth cost nothing that matters.
+   *
+   * Compaction never fails a push: a mirror that cannot be repacked is still a
+   * mirror that just published, so the reason travels back as a warning.
+   */
+  private async compact(signal?: AbortSignal): Promise<MnemonSyncCompaction | undefined> {
+    let before: ObjectCount | undefined
+    try {
+      const counted = await this.git(['count-objects', '-v'], { cwd: this.store.mirror(), signal })
+      if (counted.exitCode !== 0) return undefined
+      before = objectCount(counted.stdout)
+    } catch { return undefined }
+    if (before === undefined) return undefined
+    // Nothing loose means the last push published bytes the branch already had,
+    // so repacking would rewrite the pack on every idle push for no gain. The
+    // loose figure stays honest and the pack is reported as what a clone fetches.
+    if (before.loose === 0) return { loose: 0, bytes: 0, packed: before.packed, packedBytes: before.packedBytes }
+    try {
+      const repacked = await this.git(['repack', '-adf', '--window=250', '--depth=50'], { cwd: this.store.mirror(), signal })
+      const counted = await this.git(['count-objects', '-v'], { cwd: this.store.mirror(), signal })
+      const after = counted.exitCode === 0 ? objectCount(counted.stdout) : undefined
+      if (repacked.exitCode !== 0 || after === undefined) {
+        return {
+          loose: before.loose, bytes: before.bytes, packed: before.packed, packedBytes: before.packedBytes,
+          warning: tail(repacked.stderr || repacked.stdout) || 'git repack failed',
+        }
+      }
+      return { loose: before.loose, bytes: before.bytes, packed: after.packed, packedBytes: after.packedBytes }
+    } catch (error) {
+      return {
+        loose: before.loose, bytes: before.bytes, packed: before.packed, packedBytes: before.packedBytes,
+        warning: error instanceof Error ? error.message : String(error),
+      }
+    }
   }
 
   /** Validate the remote payload and rebuild the exact pack archive the ZIP path would have produced. */
