@@ -180,6 +180,7 @@ async function manageMemorySpaces(service: MemorySpacesService, request: MemoryS
         ...(text(input.source, 'source', 30, false) === undefined ? {} : { source: text(input.source, 'source', 30, false)! as Source }),
         ...(text(input.intent, 'intent', 30, false) === undefined ? {} : { intent: text(input.intent, 'intent', 30, false)! as Intent }),
         ...(stringArray(input.memoryBodyIds, 'memoryBodyIds', 10_000) === undefined ? {} : { memoryBodyIds: stringArray(input.memoryBodyIds, 'memoryBodyIds', 10_000)! }),
+        ...(input.inspect === true ? { inspect: true } : {}),
       }, request.signal))
       case 'related': return managementResult(service, await service.related(
         text(input.id, 'id', 2_000)!,

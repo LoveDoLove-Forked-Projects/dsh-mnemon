@@ -698,6 +698,7 @@ export class MemorySpacesService {
       ...(category === undefined ? {} : { category }),
       ...(source === undefined ? {} : { source }),
       ...(intent === undefined ? {} : { intent }),
+      ...(request.inspect === true ? { inspect: true } : {}),
     }
     let batches = await Promise.all(spaces.map(async body => {
       if (!body.provider.capabilities.search) {
@@ -762,6 +763,7 @@ export class MemorySpacesService {
             query: recoveryPlan.query,
             mode: 'keyword',
             limit: Math.min(limit, preparedPolicy.candidateLimit),
+            ...(request.inspect === true ? { inspect: true } : {}),
           }, signal)
           const admitted = recovered.results.some(insight => recoveryMatchCount(insight.content, recoveryPlan) >= recoveryPlan.requiredMatches)
           const results = mergeRecoveryResults(batch.result.results, recovered.results, recoveryPlan, preparedPolicy.candidateLimit)
@@ -1017,8 +1019,9 @@ export class MemorySpacesService {
       const display = mergeEntityCounts(read.indexes).names.get(key) ?? selected
       const readableIds = read.readable.map(body => body.id)
       if (readableIds.length === 0) return { entity: display, items: [], sources: [] }
+      // The Entities page looks; it does not use what it shows.
       const result = await this.search(
-        { query: selected, intent: 'ENTITY', limit: integer(limit, 20, 1, 50), memoryBodyIds: readableIds },
+        { query: selected, intent: 'ENTITY', limit: integer(limit, 20, 1, 50), memoryBodyIds: readableIds, inspect: true },
         combined,
         { exclude: carrying },
       )
