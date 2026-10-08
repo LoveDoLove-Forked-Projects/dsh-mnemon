@@ -3,7 +3,7 @@
   "issue": "https://github.com/omdsh-dev/dsh-mnemon/issues/336",
   "revisions": {
     "baseline": "main 2296898d (dsh-mnemon 0.5.24)",
-    "fix": "b3e478a9"
+    "fix": "4a992c86"
   },
   "environment": {
     "os": "macOS 15.6 arm64",
@@ -100,7 +100,7 @@
     ],
     "localArchive": {
       "path": "data/runtime/archived/MEMORY.md",
-      "content": "# MEMORY.md archive\n\nEntries that left MEMORY.md at its limit while no Memory Space could take them, oldest first.\n\n## 2026-10-08T10:36:39.321Z\n\nIssue 336 synthetic rule: database migrations ship with a rollback script and a dry run.\n§\nIssue 336 synthetic rule: dependency upgrades land one package family at a time, with the changelog read.\n"
+      "content": "# MEMORY.md archive\n\nEntries that left MEMORY.md at its limit while no Memory Space could take them, oldest first.\n\n## 2026-10-08T11:15:22.362Z\n\nIssue 336 synthetic rule: database migrations ship with a rollback script and a dry run.\n§\nIssue 336 synthetic rule: dependency upgrades land one package family at a time, with the changelog read.\n"
     },
     "memoryMd": "Issue 336 synthetic rule: release candidates run the full verify locally before approval.\n§\nIssue 336 synthetic rule: on-call maintainers record production decisions in the project documents.\n",
     "consoleErrors": []
