@@ -61,6 +61,12 @@ describe('standalone Memory Spaces Source', () => {
       expect(related).toHaveBeenCalledOnce()
       const action = turn.view.actionOffers.find(action => action.sourceActionId === 'forget')!
       await expect(turn.executeAction(action.id, { id: 'hidden' }, () => true)).rejects.toThrow('already admitted')
+      // Naming the space does not make an id usable when its Provider cannot look
+      // ids up: that Provider's own forget may reach beyond the space (issue 337).
+      const directoryRead = await runner.executeManagement({ scope, sourceInstanceKey: source.sourceInstanceKey, mode: 'read', confirmed: false, operation: 'body-directory', input: null })
+      const notes = (directoryRead.value as unknown as { items: Array<{ id: string }> }).items[0]!.id
+      await expect(turn.executeAction(action.id, { id: 'hidden', memoryBodyId: notes }, () => true)).rejects.toThrow('already admitted')
+      await expect(turn.executeRoute(route('related'), { id: 'hidden', memoryBodyId: notes })).rejects.toThrow('already admitted')
       expect(forget).not.toHaveBeenCalled()
       const receipt = await turn.executeAction(action.id, { id: 'visible' }, () => true)
       expect(receipt.completion).toBe('committed')

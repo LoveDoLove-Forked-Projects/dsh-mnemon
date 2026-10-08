@@ -387,10 +387,10 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
      * The Memory Space an exact id belongs to, for an action or traversal that
      * names a memory by id. Evidence this View returned decides first, as
      * before. Otherwise the Providers that can look an id up are asked among
-     * the spaces in `scope`, and a found memory is admitted to this View; a
-     * space whose Provider cannot look ids up still takes an id that the
-     * request names it for. An Agent can so forget what it just wrote, and a
-     * delegated worker can act on an id from its parent's turn (#337).
+     * the spaces in `scope`, and a found memory is admitted to this View. An
+     * Agent can so forget what it just wrote, and a delegated worker can act on
+     * an id from its parent's turn (#337). A Provider that cannot look ids up
+     * keeps to evidence: its own call may reach beyond the space named.
      */
     const ownerOf = async (viewId: string, id: string, requestedSpace: string | undefined, scope: readonly string[], signal?: AbortSignal): Promise<string | undefined> => {
       const entries = admittedByView.get(viewId)
@@ -402,14 +402,11 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
       }
       const candidates = requestedSpace === undefined ? scope : scope.includes(requestedSpace) ? [requestedSpace] : []
       if (candidates.length === 0) return undefined
-      const { found, unsupported } = await service.locate(id, candidates, signal)
+      const found = await service.locate(id, candidates, signal)
       const owners = [...new Set(found.flatMap(item => item.memoryBodyId === undefined ? [] : [item.memoryBodyId]))]
-      if (owners.length === 1) {
-        admit(viewId, [{ id, memoryBodyId: owners[0]! }])
-        return owners[0]
-      }
-      if (owners.length === 0 && requestedSpace !== undefined && unsupported.includes(requestedSpace)) return requestedSpace
-      return undefined
+      if (owners.length !== 1) return undefined
+      admit(viewId, [{ id, memoryBodyId: owners[0]! }])
+      return owners[0]
     }
     const evidence = (
       request: { view: { id: string }; route: MemoryViewRoute },
@@ -641,7 +638,7 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
           const id = text(input.id, 'id', 2_000)!
           bodyId = await admittedOwner(id)
           if (bodyId === undefined || !allowedBodies.includes(bodyId)) {
-            throw new Error('forget requires evidence already admitted by this View, or an id found in a Memory Space it can read; name its Memory Space (memoryBodyId) when that Provider cannot look ids up')
+            throw new Error('forget requires evidence already admitted by this View, or an id found in one Memory Space it can read; name the space (memoryBodyId) when several hold it')
           }
           result = await service.forget(id, request.signal, bodyId) as MemoryJsonValue
         } else {
