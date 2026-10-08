@@ -108,6 +108,12 @@ export interface MemoryProviderAdapter {
   entityIndex?(body: MemorySpace, signal?: AbortSignal): Promise<ProviderEntityIndex>
   /** Persist an ordered host-authorized batch and return one receipt per request. */
   rememberMany?(body: MemorySpace, requests: readonly RememberRequest[], signal?: AbortSignal): Promise<JsonValue[]>
+  /**
+   * Optional exact read: the memory this space holds under `id`, or undefined
+   * when it holds none. With it an action can name a memory by id that the
+   * current View has not returned, such as an Agent forgetting what it wrote.
+   */
+  get?(body: MemorySpace, id: string, signal?: AbortSignal): Promise<Insight | undefined>
   related?(body: MemorySpace, id: string, depth: number, edge?: EdgeType, signal?: AbortSignal): Promise<Insight[]>
   link?(body: MemorySpace, sourceId: string, targetId: string, type: EdgeType, weight: number, reason?: string, signal?: AbortSignal): Promise<JsonValue>
   forget?(body: MemorySpace, id: string, signal?: AbortSignal): Promise<JsonValue>

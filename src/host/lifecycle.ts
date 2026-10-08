@@ -593,7 +593,7 @@ export class MnemonLifecycle {
   private readonly counters: LifecycleCounters = { primes: 0, recallCues: 0, writebackCues: 0, supervisedRequests: 0, failures: 0 }
   /** Creation ids reserved before DSH publishes clean task-root Agents. */
   private readonly taskAgentIds = new Set<string>()
-  /** Bounded process-local replay fence for finalized-message write actions. */
+  /** Bounded process-local replay fence for finalized-message write actions: the latest text per message. */
   private readonly supervisedWritebacks = new Map<string, { content: string; result: Promise<SupervisedWritebackResult> }>()
 
   constructor(
@@ -873,17 +873,19 @@ export class MnemonLifecycle {
     }
 
     if (normalizedKey === undefined || normalizedKey === '') return execute()
+    // One entry per message: sending its latest text again replays that result,
+    // and a candidate edited after an earlier submission is a request of its own
+    // that takes the message's place, so a receipt always answers the text last
+    // sent (#342).
     const replayKey = `${replayScope}\u0000${normalizedKey}`
     const existing = this.supervisedWritebacks.get(replayKey)
-    if (existing !== undefined) {
-      if (existing.content !== normalizedContent) throw new Error('idempotency key was already used for different content')
-      return existing.result
-    }
-    if (this.supervisedWritebacks.size >= 256) {
+    if (existing?.content === normalizedContent) return existing.result
+    if (existing === undefined && this.supervisedWritebacks.size >= 256) {
       const oldest = this.supervisedWritebacks.keys().next().value as string | undefined
       if (oldest !== undefined) this.supervisedWritebacks.delete(oldest)
     }
     const result = execute()
+    this.supervisedWritebacks.delete(replayKey)
     this.supervisedWritebacks.set(replayKey, { content: normalizedContent, result })
     void result.catch(() => {
       if (this.supervisedWritebacks.get(replayKey)?.result === result) this.supervisedWritebacks.delete(replayKey)

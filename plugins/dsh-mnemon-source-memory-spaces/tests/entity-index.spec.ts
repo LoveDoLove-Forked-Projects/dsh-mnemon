@@ -45,7 +45,8 @@ function fixture(): { service: MemorySpacesService; process: ReturnType<typeof v
       if (!state.healthy) return { stdout: '', stderr: 'database locked', exitCode: 1 }
       return { stdout: JSON.stringify({ total_insights: MEMORIES.length, deleted_insights: 0, edge_count: 4, oplog_count: state.oplog, db_size_bytes: 4096, top_entities: [{ entity: 'Atlas', count: 3 }] }), stderr: '', exitCode: 0 }
     }
-    if (args.includes('recall') && args.includes('--readonly')) return { stdout: JSON.stringify({ results: MEMORIES }), stderr: '', exitCode: 0 }
+    // The whole-store dump is the basic recall; a related lookup is a read-only recall as well.
+    if (args.includes('recall') && args.includes('--basic')) return { stdout: JSON.stringify({ results: MEMORIES }), stderr: '', exitCode: 0 }
     if (args.includes('recall')) return { stdout: JSON.stringify({ results: RECALL }), stderr: '', exitCode: 0 }
     if (args.includes('remember')) return { stdout: JSON.stringify({ id: 'm7', action: 'added' }), stderr: '', exitCode: 0 }
     return { stdout: '{}', stderr: '', exitCode: 0 }
@@ -60,7 +61,7 @@ function fixture(): { service: MemorySpacesService; process: ReturnType<typeof v
   return { service: createService(runner, config, createRegistry(runner, true)), process, state }
 }
 
-const dumps = (process: ReturnType<typeof vi.fn<ProcessRunner>>) => process.mock.calls.filter(([, args]) => args.includes('recall') && args.includes('--readonly')).length
+const dumps = (process: ReturnType<typeof vi.fn<ProcessRunner>>) => process.mock.calls.filter(([, args]) => args.includes('recall') && args.includes('--basic')).length
 const statuses = (process: ReturnType<typeof vi.fn<ProcessRunner>>) => process.mock.calls.filter(([, args]) => args.includes('status')).length
 
 describe('entity index', () => {
@@ -108,7 +109,8 @@ describe('Memory Spaces entity reads', () => {
     // Strict recall would spend its places on m1-m3; leaving them out first keeps m5 and m4.
     expect(related.items.map(item => item.id)).toEqual(['m5', 'm4'])
     expect(related.entity).toBe('Atlas')
-    expect(process).toHaveBeenCalledWith(FAKE_CLI, expect.arrayContaining(['recall', 'Atlas', '--intent', 'ENTITY']), expect.anything())
+    // Looking at an entity's related memories is not a use of them: no access counts, no log row (#338).
+    expect(process).toHaveBeenCalledWith(FAKE_CLI, expect.arrayContaining(['--readonly', 'recall', 'Atlas', '--intent', 'ENTITY']), expect.anything())
   })
 
   it('reads one status and one listing per space for a rail and a selection together', async () => {

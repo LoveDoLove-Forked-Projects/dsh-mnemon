@@ -35,6 +35,40 @@ describe('independent Native Provider', () => {
     expect(runJson.mock.calls[1]?.[0]).toEqual(['--readonly', 'recall', '', '--basic', '--limit', '6'])
   })
 
+  it('reads one memory by exact id from a read-only snapshot', async () => {
+    const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
+    const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>()
+      .mockResolvedValueOnce({ id: 'fact-1', content: 'Keep exact content', category: 'fact', importance: 3, tags: [], entities: ['DSH'], created_at: '2026-10-08T00:00:00Z' })
+      // A missing or forgotten id: `mnemon show` exits 1 with SQL's "no rows".
+      .mockRejectedValueOnce(new Error('mnemon --readonly show gone exited 1: Error: sql: no rows in result set'))
+      .mockRejectedValueOnce(new Error('mnemon --readonly show slow did not respond within 10000ms'))
+    const provider = new MnemonNativeProvider({ runJson, runText: vi.fn() })
+    await expect(provider.get(body, 'fact-1')).resolves.toMatchObject({ id: 'fact-1', content: 'Keep exact content', entities: ['DSH'] })
+    await expect(provider.get(body, 'gone')).resolves.toBeUndefined()
+    await expect(provider.get(body, 'slow')).rejects.toThrow('did not respond')
+    expect(runJson.mock.calls.map(call => [call[0], call[1]?.store])).toEqual([
+      [['--readonly', 'show', 'fact-1'], 'work'],
+      [['--readonly', 'show', 'gone'], 'work'],
+      [['--readonly', 'show', 'slow'], 'work'],
+    ])
+  })
+
+  it('reads a snapshot for an inspection and records a use otherwise', async () => {
+    const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
+    const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>(async () => ({ results: [] }))
+    const provider = new MnemonNativeProvider({ runJson, runText: vi.fn() })
+    await provider.search(body, { query: 'release gate' })
+    await provider.search(body, { query: 'release gate', inspect: true })
+    await provider.search(body, { query: 'release gate', mode: 'keyword', inspect: true })
+    await provider.search(body, { query: 'release gate', mode: 'keyword' })
+    expect(runJson.mock.calls.map(call => call[0].slice(0, 2))).toEqual([
+      ['recall', 'release gate'],
+      ['--readonly', 'recall'],
+      ['--readonly', 'search'],
+      ['search', 'release gate'],
+    ])
+  })
+
   it('validates batch receipts and removes its private draft after failure', async () => {
     const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused' })
     let draftPath = ''
@@ -75,6 +109,28 @@ describe('independent Native Provider', () => {
     await expect(provider.rememberMany(body, requests)).resolves.toMatchObject(requests.map(({ content }) => ({ action: 'skipped', content })))
     expect(runJson.mock.calls.filter(([args]) => args[0] === 'import')).toHaveLength(1)
     expect(persisted.find(entry => entry.id === 'old')?.content).toBe(old)
+  })
+
+  it('imports an entry again when the same import prunes the copy it reused (issue 339)', async () => {
+    const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
+    const kept = 'Release gates close at 18:00; the archive reuses this exact copy.'
+    const added = 'Canary deploys run for one hour before the full rollout.'
+    const drafts: string[][] = []
+    const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>(async args => {
+      if (args[0] === '--readonly') return [{ id: 'old-copy', content: kept }]
+      const draft = JSON.parse(readFileSync(args[1]!, 'utf8')) as { insights: Array<{ content: string }> }
+      drafts.push(draft.insights.map(entry => entry.content))
+      const results = draft.insights.map((entry, index) => ({ index, id: 'new-' + drafts.length + '-' + index, action: 'added', content: entry.content }))
+      // At its capacity Mnemon prunes its weakest memories after the first import, the reused copy among them.
+      return { imported: results.length, updated: 0, skipped: 0, errors: 0, results, auto_pruned_ids: drafts.length === 1 ? ['old-copy', 'unrelated'] : [] }
+    })
+    const provider = new MnemonNativeProvider({ runJson, runText: vi.fn() })
+    await expect(provider.rememberMany(body, [{ content: kept }, { content: added }, { content: kept }])).resolves.toMatchObject([
+      { action: 'added', id: 'new-2-0', content: kept },
+      { action: 'added', id: 'new-1-0', content: added },
+      { action: 'skipped', id: 'new-2-0', content: kept },
+    ])
+    expect(drafts).toEqual([[added], [kept]])
   })
 
   it('does not import when the readonly exact-content snapshot fails', async () => {
