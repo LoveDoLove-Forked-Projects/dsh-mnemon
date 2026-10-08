@@ -43,6 +43,17 @@ describe('independent Memory Spaces Source client', () => {
     expect(mutate).toHaveBeenCalledOnce()
   })
 
+  it('makes its own searches inspections and leaves Ask Agent a use (issue 338)', async () => {
+    const read = vi.fn(async () => ({ revision: 'r2', value: {} }))
+    const execute = vi.fn(async () => ({ revision: 'r3', value: {} }))
+    const client = memorySpacesPageClient({ sourceInstanceKey: 'source:spaces', revision: 'r1', read, mutate: vi.fn(),
+      assistance: { operations: ['agent-search'], execute } })
+    await client.search({ query: 'release gate' })
+    expect(read).toHaveBeenLastCalledWith('search', expect.objectContaining({ query: 'release gate', inspect: true }))
+    await client.agentSearch({ query: 'release gate' })
+    expect(execute).toHaveBeenLastCalledWith('agent-search', expect.not.objectContaining({ inspect: expect.anything() }), expect.anything())
+  })
+
   it('does not retry a rejected assisted activation as a general mutation', async () => {
     const mutate = vi.fn()
     const execute = vi.fn(async () => { throw new Error('activation denied') })

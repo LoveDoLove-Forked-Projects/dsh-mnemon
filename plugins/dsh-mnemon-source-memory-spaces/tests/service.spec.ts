@@ -651,6 +651,21 @@ describe('MemorySpacesService', () => {
     ]), expect.anything())
   })
 
+  it('keeps the exact-anchor recovery of an inspection a snapshot read (issue 338)', async () => {
+    const process = vi.fn<ProcessRunner>(async (_command, args) => args.includes('search')
+      ? { stdout: JSON.stringify([{ id: 'target', content: '2026-06-02 的演练增加了 35% 与 65% 两个阶段，不再从 12% 直接升到 100%。', score: 1 }]), stderr: '', exitCode: 0 }
+      : { stdout: JSON.stringify({ results: [{ id: 'incident', content: 'ORCHID-47 是一次生产事故。', score: 0.9 }] }), stderr: '', exitCode: 0 })
+    const config = resolveMemorySpacesConfig({ cliPath: FAKE_CLI, dataDir: populatedDataDir(), store: 'work' })
+    const runner = createRunner(config, process)
+    const service = createService(runner, config, createRegistry(runner, true))
+
+    await service.search({ query: '哪次演练增加了 35% 和 65% 阶段？直接从 12% 升到 100% 暴露了什么？', limit: 3, inspect: true })
+
+    const calls = process.mock.calls.map(([, args]) => args)
+    expect(calls.find(args => args.includes('recall'))).toContain('--readonly')
+    expect(calls.find(args => args.includes('search'))).toEqual(expect.arrayContaining(['--readonly', 'search', '35% 65% 12% 100%']))
+  })
+
   it('recovers a lexically precise Native result when graph search loses the user wording', async () => {
     const query = '普通用户是否应该选择或理解 View id？过去的明确纠正是什么？'
     const process = vi.fn<ProcessRunner>(async (_command, args) => {
