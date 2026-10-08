@@ -742,6 +742,27 @@ function destinationFromCommittedMutation(
   }
 }
 
+/**
+ * The memory a skipped write names as already holding exactly this text, when
+ * its receipt carries that memory's id and stored text. Anything less proves
+ * nothing, and the caller verifies by search instead.
+ */
+function skippedExactDestination(
+  result: unknown,
+  memoryBodyId: string,
+  content: string,
+): MemoryMigrationLineage['destination'] | undefined {
+  const value = optionalObject(result)
+  const id = typeof value?.id === 'string' ? value.id.trim() : ''
+  if (id === '' || value?.content !== content) return undefined
+  if (value.memoryBodyId !== undefined && value.memoryBodyId !== memoryBodyId) return undefined
+  return {
+    layerId: 'memory-spaces',
+    reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(id)}`,
+    digest: sha256(content),
+  }
+}
+
 function mutationStates(result: unknown): string[] {
   const value = optionalObject(result)
   return [value?.action, value?.status]
@@ -1340,12 +1361,17 @@ ${naturalRequest(request)}`
           if (isNew && receiptId !== undefined) {
             destination = destinationFromCommittedMutation(receipt, memoryBodyId, content)!
           } else if (states.includes('skipped')) {
-            const recalled = await memoryService.read<{ results: Insight[] }>('search', {
-              query: document.contentHash, mode: 'keyword', limit: 50, memoryBodyIds: [memoryBodyId],
-            }, signal)
-            const exact = recalled.results.find(item => item.memoryBodyId === memoryBodyId && item.id === receiptId && item.content === content)
-            if (exact === undefined) throw new Error(`document archive skipped index lacks exact durable evidence in Memory Space ${memoryBodyId}`)
-            destination = { layerId: 'memory-spaces', reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(exact.id)}`, digest: sha256(exact.content) }
+            // The receipt can name the stored index itself, as a runtime archive's can.
+            const named = skippedExactDestination(receipt, memoryBodyId, content)
+            if (named !== undefined) destination = named
+            else {
+              const recalled = await memoryService.read<{ results: Insight[] }>('search', {
+                query: document.contentHash, mode: 'keyword', limit: 50, memoryBodyIds: [memoryBodyId],
+              }, signal)
+              const exact = recalled.results.find(item => item.memoryBodyId === memoryBodyId && item.id === receiptId && item.content === content)
+              if (exact === undefined) throw new Error(`document archive skipped index lacks exact durable evidence in Memory Space ${memoryBodyId}`)
+              destination = { layerId: 'memory-spaces', reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(exact.id)}`, digest: sha256(exact.content) }
+            }
           } else {
             throw new Error(`document archive received no reversible committed index receipt in Memory Space ${memoryBodyId}`)
           }
@@ -1694,13 +1720,23 @@ ${runtimeSnapshotContext('user', plan.entries)}`
     if (!mutationStates(result).includes('skipped')) {
       throw new Error(`runtime archive write did not commit synchronously for Memory Space ${memoryBodyId}`)
     }
-    const recalled = await service.read<{ results: Insight[] }>('search', {
+    // A write skipped because the space already holds this exact text can name
+    // that memory itself, as Mnemon Native does after matching its stored
+    // contents byte for byte. A ranked search could miss it (#339).
+    const named = skippedExactDestination(result, memoryBodyId, entry.content)
+    if (named !== undefined) return named
+    const recalled = await service.read<{ results: Insight[]; sources?: Array<{ status?: string; hint?: string }> }>('search', {
       query: entry.content.slice(0, 500),
       limit: 20,
       memoryBodyIds: [memoryBodyId],
     }, signal)
     const exact = recalled.results.find(candidate => candidate.memoryBodyId === memoryBodyId && candidate.content.trim() === entry.content)
-    if (exact === undefined) throw new Error(`runtime archive skipped an entry without exact durable recall evidence in Memory Space ${memoryBodyId}`)
+    if (exact === undefined) {
+      const unavailable = recalled.sources?.find(source => source.status === 'unavailable')
+      throw new Error(`runtime archive skipped an entry without exact durable recall evidence in Memory Space ${memoryBodyId}: ${unavailable === undefined
+        ? `its search returned ${recalled.results.length} results, none with that exact text`
+        : `its search was unavailable (${safeFailureDetail(unavailable.hint ?? 'no detail')})`}`)
+    }
     return {
       layerId: 'memory-spaces',
       reference: `memory-space:${encodeURIComponent(memoryBodyId)}/item:${encodeURIComponent(exact.id)}`,
