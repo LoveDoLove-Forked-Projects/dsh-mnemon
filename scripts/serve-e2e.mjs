@@ -22,8 +22,10 @@ import { idleReviewModel } from './fixtures/idle-review-model.mjs'
 import { reviewLayersModel } from './fixtures/review-layers-model.mjs'
 import { strictTemplateModel } from './fixtures/strict-template-model.mjs'
 import { generalStrategyModel } from './fixtures/general-strategy-model.mjs'
+import { exactIdModel } from './fixtures/exact-id-model.mjs'
 import { saveActionModel } from './fixtures/save-action-model.mjs'
 import { DOCS_DEMO_LANGUAGES, docsDemoAssistant, docsDemoModel, seedDocsDemo } from './fixtures/docs-demo.mjs'
+import { archiveCopiesLimitBytes, archiveCopiesPending, seedArchiveCopies, slowEmbeddingServer } from './fixtures/archive-copies.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const flags = new Set(process.argv.slice(2))
@@ -48,6 +50,8 @@ for (const flag of flags) {
   if (flag === '--review-layers') continue
   if (flag === '--strict-template') continue
   if (flag === '--general-strategy') continue
+  if (flag === '--exact-id') continue
+  if (flag === '--archive-copies') continue
   if (flag === '--save-action') continue
   if (flag === '--without-mnemon-cli') continue
   if (flag === '--remote-management') continue
@@ -108,6 +112,10 @@ const archiveProvider = runtimeArchive ? createServer(async (request, response) 
   response.end(JSON.stringify(value))
 }) : undefined
 if (archiveProvider) await new Promise(resolveListen => archiveProvider.listen(0, '127.0.0.1', resolveListen))
+// Issue #339: an embedding service slower than the Mnemon CLI's default 10 s timeout.
+const embeddingDelayMs = Number(process.env.MNEMON_E2E_EMBEDDING_DELAY_MS ?? 12_000)
+const slowEmbedder = flags.has('--archive-copies') ? slowEmbeddingServer({ delayMs: embeddingDelayMs, report: event => console.log('Archive copies: ' + JSON.stringify(event)) }) : undefined
+if (slowEmbedder) await new Promise(resolveListen => slowEmbedder.listen(0, '127.0.0.1', resolveListen))
 const protectionModel = flags.has('--document-protection') ? documentProtectionModel(event => console.log('Document protection: ' + JSON.stringify(event))) : undefined
 const reviewModel = flags.has('--review-evidence') ? reviewEvidenceModel(event => console.log('Review evidence: ' + JSON.stringify(event))) : undefined
 const scriptedModel = liveModel ? undefined : flags.has('--runtime-routing') ? runtimeRoutingModel(event => console.log('Runtime routing: ' + JSON.stringify(event)))
@@ -116,6 +124,7 @@ const scriptedModel = liveModel ? undefined : flags.has('--runtime-routing') ? r
   : flags.has('--review-layers') ? reviewLayersModel(event => console.log('Review layers: ' + JSON.stringify(event)))
   : flags.has('--strict-template') ? strictTemplateModel(event => console.log('Strict template: ' + JSON.stringify(event)))
   : flags.has('--general-strategy') ? generalStrategyModel(event => console.log('General strategy: ' + JSON.stringify(event)))
+  : flags.has('--exact-id') ? exactIdModel(event => console.log('Exact id: ' + JSON.stringify(event)))
   : flags.has('--save-action') ? saveActionModel(event => console.log('Save action: ' + JSON.stringify(event)))
   : flags.has('--runtime-write-scope') ? runtimeWriteScopeModel(event => console.log('Runtime write scope: ' + JSON.stringify(event)))
   : flags.has('--result-tool-cache') ? resultToolCacheModel(event => console.log('Result tool cache: ' + JSON.stringify(event)))
@@ -232,6 +241,10 @@ async function stop() {
     archiveProvider.closeAllConnections()
     await new Promise(resolveClose => archiveProvider.close(resolveClose))
   }
+  if (slowEmbedder) {
+    slowEmbedder.closeAllConnections()
+    await new Promise(resolveClose => slowEmbedder.close(resolveClose))
+  }
   await rm(fixture, { recursive: true, force: true })
   console.log('Removed disposable WebUI fixture: ' + fixture)
 }
@@ -292,11 +305,17 @@ try {
     // An explicit cliPath is authoritative, so a missing file hides any installed Mnemon CLI.
     + (flags.has('--without-mnemon-cli') ? '- id: mnemon\n  config:\n    cliPath: ' + JSON.stringify(join(fixture, 'no-mnemon-cli', 'mnemon')) + '\n' : '')
     + (flags.has('--remote-management') ? '- id: mnemon\n  config:\n    remoteAccess: trusted-host\n' : '')
+    + (slowEmbedder === undefined ? '' : `- id: mnemon\n  config:\n    runtimeMemory:\n      memoryLimitBytes: ${archiveCopiesLimitBytes}\n    embedding:\n      enabled: true\n      endpoint: http://127.0.0.1:${slowEmbedder.address().port}/v1\n      model: fixture-embed\n      protocol: openai\n`)
     + (flags.has('--general-strategy') ? '- id: mnemon-strategy-general\n  disabled: false\n- id: mnemon-strategy-default-three-tier\n  disabled: true\n- id: mnemon\n  config:\n    memoryView:\n      strategyTypeId: general\n' : '')
     + (flags.has('--runtime-write-scope') ? '- id: mnemon\n  config:\n    persistenceStrategy:\n      mode: manual\n      providerId: mnemon-native\n    runtimeMemory:\n      memoryLimitBytes: 512\n' : '')
     + (reviewModel === undefined ? '' : '- insert:\n    - id: review-evidence-fixture\n      name: ' + JSON.stringify(reviewFixture) + '\n')
     + (extensionsEnabled ? extensionNames.map(name => `- id: ${name.slice(4)}\n  disabled: false\n`).join('') : ''))
   await writeFile(join(workspace, 'README.md'), '# Mnemon isolated browser test\n\nNo production memory or credentials are used.\n')
+  if (slowEmbedder !== undefined) {
+    const memoryBodyId = await seedArchiveCopies({ dataDir, workspace })
+    console.log(`Archive copies seeded: working memory is full and Memory Space ${memoryBodyId} holds an exact copy of each entry; embeddings answer after ${embeddingDelayMs} ms.`)
+    console.log('Add this working-memory entry on the Runtime Memory page: ' + archiveCopiesPending)
+  }
   if (docsDemo !== undefined) {
     await seedDocsDemo({ dataDir, workspace, language: docsDemo })
     console.log('Docs demo seeded (' + docsDemo + ')' + (liveModel ? '.' : '; ask about checkout, then ask to remember a new target.'))

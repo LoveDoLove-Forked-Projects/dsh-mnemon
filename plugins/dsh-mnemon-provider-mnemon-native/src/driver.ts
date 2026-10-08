@@ -204,9 +204,11 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
 
   async search(body: MemorySpace, request: SearchRequest, signal?: AbortSignal): Promise<ProviderSearchResult> {
     const mode = request.mode ?? 'smart'
+    // An inspection reads a snapshot: no access counts, no row in the store's operation log.
+    const readonly = request.inspect === true ? ['--readonly'] : []
     const args = mode === 'keyword'
-      ? ['search', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
-      : ['recall', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
+      ? [...readonly, 'search', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
+      : [...readonly, 'recall', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
     if (mode === 'basic') args.push('--basic')
     if (mode !== 'keyword') {
       if (request.category !== undefined) args.push('--cat', request.category)
@@ -240,18 +242,42 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
     // and import the remaining originals without semantic replacement.
     const existing = new Map((await this.allNativeInsights(body, signal, true)).map(entry => [entry.content, entry]))
     const ordered = new Array<JsonValue>(requests.length)
-    const pending = new Map<string, { request: RememberRequest; indexes: number[] }>()
+    const reused = new Set<number>()
+    let pending = new Map<string, { request: RememberRequest; indexes: number[] }>()
+    const queue = (index: number) => {
+      const request = requests[index]!
+      const group = pending.get(request.content)
+      if (group === undefined) pending.set(request.content, { request, indexes: [index] })
+      else group.indexes.push(index)
+    }
     for (const [index, request] of requests.entries()) {
       const exact = existing.get(request.content)
-      if (exact !== undefined) ordered[index] = { action: 'skipped', id: exact.id, content: exact.content }
+      if (exact === undefined) queue(index)
       else {
-        const group = pending.get(request.content)
-        if (group === undefined) pending.set(request.content, { request, indexes: [index] })
-        else group.indexes.push(index)
+        ordered[index] = { action: 'skipped', id: exact.id, content: exact.content }
+        reused.add(index)
       }
     }
-    const batch = [...pending.values()]
-    if (batch.length === 0) return ordered
+    while (pending.size > 0) {
+      const pruned = await this.importExact(body, [...pending.values()], ordered, signal)
+      // At its capacity Mnemon prunes its weakest memories after an import, and a
+      // copy reused above can be one of them. Import that entry again rather than
+      // name a copy that is gone (#339). Each round only takes reused entries, so
+      // it ends.
+      pending = new Map()
+      for (const index of reused) {
+        const id = record(ordered[index])?.id
+        if (typeof id === 'string' && pruned.has(id)) {
+          reused.delete(index)
+          queue(index)
+        }
+      }
+    }
+    return ordered
+  }
+
+  /** Import entries as written, record their receipts and return what Mnemon pruned after it. */
+  private async importExact(body: MemorySpace, batch: ReadonlyArray<{ request: RememberRequest; indexes: number[] }>, ordered: JsonValue[], signal?: AbortSignal): Promise<Set<string>> {
     const temporary = mkdtempSync(join(tmpdir(), 'dsh-mnemon-runtime-archive-'))
     const draftPath = join(temporary, 'memory-draft.json')
     try {
@@ -296,9 +322,20 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
           ordered[originalIndex] = offset === 0 ? row : { ...row, action: 'skipped' }
         }
       }
-      return ordered
+      return new Set(stringArray(summary?.auto_pruned_ids) ?? [])
     } finally {
       rmSync(temporary, { recursive: true, force: true })
+    }
+  }
+
+  /** One stored memory by exact id, read from a snapshot without touching access counts or the log. */
+  async get(body: MemorySpace, id: string, signal?: AbortSignal): Promise<Insight | undefined> {
+    try {
+      return normalizeInsight(await this.runner.runJson(['--readonly', 'show', id], { ...(signal === undefined ? {} : { signal }), store: body.id }))
+    } catch (error) {
+      // `mnemon show` exits 1 with SQL's "no rows" for an id the store does not hold, or has forgotten.
+      if (error instanceof Error && /no rows in result set/u.test(error.message)) return undefined
+      throw error
     }
   }
 

@@ -275,8 +275,12 @@ describe('Mnemon CLI output caps and failure messages', () => {
       messages.push(await runner.runJson(['status']).then(() => '', (error: Error) => error.message))
     }
     expect(messages[0]).toMatch(/^mnemon launch detail\. Install/u)
-    expect(messages[1]).toBe('mnemon timeout detail')
+    // A timeout names the command that ran out of time.
+    expect(messages[1]).toBe('mnemon status timeout detail')
     expect(messages[2]).toBe('mnemon aborted detail')
+    const slow = vi.fn<ProcessRunner>(async () => { throw new ProcessError('mnemon did not respond within 10000ms', 'timeout') })
+    await expect(fixture(slow).runner.runJson(['import', '/tmp/draft.json', '--no-diff'], { store: 'work' }))
+      .rejects.toThrow(/^mnemon import did not respond within 10000ms$/u)
     // A custom process runner without failure reasons still gets the hint, as before.
     const plain = vi.fn<ProcessRunner>(async () => { throw new Error('spawn mnemon ENOENT') })
     await expect(fixture(plain).runner.runJson(['status'])).rejects.toThrow(/^spawn mnemon ENOENT\. Install/u)

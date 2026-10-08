@@ -154,6 +154,10 @@ Runtime 写入范围回归使用 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm 
 
 `pnpm e2e:serve --general-strategy` 启动时已选中通用策略，并停用分层策略。先发送 `general-strategy-check remember`，下一回合再发送 `general-strategy-check recall`。脚本模型检查系统提示中包含通用记忆协议，且 Runtime、项目档案和记忆空间三个 Source 均已接入；随后通过具名 Runtime 工具保存一条事实，并且只有当这条事实以常驻记忆投影出现时，第二回合才答出它。夹具以 `General strategy:` 行输出每项检查。只有模型决策是脚本化的；策略、其 View、Runtime 写入和浏览器均为真实运行。
 
+`MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --exact-id` 用于检查按精确 id 遗忘（[#337](https://github.com/omdsh-dev/dsh-mnemon/issues/337)）。在 Mnemon E2E 对话中依次运行 `/mnemon remember <内容>`、用 `/mnemon recall <关键词>` 读到它的 id，再运行 `/mnemon forget <ID>`。脚本化的工作 Agent 写入收到的内容、遗忘收到的精确 id，各自在自己的 View 中运行；夹具以 `Exact id:` 行输出每一步。修复后这条记忆会被软删除；没有修复的构建会报告遗忘需要 View 已接纳的证据。只有工作 Agent 的决策是脚本化的；命令、工具和 Native 存储都是真实运行。见[双语复现与证据](../../pr-assets/issue-337-exact-id-actions/README.zh-CN.md)。
+
+`MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --archive-copies` 用于复现 [#339](https://github.com/omdsh-dev/dsh-mnemon/issues/339)。Host 启动前，它把工作记忆写到接近 640 字节的上限，并把每个条目逐字写入一个 Native 记忆空间，就像此前一次失败的归档留下的那样。嵌入请求发往本机一个 12 秒后才响应的服务（可用 `MNEMON_E2E_EMBEDDING_DELAY_MS` 调整），比 CLI 默认的 10 秒超时更长。在运行时记忆页面添加夹具输出的那一条。修复后，Host 不经检索即可归档并添加；没有修复的构建会为每个副本检索，第一次检索超时，归档随之失败。夹具以 `Archive copies:` 行输出每次嵌入请求。见[双语复现与证据](../../pr-assets/issue-339-archive-receipt-evidence/README.zh-CN.md)。
+
 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --save-action` 用于检查**存入记忆**（[#342](https://github.com/omdsh-dev/dsh-mnemon/issues/342)）。每轮对话都会收到一条值得保存的回复。点击其下的**存入记忆**并提交候选内容，再修改已有回执的候选内容后再次提交。脚本化的任务 Agent 先读取记忆空间目录，没有空间时创建一个 Native 空间，写入收到的候选内容并汇报 Provider 回执；夹具以 `Save action:` 行输出每一步。两次提交都会写入，原样再次提交则返回第一次的回执。只有模型决策是脚本化的；对话框、任务 Agent 的工具与 Native 写入均为真实运行。见[双语复现与证据](../../pr-assets/issue-342-edited-save/README.zh-CN.md)。
 
 `pnpm e2e:serve --without-mnemon-cli` 把 `cliPath` 指向不存在的文件，即使 PATH 中有 Mnemon CLI，Host 也按未安装处理。用它确认：状态页不显示 Mnemon Native 卡片，版本对话框把 CLI 列为可选，插件页停用向量测试，新建记忆空间从已就绪的 Provider 开始。先连接一个 Provider，例如在“插件 → 可组合记忆”页面中连接 Provider Lab 的服务。

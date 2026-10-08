@@ -23,7 +23,8 @@ export function memorySpacesPageClient(management: MnemonSourceManagementClient)
     entities: (entity, limit) => client.read('entities', input({ entity, limit })),
     entityMemories: (entity, offset, limit) => client.read('entity-memories', input({ entity, offset, limit })),
     entityRelated: (entity, limit, view) => client.read('entity-related', input({ entity, limit, view })),
-    search: request => client.read('search', input(request)),
+    // The page's own searches look at memory; Ask Agent below uses it.
+    search: request => client.read('search', input({ ...request, inspect: true })),
     related: (id, memoryBodyId) => client.read('related', input({ id, memoryBodyId })),
     reconnectBody: memoryBodyId => client.read('body-reconnect', { memoryBodyId }),
     remember: request => client.mutate('remember', input(request), true),
