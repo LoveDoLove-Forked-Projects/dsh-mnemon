@@ -578,6 +578,13 @@ describe('RuntimeMemoryController', () => {
     await expect(compact()).rejects.toThrow('Runtime Memory archive is not a directory')
     expect(readdirSync(outside)).toEqual(['profile'])
     expect(controller.snapshot().entries).toEqual(before.entries)
+    // So is a directory at either file, before the other file is written.
+    rmSync(archive)
+    mkdirSync(join(archive, 'MEMORY.md'), { recursive: true })
+    await expect(compact()).rejects.toThrow('Runtime Memory archive file is not a regular file')
+    expect(existsSync(join(archive, 'memories.jsonl'))).toBe(false)
+    expect(controller.snapshot().entries).toEqual(before.entries)
+    expect(plan.localArchive).toBe(true)
   })
 
   it('archives nothing locally unless asked, and never for USER.md', async () => {

@@ -538,6 +538,7 @@ ${memory || '(empty)'}
         projected,
         limit,
         requiresMaintenance: prepared.changed && projected > limit,
+        localArchive: true as const,
       }
     }))
     this.queue = operation.catch(() => undefined)
@@ -612,6 +613,12 @@ ${memory || '(empty)'}
     // The data directory can sit in a workspace: an archive never follows a link out of it.
     const stat = lstatSync(directory)
     if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Runtime Memory archive is not a directory: ${directory}`)
+    // Refuse a link or a directory at either file before writing to the other.
+    for (const path of [this.archiveSourcePath, this.archivePath]) {
+      let file
+      try { file = lstatSync(path) } catch { continue }
+      if (!file.isFile()) throw new Error(`Runtime Memory archive file is not a regular file: ${path}`)
+    }
     appendWithoutLinks(this.archiveSourcePath, entries.map(entry => `${JSON.stringify({ archivedAt, fromRevision, ...entry })}\n`).join(''))
     const header = existsSync(this.archivePath) ? '' : '# MEMORY.md archive\n\nEntries that left MEMORY.md at its limit while no Memory Space could take them, oldest first.\n'
     appendWithoutLinks(this.archivePath, `${header}\n## ${archivedAt}\n\n${entries.map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER)}\n`)

@@ -332,6 +332,7 @@ function maintenancePlan(
     projected: target === 'memory' ? 10_300 : 4_180,
     limit: target === 'memory' ? 10_240 : 4_096,
     requiresMaintenance: true,
+    localArchive: true,
   }
 }
 
@@ -2054,6 +2055,54 @@ describe('Mnemon memory subagent coordinator', () => {
     expect(host.start).not.toHaveBeenCalled()
     expect(memoryService.rememberMany).not.toHaveBeenCalled()
     expect(memoryService.remember).not.toHaveBeenCalled()
+  })
+
+  it('refuses rather than archive locally through a Runtime Source that cannot (issue 336)', async () => {
+    // A Runtime Source from before the local archive plans without saying it can keep what compaction leaves out.
+    const { localArchive: _localArchive, ...plan } = maintenancePlan()
+    const runtime = {
+      mutate: vi.fn().mockRejectedValueOnce(capacityError('memory', plan.used, plan.projected, plan.limit)),
+      planMaintenance: vi.fn(async () => plan),
+      compactAndMutate: vi.fn(),
+    } as unknown as RuntimeOperations
+    const memoryService = service()
+    vi.mocked(memoryService.bodyDirectory).mockReturnValue({ ...memoryService.bodyDirectory(), items: [], total: 0, activeCount: 0 })
+    const coordinator = new MnemonSubagentCoordinator(subagents(undefined).value, runtimeSource(runtime, memoryService) as never, toolRegistry().value)
+    await expect(coordinator.runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
+      .rejects.toThrow('this Runtime Source cannot archive locally; pending write was not committed and existing runtime entries are unchanged')
+    expect(runtime.compactAndMutate).not.toHaveBeenCalled()
+  })
+
+  it('refuses rather than archive locally while another Memory Spaces Source could take the archive (issue 336)', async () => {
+    const plan = maintenancePlan()
+    const runtime = {
+      mutate: vi.fn().mockRejectedValueOnce(capacityError('memory', plan.used, plan.projected, plan.limit)),
+      planMaintenance: vi.fn(async () => plan),
+      compactAndMutate: vi.fn(),
+    } as unknown as RuntimeOperations
+    // The default Memory Spaces Source has no space; another one has a space that could take the archive.
+    const empty = service()
+    vi.mocked(empty.bodyDirectory).mockReturnValue({ ...empty.bodyDirectory(), items: [], total: 0, activeCount: 0 })
+    const source = runtimeSource(runtime, empty)
+    const graph = source.forAgent(parent())
+    const own = graph.source('memory-spaces', {} as never)
+    const other = runtimeSource(runtime, service()).forAgent(parent()).source('memory-spaces', {} as never)
+    const extraKey = 'source:extra:mnemon-source-memory-spaces'
+    const generation = { strategy: { definition: { manifest: { typeId: graph.config.memoryTopology.strategyId } } }, sourceInstances: () => [
+      { sourceInstanceKey: 'source:mnemon-source-memory-spaces', sourceTypeId: 'memory-spaces' },
+      { sourceInstanceKey: extraKey, sourceTypeId: 'memory-spaces' },
+    ] }
+    const original = graph.source.bind(graph)
+    const spaces = { ...own, forGeneration() { return this }, forInstance: (key: string) => key === extraKey ? other : spaces }
+    Object.assign(graph, {
+      memoryComposition: { acquire: () => ({ generation, release: () => {} }) },
+      source: (type: string, scope?: never) => type === 'memory-spaces' ? spaces : original(type, scope),
+    })
+    vi.mocked(source.forAgent).mockReturnValue(graph)
+    await expect(new MnemonSubagentCoordinator(subagents(undefined).value, source as never, toolRegistry().value)
+      .runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
+      .rejects.toThrow('runtime memory archival requires an existing active writable Memory Space')
+    expect(runtime.compactAndMutate).not.toHaveBeenCalled()
   })
 
   it.each(['async-extracting', 'no-forget'])('never archives into an unsafe destination; archives locally instead (issues 240, 336): %s', async capability => {

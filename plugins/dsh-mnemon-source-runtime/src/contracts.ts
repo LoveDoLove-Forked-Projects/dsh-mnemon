@@ -80,6 +80,8 @@ export interface RuntimeMemoryMaintenancePlan {
   projected: number
   limit: number
   requiresMaintenance: boolean
+  /** This Runtime Source moves the entries compaction leaves out to its local archive when asked (#336). */
+  localArchive?: true
 }
 
 import { DEFAULT_RUNTIME_MEMORY_LIMIT_BYTES, DEFAULT_RUNTIME_USER_LIMIT_BYTES } from './defaults.ts'
