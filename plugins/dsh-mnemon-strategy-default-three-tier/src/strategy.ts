@@ -1,7 +1,7 @@
 import { defineMemoryStrategy, type MemorySourceFacts } from 'dsh-mnemon/extension-sdk'
 import { COMPOSABLE_MEMORY_API_VERSION, type MemoryAvailableSource, type MemoryViewRequest, type MemoryViewSpec } from 'dsh-mnemon/contracts'
 import { createThreeTierTurn } from './retrieval.ts'
-import { BOUNDED_RUNTIME_MEMORY_PROTOCOL, LOCAL_ARCHIVE_RUNTIME_MEMORY_PROTOCOL, ROUTING_GUIDANCE, SCOPED_RUNTIME_MEMORY_PROTOCOL, THREE_TIER_REMINDERS } from './guidance.ts'
+import { boundedRuntimeMemoryProtocol, ROUTING_GUIDANCE, ROUTING_GUIDANCE_WITHOUT_RECALL, SCOPED_RUNTIME_MEMORY_PROTOCOL, THREE_TIER_REMINDERS, THREE_TIER_REMINDERS_WITHOUT_RECALL } from './guidance.ts'
 import { threeTierContributions, type ThreeTierExtensionValues } from './extension-sdk.ts'
 
 const VIEW_ROLES = ['working-context', 'narrative', 'durable-evidence'] as const
@@ -54,9 +54,14 @@ function composeThreeTier(request: MemoryViewRequest, sources: readonly MemorySo
     const runtime = soleSource(sources, 'working-context')
     const documents = soleSource(sources, 'narrative')
     const memorySpaces = soleSource(sources, 'durable-evidence')
-    // Memory Spaces with no space to read, or no Provider, offer no recall: the
-    // guidance then names neither mnemon_recall nor archiving into them (#336).
-    const durable = memorySpaces?.sourceTypeId === 'memory-spaces' && memorySpaces.routeIds.includes('recall')
+    const durable = memorySpaces?.sourceTypeId === 'memory-spaces'
+    // The guidance names mnemon_recall only while Memory Spaces offer recall, and
+    // archiving into them only while one takes writes here (#336). Both follow the
+    // View's facts, after the layer's participation settings.
+    const recall = durable && memorySpaces.routeIds.includes('recall')
+    const hints = memorySpaces?.hints
+    const activeCount = hints !== null && typeof hints === 'object' && !Array.isArray(hints) ? hints['activeCount'] : undefined
+    const archive = durable && memorySpaces.actionIds.includes('remember') && (typeof activeCount !== 'number' || activeCount > 0)
     const classicSources = runtime?.sourceTypeId === 'runtime' && documents?.sourceTypeId === 'documents' && durable
     const selected = [runtime, documents, memorySpaces].filter((source): source is MemorySourceFacts => source !== undefined)
     const projectionBudget = request.budget.maxProjectionCharacters
@@ -72,8 +77,8 @@ function composeThreeTier(request: MemoryViewRequest, sources: readonly MemorySo
     return {
       strategyTypeId: 'default-three-tier',
       guidance: {
-        ...(classicSources ? { routing: ROUTING_GUIDANCE, reminders: THREE_TIER_REMINDERS } : {}),
-        ...(runtime?.sourceTypeId === 'runtime' && runtime.capabilities.includes('project') ? { system: durable ? BOUNDED_RUNTIME_MEMORY_PROTOCOL : LOCAL_ARCHIVE_RUNTIME_MEMORY_PROTOCOL } : {}),
+        ...(classicSources ? recall ? { routing: ROUTING_GUIDANCE, reminders: THREE_TIER_REMINDERS } : { routing: ROUTING_GUIDANCE_WITHOUT_RECALL, reminders: THREE_TIER_REMINDERS_WITHOUT_RECALL } : {}),
+        ...(runtime?.sourceTypeId === 'runtime' && runtime.capabilities.includes('project') ? { system: boundedRuntimeMemoryProtocol({ recall, archive }) } : {}),
       },
       sources: selected.map(source => ({
         sourceInstanceKey: source.sourceInstanceKey,
