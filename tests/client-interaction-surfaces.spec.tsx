@@ -369,6 +369,198 @@ describe('conversation interaction surfaces', () => {
     unsubscribe()
   })
 
+  // A status with Runtime Memory, Project Documents and Memory Spaces on, running and taking writes, unless a test says otherwise.
+  const memorySystem = (overrides: { layers?: Record<string, unknown>; sources?: string[] } = {}) => ({
+    serving: true,
+    sources: (overrides.sources ?? ['runtime', 'documents', 'memory-spaces']).map(type => ({ sourceInstanceKey: `source:mnemon-source-${type}`, sourceTypeId: type, revision: 'r1' })),
+    configuration: { layers: {
+      runtime: { enabled: true, participation: { write: 'automatic' } },
+      'memory-spaces': { enabled: true, participation: { write: 'automatic' } },
+      ...overrides.layers,
+    } },
+  })
+  const lumen = { id: 'lumen', name: 'Lumen project', active: true, providerEnabled: true, provider: { id: 'holographic', label: 'Holographic', capabilities: { remember: true } } }
+  const runtimeCatalog = (revision = 'r1') => ({ ok: true as const, value: { generationId: 'g1', sources: [
+    // Another Runtime instance comes first; the dialog writes to the default one, as the workbench does.
+    { sourceInstanceKey: 'source:extra:runtime-copy', sourceTypeId: 'runtime', revision: 'x1' },
+    { sourceInstanceKey: 'source:mnemon-source-runtime', sourceTypeId: 'runtime', revision, assistance: ['mutate'] },
+    { sourceInstanceKey: 'source:mnemon-source-memory-spaces', sourceTypeId: 'memory-spaces', revision: 's1' },
+  ] } })
+  const emptyRuntime = { ok: true as const, value: { revision: 'r1', value: { targets: { memory: { used: 0, limit: 10_240 }, user: { used: 0, limit: 4_096 } } } } }
+  const openSaveAction = (rpcCall: (...args: never[]) => unknown) => {
+    render(<MnemonSaveAction messageId="message-1" sessionId="session-a" connection={{ rpc: { call: rpcCall }, isLoopback: true } as unknown as ClientConnectionHandle} settingsScope={writableSettingsScope} localeRuntime={localeRuntime} t={translate as never} />)
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.button' }))
+  }
+  const choose = (label: RegExp) => {
+    fireEvent.click(screen.getByRole('button', { name: /saveAction\.to/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: label }))
+  }
+
+  it('starts on working memory when the task Agent has no Memory Space to write to, through the Runtime page\'s own path', async () => {
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, providerServices: [], memoryBodies: [], lifecycle: { taskAgentAvailable: true }, memorySystem: memorySystem() } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'Release  gates close\nat 18:00.' } }
+      if (endpoint === 'source-management-read') return emptyRuntime
+      if (endpoint === 'source-management-catalog') return runtimeCatalog()
+      if (endpoint === 'source-assistance') return { ok: true as const, value: { revision: 'r2', value: { success: true, message: 'Entry added.', target: 'memory', entryCount: 1 } } }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    const received: Array<{ page: string; seed?: string }> = []
+    const unsubscribe = subscribeMnemonAnchor('session-a', anchor => received.push({ page: anchor.page, ...(anchor.seed === undefined ? {} : { seed: anchor.seed }) }))
+    openSaveAction(rpcCall)
+    const save = await screen.findByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+    // The task Agent is there, but it has no Memory Space and no Provider to make one.
+    expect(screen.queryByText('taskAgent.ready')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /saveAction\.to/ }))
+    expect((screen.getByRole('menuitem', { name: /saveAction\.to\.agent/ }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'saveAction.to.memory' }))
+    await waitFor(() => expect(save.disabled).toBe(false))
+    fireEvent.click(save)
+    await screen.findByText('receipt.written')
+    expect(rpcCall).toHaveBeenCalledWith(expect.anything(), 'source-assistance', expect.objectContaining({
+      sourceInstanceKey: 'source:mnemon-source-runtime', operation: 'mutate', expectedRevision: 'r1', confirmed: true,
+      input: { action: 'add', target: 'memory', content: 'Release  gates close\nat 18:00.' },
+    }))
+    expect(rpcCall.mock.calls.filter(call => call[1] === 'source-management-mutate' || call[1] === 'supervise')).toHaveLength(0)
+    // The receipt opens Runtime Memory on the entry, which Runtime Memory keeps as one line.
+    fireEvent.click(screen.getByRole('button', { name: 'receipt.viewRuntime' }))
+    expect(received).toEqual([{ page: 'runtime/entries', seed: 'Release gates close at 18:00.' }])
+    unsubscribe()
+  })
+
+  it('lists a place only while its layer is on, its Source runs and it takes writes', async () => {
+    const dormant = { ...lumen, id: 'dormant', name: 'Dormant space', active: false }
+    const cases: Array<{ system: ReturnType<typeof memorySystem>; taskAgent: boolean; places: string[] }> = [
+      { system: memorySystem(), taskAgent: true, places: ['agent', 'memory', 'user', 'Lumen project'] },
+      // Runtime Memory switched off by its old layer flag, or its component stopped.
+      { system: memorySystem({ layers: { runtime: { enabled: false, participation: { write: 'automatic' } } } }), taskAgent: true, places: ['agent', 'Lumen project'] },
+      { system: memorySystem({ sources: ['documents', 'memory-spaces'] }), taskAgent: true, places: ['agent', 'Lumen project'] },
+      // Memory Spaces taking no writes, or stopped: no space, and nothing for the task Agent to write to.
+      { system: memorySystem({ layers: { 'memory-spaces': { enabled: true, participation: { write: 'off' } } } }), taskAgent: true, places: ['agent (closed)', 'memory', 'user'] },
+      { system: memorySystem({ sources: ['runtime', 'documents'] }), taskAgent: true, places: ['agent (closed)', 'memory', 'user'] },
+    ]
+    for (const { system, taskAgent, places } of cases) {
+      const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+        if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: true, memoryBodies: [lumen, dormant], lifecycle: { taskAgentAvailable: taskAgent }, memorySystem: system } }
+        if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'A durable project decision.' } }
+        if (endpoint === 'source-management-read') return emptyRuntime
+        throw new Error(`unexpected endpoint: ${endpoint}`)
+      })
+      openSaveAction(rpcCall)
+      await screen.findByRole('button', { name: /saveAction\.to/ })
+      fireEvent.click(screen.getByRole('button', { name: /saveAction\.to/ }))
+      const listed = screen.getAllByRole('menuitem').map(item => {
+        const text = item.textContent ?? ''
+        const name = text.startsWith('saveAction.to.agent') ? 'agent' : text.startsWith('saveAction.to.memory') ? 'memory' : text.startsWith('saveAction.to.user') ? 'user' : text.replace('saveAction.to.space', '')
+        return (item as HTMLButtonElement).disabled ? `${name} (closed)` : name
+      })
+      expect(listed).toEqual(places)
+      cleanup()
+    }
+  })
+
+  it('keeps sending closed while no place can take the text', async () => {
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, memoryBodies: [], lifecycle: { taskAgentAvailable: false }, memorySystem: memorySystem({ sources: ['documents', 'memory-spaces'] }) } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'A durable project decision.' } }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    openSaveAction(rpcCall)
+    await screen.findByText('taskAgent.unavailable')
+    expect((screen.getByRole('button', { name: 'saveAction.submit' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('dialog', { name: 'saveAction.title' }).textContent).toContain('saveAction.hint')
+  })
+
+  it('names a queued Provider write as submitted, and a duplicate entry as skipped', async () => {
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: true, memoryBodies: [lumen], lifecycle: { taskAgentAvailable: true }, memorySystem: memorySystem() } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'Checkout loads the payment SDK after interaction.' } }
+      if (endpoint === 'source-management-read') return emptyRuntime
+      if (endpoint === 'source-management-catalog') return runtimeCatalog()
+      if (endpoint === 'source-management-mutate') return { ok: true as const, value: { revision: 's2', value: { action: 'queued', operationId: 'op-1', memoryBodyId: 'lumen' } } }
+      if (endpoint === 'source-assistance') return { ok: true as const, value: { revision: 'r1', value: { success: true, message: 'Entry already exists; no duplicate added.', target: 'memory', entryCount: 3 } } }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    openSaveAction(rpcCall)
+    await screen.findByText('taskAgent.ready')
+    choose(/^Lumen project/)
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.save' }))
+    // Mem0, Supermemory and Hindsight queue their writes and confirm them later.
+    await screen.findByText('receipt.pending')
+    expect(screen.getByText('saveAction.saved.spacePending')).toBeTruthy()
+    choose(/^saveAction\.to\.memory/)
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.save' }))
+    await screen.findByText('receipt.skipped')
+    expect(screen.getByText('saveAction.saved.duplicate')).toBeTruthy()
+  })
+
+  it('says before saving when working memory cannot take the text, or will make room first', async () => {
+    let taskAgent = true
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, memoryBodies: [], lifecycle: { taskAgentAvailable: taskAgent }, memorySystem: memorySystem() } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'Release gates close at 18:00.' } }
+      if (endpoint === 'source-management-read') return { ok: true as const, value: { revision: 'r1', value: { targets: { memory: { used: 10_230, limit: 10_240 }, user: { used: 4_090, limit: 4_096 } } } } }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    openSaveAction(rpcCall)
+    const save = await screen.findByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement
+    // Full: it still saves, after making room.
+    await screen.findByText('saveAction.place.full')
+    expect(save.disabled).toBe(false)
+    const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+    fireEvent.change(textarea, { target: { value: 'Two entries § in one' } })
+    await screen.findByText('saveAction.place.delimiter')
+    expect(save.disabled).toBe(true)
+    fireEvent.change(textarea, { target: { value: 'x'.repeat(8 * 1024 + 1) } })
+    await screen.findByText('saveAction.place.tooLong')
+    expect(save.disabled).toBe(true)
+    cleanup()
+    // A full user profile makes room only through a task Agent.
+    taskAgent = false
+    openSaveAction(rpcCall)
+    await screen.findByRole('button', { name: 'saveAction.save' })
+    choose(/^saveAction\.to\.user/)
+    await screen.findByText('saveAction.place.userFull')
+    expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('reads a fresh revision for every save, and keeps a direct save\'s receipt when the dialog closes meanwhile', async () => {
+    let catalogs = 0
+    const writes: Array<ReturnType<typeof deferred<{ ok: true; value: { revision: string; value: Record<string, unknown> } }>>> = []
+    const rpcCall = vi.fn(async (_channel: string, endpoint: string, _input?: unknown) => {
+      if (endpoint === 'status') return { ok: true as const, value: { writeEnabled: true, commandFound: false, memoryBodies: [], lifecycle: { taskAgentAvailable: false }, memorySystem: memorySystem() } }
+      if (endpoint === 'assistant-message') return { ok: true as const, value: { messageId: 'message-1', text: 'Release gates close at 18:00.' } }
+      if (endpoint === 'source-management-read') return emptyRuntime
+      if (endpoint === 'source-management-catalog') return runtimeCatalog(`r${++catalogs}`)
+      if (endpoint === 'source-assistance') { const write = deferred<{ ok: true; value: { revision: string; value: Record<string, unknown> } }>(); writes.push(write); return write.promise }
+      throw new Error(`unexpected endpoint: ${endpoint}`)
+    })
+    openSaveAction(rpcCall)
+    fireEvent.click(await screen.findByRole('button', { name: 'saveAction.save' }))
+    await waitFor(() => expect(writes).toHaveLength(1))
+    // Closed and opened again while the write runs: the dialog still shows it, on its place.
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.close' }))
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.button' }))
+    expect((await screen.findByRole('button', { name: 'saveAction.saving' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('button', { name: /saveAction\.to/ }).textContent).toContain('saveAction.to.memory')
+    await act(async () => { writes[0]!.resolve({ ok: true, value: { revision: 'r9', value: { success: true, message: 'Entry added.', target: 'memory', entryCount: 1 } } }) })
+    await screen.findByText('receipt.written')
+    expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true)
+    // A second place reads the catalog again.
+    choose(/^saveAction\.to\.user/)
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.save' }))
+    await waitFor(() => expect(writes).toHaveLength(2))
+    expect(rpcCall.mock.calls.filter(call => call[1] === 'source-assistance').map(call => (call[2] as { expectedRevision: string }).expectedRevision)).toEqual(['r1', 'r2'])
+    // Closed while it runs and opened after it ends: its receipt is there, and the same text cannot go twice.
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.close' }))
+    await act(async () => { writes[1]!.resolve({ ok: true, value: { revision: 'r10', value: { success: true, message: 'Entry added.', target: 'user', entryCount: 1 } } }) })
+    fireEvent.click(screen.getByRole('button', { name: 'saveAction.button' }))
+    await screen.findByText('receipt.written')
+    expect(screen.getByRole('button', { name: /saveAction\.to/ }).textContent).toContain('saveAction.to.user')
+    await waitFor(() => expect((screen.getByRole('button', { name: 'saveAction.save' }) as HTMLButtonElement).disabled).toBe(true))
+    expect(writes).toHaveLength(2)
+  })
+
   it('opens a centered modal and prevents a second supervised write while it is closed', async () => {
     const status = deferred<{ ok: true; value: { writeEnabled: boolean } }>()
     const supervision = deferred<{ ok: true; value: { summary: string; action: string } }>()

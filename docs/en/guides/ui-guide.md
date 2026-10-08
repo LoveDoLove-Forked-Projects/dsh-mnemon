@@ -47,7 +47,8 @@ Each finished reply has a brain-shaped **Save to memory** in its action strip, t
 - **Candidate (editable)** starts with the whole reply; usually you keep only the sentence worth remembering. **Cancel** changes nothing.
 - **Save to** picks where it goes:
   - **Let the Agent decide** is the default while a task Agent can write. **Send to task Agent** hands the text to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
-  - **Working memory (MEMORY.md)**, **User profile (USER.md)** or a Memory Space by name: **Save** writes the text there as it is, at once, without a task Agent.
+  - **Working memory (MEMORY.md)**, **User profile (USER.md)** or an active Memory Space by name: **Save** writes the text there at once, through the same write as that place's page, without a task Agent. Working memory keeps it as one line and says first when it is too long for one entry or when the file is full and saving will make room.
+  - A place is listed while its layer is on, its component runs and its writes are not switched off.
   - Without a task Agent, or without a Memory Space Provider, the dialog starts on **Working memory**.
 - A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), a summary of where the text went, and a link to it: **View in Memory Spaces**, or Runtime Memory for working memory and the user profile. **Cancel** becomes **Close**. Sending the same text to the same place again needs an edit; another place, or a send that failed, takes it as it is.
 
@@ -55,7 +56,7 @@ Each finished reply has a brain-shaped **Save to memory** in its action strip, t
 |---|---|
 | ![Save to memory with Task Agent ready and the candidate cut down to one fact](../../assets/webui-v0.5.19/en/chat-save.jpg) | ![Receipt: saved in the Lumen project Memory Space, with View in Memory Spaces](../../assets/webui-v0.5.19/en/chat-save-receipt.jpg) |
 
-**Save to memory** at the top of Memory Spaces opens the same dialog. The turn memory bar and the Save to memory button are on by default and can be turned off under [Interface](#interface). In the conversation-tab placement, these entries open the Memory System tab of the conversation they came from; with several eligible tabs in split panes, open the intended one yourself.
+**Save to memory** at the top of Memory Spaces opens the Memory Spaces dialog, without the conversation's **Save to** choice. The turn memory bar and the Save to memory button are on by default and can be turned off under [Interface](#interface). In the conversation-tab placement, these entries open the Memory System tab of the conversation they came from; with several eligible tabs in split panes, open the intended one yourself.
 
 ## The Memory System
 
@@ -153,9 +154,9 @@ Each space declares what its Provider can really supply. Mnemon Native gives typ
 
 #### Save to memory
 
-![Save to memory on the Memory Spaces page, the same dialog as in a conversation](../../assets/webui-v0.5.19/en/memory-remember.jpg)
+![Save to memory on the Memory Spaces page](../../assets/webui-v0.5.19/en/memory-remember.jpg)
 
-**Save to memory** here is the same dialog as in a conversation: write the candidate, send it to the task Agent, and view the result under **Content** from the receipt. Open **Advanced options** only when a target, category or importance is genuinely required.
+**Save to memory** here works like the conversation's dialog with **Let the Agent decide**: write the candidate, send it to the task Agent, and view the result under **Content** from the receipt. Open **Advanced options** only when a target, category or importance is genuinely required.
 
 ### On a phone
 
@@ -282,7 +283,7 @@ Use the paired selector in an unlayered stylesheet. Its specificity `(0,2,0)` be
 Memory surfaces follow one set of conventions everywhere:
 
 - **One mark**: the turn memory bar, Save to memory and the Memory System in the sidebar share the brain mark; DSH's database icon means usage, not memory.
-- **One name, one dialog**: writing to long-term memory is called **Save to memory** everywhere and opens the same dialog, which a task Agent, or the place you choose, answers with a receipt.
+- **One name, one receipt**: writing to long-term memory is called **Save to memory** everywhere, and the task Agent, or the place you choose in a conversation, answers with the same receipt.
 - **Names over identifiers**: memories are referred to by title, content and space name, never by raw id or path; **Copy ID** stays on the cards for when you need one.
 - **The same controls**: search boxes, choices, switches and dialog buttons use DSH's input, selector, switch and outlined Cancel; menus and tooltips open above dialogs.
 - **Refresh lives in the header**: **Refresh** reloads the open page; pages carry no refresh or sync buttons of their own.
