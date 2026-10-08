@@ -158,6 +158,8 @@ Runtime 写入范围回归使用 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm 
 
 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --archive-copies` 用于复现 [#339](https://github.com/omdsh-dev/dsh-mnemon/issues/339)。Host 启动前，它把工作记忆写到接近 640 字节的上限，并把每个条目逐字写入一个 Native 记忆空间，就像此前一次失败的归档留下的那样。嵌入请求发往本机一个 12 秒后才响应的服务（可用 `MNEMON_E2E_EMBEDDING_DELAY_MS` 调整），比 CLI 默认的 10 秒超时更长。在运行时记忆页面添加夹具输出的那一条。修复后，Host 不经检索即可归档并添加；没有修复的构建会为每个副本检索，第一次检索超时，归档随之失败。夹具以 `Archive copies:` 行输出每次嵌入请求。见[双语复现与证据](../../pr-assets/issue-339-archive-receipt-evidence/README.zh-CN.md)。
 
+`MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --save-action` 用于检查**存入记忆**（[#342](https://github.com/omdsh-dev/dsh-mnemon/issues/342)）。每轮对话都会收到一条值得保存的回复。点击其下的**存入记忆**并提交候选内容，再修改已有回执的候选内容后再次提交。脚本化的任务 Agent 先读取记忆空间目录，没有空间时创建一个 Native 空间，写入收到的候选内容并汇报 Provider 回执；夹具以 `Save action:` 行输出每一步。两次提交都会写入，原样再次提交则返回第一次的回执。只有模型决策是脚本化的；对话框、任务 Agent 的工具与 Native 写入均为真实运行。见[双语复现与证据](../../pr-assets/issue-342-edited-save/README.zh-CN.md)。
+
 `pnpm e2e:serve --without-mnemon-cli` 把 `cliPath` 指向不存在的文件，即使 PATH 中有 Mnemon CLI，Host 也按未安装处理。用它确认：状态页不显示 Mnemon Native 卡片，版本对话框把 CLI 列为可选，插件页停用向量测试，新建记忆空间从已就绪的 Provider 开始。先连接一个 Provider，例如在“插件 → 可组合记忆”页面中连接 Provider Lab 的服务。
 
 `pnpm e2e:serve --docs-demo`（中文）或 `--docs-demo=en` 会预置[文档截图集](../../assets/webui-v0.5.19/README.md)使用的虚构项目 Lumen：用户画像与工作记忆、六份项目档案和三个记忆空间，都在宿主启动前通过各 Source 自己的管理操作写入。包含“结账”的消息会经真实 View 工具完成一次档案检索与两次记忆空间召回后作答；随后包含“记住”的消息（例如新的 LCP 目标）会替换对应的工作记忆条目。脚本只决定模型调用哪些工具，不涉及任何个人数据。加上 `--live-model` 则改由 DeepSeek API 作答，密钥从 `DEEPSEEK_API_KEY` 读取；此时提问会经过真实的模型、任务 Agent 与 Agent 查询，图集即以这种方式采集。界面变化后应使用该夹具重新采集截图集。
