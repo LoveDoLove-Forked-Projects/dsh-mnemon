@@ -102,4 +102,38 @@ describe('Memory Spaces metadata IO through public Cordis plugins', () => {
       rmSync(directory, { recursive: true, force: true })
     }
   })
+
+  it('passes an inspection on to the Provider and leaves Agent recall a use (issue 338)', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mnemon-spaces-inspect-'))
+    const scope = { storage: 'custom' as const }
+    const runner = new MemoryCompositionRunner()
+    const search = vi.spyOn(HolographicProvider.prototype, 'search')
+    try {
+      await runner.mount(strategy, { instanceId: 'strategy' })
+      await runner.mount({ inject: ['mnemonMemory'], async apply(ctx: Context) {
+        await installMemorySpaces(ctx, providerEntries, { config: { dataDir: directory, cliPath: '/fake/mnemon' } })
+      } }, { instanceId: 'spaces' })
+      const client = await runner.managementClient('source:spaces', scope)
+      await client.mutate('provider-service-update', { providerId: 'holographic', settings: { dataPath: join(directory, 'facts.json') }, enabled: true }, { confirmed: true })
+      const body = ((await client.read('body-directory')).value as unknown as MemorySpaceCatalog).items[0]!
+      await client.mutate('remember', { content: 'Release gates need a canary.', memoryBodyId: body.id }, { confirmed: true })
+      search.mockClear()
+
+      // The Memory System's own searches look.
+      await client.read('search', { query: 'release gates', inspect: true })
+      expect(search.mock.calls.at(-1)?.[1]).toMatchObject({ query: 'release gates', inspect: true })
+      // Without the flag a read keeps counting as a use, as before.
+      await client.read('search', { query: 'release gates' })
+      expect(search.mock.calls.at(-1)?.[1]).not.toHaveProperty('inspect')
+      // An Agent's recall through its View is a use.
+      const turn = await runner.beginTurn({ scope })
+      await turn.executeRoute(turn.view.routes.find(route => route.sourceRouteId === 'recall')!.id, { query: 'release gates' })
+      expect(search.mock.calls.at(-1)?.[1]).not.toHaveProperty('inspect')
+      turn.release()
+    } finally {
+      search.mockRestore()
+      await runner.dispose()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
