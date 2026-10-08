@@ -3,7 +3,9 @@
   "issue": "https://github.com/omdsh-dev/dsh-mnemon/issues/342",
   "revisions": {
     "baseline": "main 2296898d (dsh-mnemon 0.5.24)",
-    "fix": "aaaa3ffa"
+    "fix": "aaaa3ffa",
+    "reviewFollowUp": "c241612b",
+    "measured": "c241612b"
   },
   "environment": {
     "os": "macOS 15.6 arm64",

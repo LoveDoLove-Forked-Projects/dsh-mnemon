@@ -4,7 +4,7 @@
 
 Save to memory marks its candidate as editable and, once a receipt is shown, asks for an edit before sending again. On main, a candidate edited after the reply had been saved once failed with `idempotency key was already used for different content`, and nothing was written. With the fix, the edited text reaches the task Agent and is saved as well.
 
-Baseline: main `2296898d` (dsh-mnemon 0.5.24). Fix: `aaaa3ffa`. The runs use macOS 15.6 arm64, Node 24.19.0, DSH 0.2.0-rc.2 (npm `latest` and `next`) in an isolated prefix, and Mnemon CLI 0.2.10.
+Baseline: main `2296898d` (dsh-mnemon 0.5.24). Fix: `aaaa3ffa`, with `c241612b` from review; the run below is on `c241612b`. The runs use macOS 15.6 arm64, Node 24.19.0, DSH 0.2.0-rc.2 (npm `latest` and `next`) in an isolated prefix, and Mnemon CLI 0.2.10.
 
 ## Method
 
@@ -34,13 +34,14 @@ The first submission is saved on both builds:
 
 ## Cause and fix
 
-The dialog sends the reply's message id as the idempotency key of its request. The Host kept one replay entry per scope and key, and refused the key when the text differed. The dialog itself already treats an edited candidate as a new request: a receipt answers one text, and the send button returns once the text changes. The Host disagreed only after the first submission succeeded, since a failed submission removes its replay entry.
+The dialog sends the reply's message id as the idempotency key of its request. The Host kept one replay entry per scope and key, and refused the key when the text differed. The dialog itself already treats an edited candidate as a new request: a receipt answers one text, and the send button returns once the text changes. The Host disagreed once an earlier submission for the reply had returned, whatever its receipt said; only a submission that threw removed its replay entry.
 
-The replay key now also carries a SHA-256 digest of the text. Sending the same text again, for example after reopening the dialog, still returns the first receipt without starting a second task Agent; edited text is a request of its own. The replay guard keeps its bound of 256 entries and still drops an entry when its request fails. Submissions without a key, such as **Save to memory** on the Memory Spaces page, are unchanged.
+The replay guard still keeps one entry per reply, now holding the text last sent. Sending that text again, for example after reopening the dialog, still returns its receipt without starting a second task Agent. Any other text is a request of its own and takes the reply's place, so editing back to an earlier text writes it again instead of replaying a receipt the edit in between may have outdated. The guard keeps its bound of 256 entries and still drops an entry whose request throws. Submissions without a key, such as **Save to memory** on the Memory Spaces page, are unchanged.
 
 ## Automated checks
 
-- `tests/lifecycle.spec.ts`, *treats an edited candidate for the same message as a request of its own*: the edited candidate is delegated as a second write, and sending the first text again replays its result without another write. On main the test fails with the reported error.
+- `tests/lifecycle.spec.ts`, *treats an edited candidate for the same message as a request of its own*: the edited candidate is delegated as a second write, sending it again replays its result, and editing back to the first text writes again. On main the test fails with the reported error.
+- *replays and takes edits per message for the dialog in a disposable task Agent*: the same through `superviseTask`, the path the dialog uses, with a task Agent per write.
 - The existing replay test still checks that two concurrent submissions of the same text start one task Agent.
 
 ## Limits
