@@ -22,6 +22,7 @@ import { idleReviewModel } from './fixtures/idle-review-model.mjs'
 import { reviewLayersModel } from './fixtures/review-layers-model.mjs'
 import { strictTemplateModel } from './fixtures/strict-template-model.mjs'
 import { generalStrategyModel } from './fixtures/general-strategy-model.mjs'
+import { saveActionModel } from './fixtures/save-action-model.mjs'
 import { DOCS_DEMO_LANGUAGES, docsDemoAssistant, docsDemoModel, seedDocsDemo } from './fixtures/docs-demo.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -47,6 +48,7 @@ for (const flag of flags) {
   if (flag === '--review-layers') continue
   if (flag === '--strict-template') continue
   if (flag === '--general-strategy') continue
+  if (flag === '--save-action') continue
   if (flag === '--without-mnemon-cli') continue
   if (flag === '--remote-management') continue
   if (flag === '--live-model') continue
@@ -114,6 +116,7 @@ const scriptedModel = liveModel ? undefined : flags.has('--runtime-routing') ? r
   : flags.has('--review-layers') ? reviewLayersModel(event => console.log('Review layers: ' + JSON.stringify(event)))
   : flags.has('--strict-template') ? strictTemplateModel(event => console.log('Strict template: ' + JSON.stringify(event)))
   : flags.has('--general-strategy') ? generalStrategyModel(event => console.log('General strategy: ' + JSON.stringify(event)))
+  : flags.has('--save-action') ? saveActionModel(event => console.log('Save action: ' + JSON.stringify(event)))
   : flags.has('--runtime-write-scope') ? runtimeWriteScopeModel(event => console.log('Runtime write scope: ' + JSON.stringify(event)))
   : flags.has('--result-tool-cache') ? resultToolCacheModel(event => console.log('Result tool cache: ' + JSON.stringify(event)))
   : flags.has('--legacy-session-replay') ? legacySessionReplayModel(event => console.log('Legacy replay: ' + JSON.stringify(event)))
