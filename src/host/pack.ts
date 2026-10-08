@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import {
+  chmodSync,
   closeSync,
   copyFileSync,
   existsSync,
@@ -377,6 +378,27 @@ function readCurrentRuntime(root: string, limits: RuntimeMemoryLimits = RUNTIME_
   return existsSync(path) ? parseRuntime(JSON.parse(readFileSync(path, 'utf8')) as unknown, limits) : emptyRuntime()
 }
 
+/**
+ * A Pack carries no local archive: the one MEMORY.md wrote while no Memory Space
+ * could take its entries holds their only copy, so an import keeps it (#336).
+ * Its files and folders are carried; a link is neither carried nor followed.
+ */
+function keepRuntimeArchive(root: string, stagedRuntime: string): void {
+  const copy = (from: string, to: string): void => {
+    let stat
+    try { stat = lstatSync(from) } catch { return }
+    if (stat.isSymbolicLink()) return
+    if (stat.isFile()) {
+      copyFileSync(from, to)
+      chmodSync(to, 0o600)
+    } else if (stat.isDirectory()) {
+      mkdirSync(to, { recursive: true, mode: 0o700 })
+      for (const name of readdirSync(from)) copy(join(from, name), join(to, name))
+    }
+  }
+  copy(join(root, 'runtime', 'archived'), join(stagedRuntime, 'archived'))
+}
+
 function writeRuntime(directory: string, file: RuntimeFile): void {
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   writeFileSync(join(directory, 'memories.json'), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
@@ -583,6 +605,7 @@ function stageImport(root: string, pack: ParsedPack, components: MnemonPackCompo
     if (components.includes('runtime')) {
       const runtime = mode === 'merge' ? mergeRuntime(root, pack, runtimeLimits) : parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits)
       writeRuntime(join(staging, 'runtime'), runtime)
+      keepRuntimeArchive(root, join(staging, 'runtime'))
     }
     if (components.includes('documents')) {
       const documents = mode === 'merge' ? mergeDocuments(root, pack) : archiveDocuments(pack)

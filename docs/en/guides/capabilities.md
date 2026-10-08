@@ -18,7 +18,7 @@ The short rule: **keep every-turn context in runtime memory, complete narratives
 | Turn evidence into an answer | **Memory Spaces → Recall → Ask Agent** | A clean task Agent receives only the bounded evidence | No |
 | Qualify, deduplicate, distil and write a candidate | **Save to memory** under a reply or on Memory Spaces | A clean task Agent behind Host-enforced tools, paths, locks and receipts, with a receipt for you | Only if the Agent decides to write |
 | Title and describe several spaces | **Memory Spaces → Overview → Tidy names and descriptions** | One isolated task per space | Local catalog metadata only |
-| Move a document out of hot capacity | **Project Documents → Archive** | A task Agent indexes a cold reference before the Host moves the original | Yes |
+| Move a document out of hot capacity | **Project Documents → Archive** | A task Agent indexes a cold reference before the Host moves the original; without a Memory Space, the Host archives it locally without one | Yes |
 | See what memory a turn used | **Turn memory** under the reply | The documents and memories each tool read or wrote, each opening where it lives | No |
 | Change how memory is composed | **Plugins → dsh-mnemon → Memory composition** | Switches apply to future turns | Configuration only |
 
@@ -71,7 +71,7 @@ Memory Spaces' page under **Plugins → dsh-mnemon** holds each Provider's reusa
 - **Save to memory** qualifies, routes, deduplicates, distils, writes and reports a receipt;
 - **Ask Agent** answers from bounded recalled evidence;
 - **Tidy names and descriptions** runs one title and description task per selected space;
-- **Document archive** indexes a cold reference before the Host moves the original;
+- **Document archive** indexes a cold reference before the Host moves the original, or archives locally without one when no Memory Space can take it;
 - **Provider for new spaces**, with smart selection, calls a model only when rules leave several candidates.
 
 Task Agents follow DSH's default route for new sessions. **Task Agent model**, under Background tasks on the Layered strategy's page, can choose a separate Provider and model. Tasks are isolated: a failure shows on its own space or operation and never blocks the page.

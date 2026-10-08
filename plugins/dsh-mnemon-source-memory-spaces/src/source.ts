@@ -464,13 +464,16 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
     }
     return {
       facts(request): MemorySourceFacts {
-        const { active, revision } = sourceState(request.scope)
+        const { active, providerReady, revision } = sourceState(request.scope)
         const routeIds: string[] = ['inspect',
           ...(active.some(body => body.provider.capabilities.search) ? ['recall'] : []),
           ...(active.some(body => body.provider.capabilities.related) ? ['related'] : []),
         ]
-        const actionIds: string[] = service.config.writeEnabled ? ['manage-spaces',
-          ...(canRemember ? ['remember'] : []),
+        // With no Provider ready, nothing can be created or remembered: the View
+        // offers no write that is bound to fail (#336).
+        const actionIds: string[] = service.config.writeEnabled ? [
+          ...(providerReady ? ['manage-spaces'] : []),
+          ...(canRemember && providerReady ? ['remember'] : []),
           ...(active.some(body => body.provider.capabilities.link) ? ['link'] : []),
           ...(active.some(body => body.provider.capabilities.forget) ? ['forget'] : []),
         ] : []
@@ -483,7 +486,11 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
         return {
           sourceInstanceKey: context.sourceInstanceKey, sourceTypeId: 'memory-spaces', role: 'durable-evidence',
           availability: active.length === 0 ? 'degraded' : 'ready', revision, capabilities: [...capabilities], routeIds, actionIds,
-          hints: { activeCount: active.length, providerCount: new Set(active.map(body => body.provider.id)).size },
+          hints: {
+            activeCount: active.length, providerCount: new Set(active.map(body => body.provider.id)).size,
+            // Spaces that can take a MEMORY.md archive or a Document's index: exact writes and safe forget.
+            archivableCount: active.filter(body => body.provider.capabilities.remember && body.provider.capabilities.forget && body.provider.capabilities.writeMode === 'exact').length,
+          },
         }
       },
       project(request) {

@@ -1,6 +1,8 @@
 import {
   closeSync,
+  constants,
   existsSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -8,6 +10,7 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { basename, join } from 'node:path'
@@ -60,6 +63,15 @@ interface PreparedRuntimeMemoryMutation {
   pendingEntry?: RuntimeMemoryEntry
   excludedEntry?: RuntimeMemoryEntry
   fields: RuntimeMemoryResultFields
+}
+
+/** Append to a file that is not a symbolic link; the open fails on one. */
+function appendWithoutLinks(path: string, text: string): void {
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600)
+  try {
+    const bytes = Buffer.from(text, 'utf8')
+    for (let offset = 0; offset < bytes.length;) offset += writeSync(descriptor, bytes, offset, bytes.length - offset)
+  } finally { closeSync(descriptor) }
 }
 
 export class RuntimeMemoryCapacityError extends Error {
@@ -356,6 +368,9 @@ export class RuntimeMemoryController {
   readonly memoryPath: string
   readonly userPath: string
   readonly lockPath: string
+  /** Where MEMORY.md entries go when compaction leaves them out and no Memory Space can take them. */
+  readonly archivePath: string
+  readonly archiveSourcePath: string
   readonly limits: RuntimeMemoryLimits
 
   private queue: Promise<unknown> = Promise.resolve()
@@ -379,6 +394,8 @@ export class RuntimeMemoryController {
     this.memoryPath = join(this.directory, 'MEMORY.md')
     this.localUserPath = join(this.directory, 'USER.md')
     this.lockPath = join(this.directory, '.memories.lock')
+    this.archivePath = join(this.directory, 'archived', 'MEMORY.md')
+    this.archiveSourcePath = join(this.directory, 'archived', 'memories.jsonl')
     const userDirectory = userRunner === undefined ? this.directory : join(userRunner.effectiveDataDir(), 'runtime')
     this.userController = userDirectory === this.directory || userRunner === undefined
       ? undefined
@@ -521,18 +538,24 @@ ${memory || '(empty)'}
         projected,
         limit,
         requiresMaintenance: prepared.changed && projected > limit,
+        localArchive: true as const,
       }
     }))
     this.queue = operation.catch(() => undefined)
     return operation
   }
 
-  /** Commit semantic compaction and the original mutation together, or leave every local file unchanged. */
+  /**
+   * Commit semantic compaction and the original mutation together, or leave every local file unchanged.
+   * With `archive: 'local'`, committed MEMORY.md entries that compaction leaves out are appended to the
+   * local archive first, so a limit with no Memory Space to archive into never loses memory.
+   */
   compactAndMutate(
     expectedRevision: string,
     request: RuntimeMemoryMutation,
     compacted: RuntimeMemoryCompactedEntry[],
     maxCompactedBytes?: number,
+    options: { archive?: 'local' } = {},
   ): Promise<RuntimeMemoryMutationResult> {
     if (request.target === 'user' && this.userController !== undefined) {
       return this.userController.compactAndMutate(expectedRevision, request, compacted, maxCompactedBytes)
@@ -566,11 +589,39 @@ ${memory || '(empty)'}
       const limit = this.limits[request.target]
       if (used > limit) throw new RuntimeMemoryCapacityError(request.target, byteCount(file.entries, request.target), used, limit)
       const next: RuntimeMemoryFile = { version: RUNTIME_MEMORY_VERSION, entries }
+      const kept = new Set(fitted.map(entry => entry.content))
+      const archived = options.archive === 'local' && request.target === 'memory'
+        ? prepared.compactableEntries.filter(entry => !kept.has(entry.content))
+        : undefined
+      // The archive is appended before the compacted store commits: a failure in
+      // between leaves an entry in both places, never in neither.
+      if (archived !== undefined && archived.length > 0) this.archiveLocally(archived, beforeRevision, now)
       this.persist(next)
-      return this.result(request.target, entries, prepared.fields)
+      return {
+        ...this.result(request.target, entries, prepared.fields),
+        ...(archived === undefined ? {} : { archived: { entries: archived.length, path: this.archivePath } }),
+      }
     }))
     this.queue = operation.catch(() => undefined)
     return operation
+  }
+
+  /** Append entries to the local archive: JSON Lines to restore from, and Markdown to read. */
+  private archiveLocally(entries: readonly RuntimeMemoryEntry[], fromRevision: string, archivedAt: string): void {
+    const directory = join(this.directory, 'archived')
+    mkdirSync(directory, { recursive: true, mode: 0o700 })
+    // The data directory can sit in a workspace: an archive never follows a link out of it.
+    const stat = lstatSync(directory)
+    if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Runtime Memory archive is not a directory: ${directory}`)
+    // Refuse a link or a directory at either file before writing to the other.
+    for (const path of [this.archiveSourcePath, this.archivePath]) {
+      let file
+      try { file = lstatSync(path) } catch { continue }
+      if (!file.isFile()) throw new Error(`Runtime Memory archive file is not a regular file: ${path}`)
+    }
+    appendWithoutLinks(this.archiveSourcePath, entries.map(entry => `${JSON.stringify({ archivedAt, fromRevision, ...entry })}\n`).join(''))
+    const header = existsSync(this.archivePath) ? '' : '# MEMORY.md archive\n\nEntries that left MEMORY.md at its limit while no Memory Space could take them, oldest first.\n'
+    appendWithoutLinks(this.archivePath, `${header}\n## ${archivedAt}\n\n${entries.map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER)}\n`)
   }
 
   private initialize(): void {

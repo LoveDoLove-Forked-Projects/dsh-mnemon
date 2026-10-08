@@ -188,6 +188,11 @@ snapshot revision + 可归档的已提交 entries
           v
 Host 在本次操作的 Source / 命名空间范围内选择已有、active、可写的 Memory Spaces
           |
+          +-- 任何地方都没有（该层关闭或不接受自动写入、没有就绪的 Provider、
+          |   没有支持精确写入与安全删除的 active 空间）
+          |     -> Runtime Source 在同一把锁内把压缩舍弃的条目追加到 runtime/archived/，
+          |        再提交压缩与待提交修改；不调用模型，也不写 Provider
+          |
           v
 单个目标：Host 直接路由
 多个目标：独立无工具 worker 只返回 source-index 路由
@@ -231,6 +236,9 @@ planner 没有数据面工具，不能创建 Memory Space。每次写入都由 H
                v
           保存档案与修订的快照
                |
+               +-- 任何地方都没有能接收索引的记忆空间
+               |     -> 不建索引，直接将文件移入归档，不派发任务 Agent
+               |
                v
           派发归档任务 Agent
                |
@@ -256,7 +264,7 @@ planner 没有数据面工具，不能创建 Memory Space。每次写入都由 H
                        重试原始修改
 ```
 
-人工归档使用同一条“先索引、后迁移”路径。Mnemon 索引已经成功但 revision 冲突时不会回滚索引，因此可能出现安全的重复引用，而不会丢失 active 原文。
+人工归档使用同一条“先索引、后迁移”路径；没有记忆空间能接收索引时，同样归档到本地。Mnemon 索引已经成功但 revision 冲突时不会回滚索引，因此可能出现安全的重复引用，而不会丢失 active 原文。
 
 ## 确定性活动评分和后台审查
 

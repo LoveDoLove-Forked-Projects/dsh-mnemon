@@ -137,9 +137,11 @@ export function createRuntimeMemorySource(config: Config = {}): MemorySourceDefi
               ...(entry.branches === undefined ? {} : { branches: stringArray(entry.branches, 'branches', 100) ?? [] }),
             } satisfies RuntimeMemoryCompactedEntry
           })
+          if (input.archive !== undefined && input.archive !== 'local') throw new Error('archive must be "local" when given')
           result = await controller.compactAndMutate(
             text(input.revision, 'revision', 300)!, runtimeMutation(input.mutation!), compacted,
             typeof input.maxBytes === 'number' ? input.maxBytes : undefined,
+            input.archive === 'local' ? { archive: 'local' } : {},
           )
         } else throw new Error('unsupported Runtime management mutation operation: ' + request.operation)
         return { revision: controller.snapshot().revision, value: result as unknown as MemoryJsonValue }
