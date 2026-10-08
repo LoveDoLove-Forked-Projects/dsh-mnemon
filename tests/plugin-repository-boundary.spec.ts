@@ -128,6 +128,32 @@ describe('standalone plugin repository boundary', () => {
     expect(violations).toEqual([])
   })
 
+  it('keeps component implementations out of the Starter client bundle', () => {
+    // The client build bundles every import except React and the DSH primitives
+    // (tsdown.config.ts), so a component package may reach it only as presentation
+    // assets or types. The package size ceiling no longer guards this.
+    const pending = [join(root, 'src/client/index.ts')]
+    const visited = new Set<string>()
+    const violations: string[] = []
+    while (pending.length > 0) {
+      const file = pending.pop()!
+      if (visited.has(file)) continue
+      visited.add(file)
+      for (const { specifier, typeOnly } of imports(file)) {
+        if (typeOnly) continue
+        if (specifier.startsWith('.')) {
+          const target = resolve(dirname(file), specifier)
+          if (inside(join(root, 'plugins'), target)) violations.push(`${relative(root, file)}: ${specifier}`)
+          else if (/\.tsx?$/.test(target)) pending.push(target)
+        } else if (/^dsh-mnemon-(?:source|provider|strategy)-/.test(specifier) && !/^dsh-mnemon-source-[^/]+\/presentation\//.test(specifier)) {
+          violations.push(`${relative(root, file)}: ${specifier}`)
+        }
+      }
+    }
+    expect(visited.size).toBeGreaterThan(30)
+    expect(violations).toEqual([])
+  })
+
   for (const [entry, allowed] of [
     ['src/sdk/index.ts', ['src/sdk', 'src/core/contracts', 'src/core/definitions.ts']],
     ['plugins/dsh-mnemon-source-memory-spaces/src/provider-sdk.ts', [
