@@ -35,6 +35,24 @@ describe('independent Native Provider', () => {
     expect(runJson.mock.calls[1]?.[0]).toEqual(['--readonly', 'recall', '', '--basic', '--limit', '6'])
   })
 
+  it('reads one memory by exact id from a read-only snapshot', async () => {
+    const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
+    const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>()
+      .mockResolvedValueOnce({ id: 'fact-1', content: 'Keep exact content', category: 'fact', importance: 3, tags: [], entities: ['DSH'], created_at: '2026-10-08T00:00:00Z' })
+      // A missing or forgotten id: `mnemon show` exits 1 with SQL's "no rows".
+      .mockRejectedValueOnce(new Error('mnemon --readonly show gone exited 1: Error: sql: no rows in result set'))
+      .mockRejectedValueOnce(new Error('mnemon --readonly show slow did not respond within 10000ms'))
+    const provider = new MnemonNativeProvider({ runJson, runText: vi.fn() })
+    await expect(provider.get(body, 'fact-1')).resolves.toMatchObject({ id: 'fact-1', content: 'Keep exact content', entities: ['DSH'] })
+    await expect(provider.get(body, 'gone')).resolves.toBeUndefined()
+    await expect(provider.get(body, 'slow')).rejects.toThrow('did not respond')
+    expect(runJson.mock.calls.map(call => [call[0], call[1]?.store])).toEqual([
+      [['--readonly', 'show', 'fact-1'], 'work'],
+      [['--readonly', 'show', 'gone'], 'work'],
+      [['--readonly', 'show', 'slow'], 'work'],
+    ])
+  })
+
   it('reads a snapshot for an inspection and records a use otherwise', async () => {
     const { body } = createMemorySpaceProviderFixture(descriptor, {}, { dataDir: '/unused', memoryBodyId: 'work' })
     const runJson = vi.fn<MemorySpaceNativeRunner['runJson']>(async () => ({ results: [] }))

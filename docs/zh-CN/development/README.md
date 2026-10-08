@@ -154,6 +154,8 @@ Runtime 写入范围回归使用 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm 
 
 `pnpm e2e:serve --general-strategy` 启动时已选中通用策略，并停用分层策略。先发送 `general-strategy-check remember`，下一回合再发送 `general-strategy-check recall`。脚本模型检查系统提示中包含通用记忆协议，且 Runtime、项目档案和记忆空间三个 Source 均已接入；随后通过具名 Runtime 工具保存一条事实，并且只有当这条事实以常驻记忆投影出现时，第二回合才答出它。夹具以 `General strategy:` 行输出每项检查。只有模型决策是脚本化的；策略、其 View、Runtime 写入和浏览器均为真实运行。
 
+`MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --exact-id` 用于检查按精确 id 遗忘（[#337](https://github.com/omdsh-dev/dsh-mnemon/issues/337)）。在 Mnemon E2E 对话中依次运行 `/mnemon remember <内容>`、用 `/mnemon recall <关键词>` 读到它的 id，再运行 `/mnemon forget <ID>`。脚本化的工作 Agent 写入收到的内容、遗忘收到的精确 id，各自在自己的 View 中运行；夹具以 `Exact id:` 行输出每一步。修复后这条记忆会被软删除；没有修复的构建会报告遗忘需要 View 已接纳的证据。只有工作 Agent 的决策是脚本化的；命令、工具和 Native 存储都是真实运行。见[双语复现与证据](../../pr-assets/issue-337-exact-id-actions/README.zh-CN.md)。
+
 `pnpm e2e:serve --without-mnemon-cli` 把 `cliPath` 指向不存在的文件，即使 PATH 中有 Mnemon CLI，Host 也按未安装处理。用它确认：状态页不显示 Mnemon Native 卡片，版本对话框把 CLI 列为可选，插件页停用向量测试，新建记忆空间从已就绪的 Provider 开始。先连接一个 Provider，例如在“插件 → 可组合记忆”页面中连接 Provider Lab 的服务。
 
 `pnpm e2e:serve --docs-demo`（中文）或 `--docs-demo=en` 会预置[文档截图集](../../assets/webui-v0.5.19/README.md)使用的虚构项目 Lumen：用户画像与工作记忆、六份项目档案和三个记忆空间，都在宿主启动前通过各 Source 自己的管理操作写入。包含“结账”的消息会经真实 View 工具完成一次档案检索与两次记忆空间召回后作答；随后包含“记住”的消息（例如新的 LCP 目标）会替换对应的工作记忆条目。脚本只决定模型调用哪些工具，不涉及任何个人数据。加上 `--live-model` 则改由 DeepSeek API 作答，密钥从 `DEEPSEEK_API_KEY` 读取；此时提问会经过真实的模型、任务 Agent 与 Agent 查询，图集即以这种方式采集。界面变化后应使用该夹具重新采集截图集。
