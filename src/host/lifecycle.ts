@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type {
@@ -593,8 +593,8 @@ export class MnemonLifecycle {
   private readonly counters: LifecycleCounters = { primes: 0, recallCues: 0, writebackCues: 0, supervisedRequests: 0, failures: 0 }
   /** Creation ids reserved before DSH publishes clean task-root Agents. */
   private readonly taskAgentIds = new Set<string>()
-  /** Bounded process-local replay fence for finalized-message write actions, by message and text. */
-  private readonly supervisedWritebacks = new Map<string, Promise<SupervisedWritebackResult>>()
+  /** Bounded process-local replay fence for finalized-message write actions: the latest text per message. */
+  private readonly supervisedWritebacks = new Map<string, { content: string; result: Promise<SupervisedWritebackResult> }>()
 
   constructor(
     private readonly ctx: HostContextShape,
@@ -873,20 +873,22 @@ export class MnemonLifecycle {
     }
 
     if (normalizedKey === undefined || normalizedKey === '') return execute()
-    // The key names the message a submission answers and the digest its text:
-    // sending the same text again replays the first result, while a candidate
-    // edited after an earlier submission is a request of its own (#342).
-    const replayKey = `${replayScope}\u0000${normalizedKey}\u0000${createHash('sha256').update(normalizedContent).digest('hex')}`
+    // One entry per message: sending its latest text again replays that result,
+    // and a candidate edited after an earlier submission is a request of its own
+    // that takes the message's place, so a receipt always answers the text last
+    // sent (#342).
+    const replayKey = `${replayScope}\u0000${normalizedKey}`
     const existing = this.supervisedWritebacks.get(replayKey)
-    if (existing !== undefined) return existing
-    if (this.supervisedWritebacks.size >= 256) {
+    if (existing?.content === normalizedContent) return existing.result
+    if (existing === undefined && this.supervisedWritebacks.size >= 256) {
       const oldest = this.supervisedWritebacks.keys().next().value as string | undefined
       if (oldest !== undefined) this.supervisedWritebacks.delete(oldest)
     }
     const result = execute()
-    this.supervisedWritebacks.set(replayKey, result)
+    this.supervisedWritebacks.delete(replayKey)
+    this.supervisedWritebacks.set(replayKey, { content: normalizedContent, result })
     void result.catch(() => {
-      if (this.supervisedWritebacks.get(replayKey) === result) this.supervisedWritebacks.delete(replayKey)
+      if (this.supervisedWritebacks.get(replayKey)?.result === result) this.supervisedWritebacks.delete(replayKey)
     })
     return result
   }

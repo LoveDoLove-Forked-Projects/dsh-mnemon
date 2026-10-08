@@ -1161,10 +1161,25 @@ describe('Mnemon DSH lifecycle integration', () => {
       content: 'Keep the release checklist and its owner durable.',
       source: 'explicit assistant memory action',
     }, expect.any(AbortSignal))
-    // Sending the first text again still replays its result instead of writing it twice.
-    await expect(value.lifecycle.supervise('session-1', 'Keep the release checklist durable.', 'message-1')).resolves.toEqual(first)
+    // Sending the latest text again replays its result instead of writing it twice.
+    await expect(value.lifecycle.supervise('session-1', 'Keep the release checklist and its owner durable.', 'message-1')).resolves.toEqual(edited)
     expect(value.coordinator.write).toHaveBeenCalledTimes(2)
-    expect(value.lifecycle.snapshot('session-1').counters.supervisedRequests).toBe(2)
+    // Editing back to the first text is a request of its own as well: the edited
+    // write may have replaced it, so its first receipt no longer answers it.
+    await expect(value.lifecycle.supervise('session-1', 'Keep the release checklist durable.', 'message-1')).resolves.not.toBe(first)
+    expect(value.coordinator.write).toHaveBeenCalledTimes(3)
+    expect(value.lifecycle.snapshot('session-1').counters.supervisedRequests).toBe(3)
+  })
+
+  it('replays and takes edits per message for the dialog in a disposable task Agent', async () => {
+    const value = fixture()
+    // The Save to memory dialog sends its message id through superviseTask, scoped to the workspace.
+    const first = await value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', '/tmp/workspace-two')
+    await expect(value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', '/tmp/workspace-two')).resolves.toEqual(first)
+    expect(value.coordinator.write).toHaveBeenCalledTimes(1)
+    await value.lifecycle.superviseTask('session-1', 'Keep the release checklist and its owner durable.', 'message-1', '/tmp/workspace-two')
+    expect(value.coordinator.write).toHaveBeenCalledTimes(2)
+    expect(value.createTaskAgent).toHaveBeenCalledTimes(2)
   })
 
   it('extracts assistant text from the durable DSH message content', () => {
