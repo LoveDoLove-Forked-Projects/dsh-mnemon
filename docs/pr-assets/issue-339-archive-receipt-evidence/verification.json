@@ -1,0 +1,64 @@
+{
+  "date": "2026-10-08",
+  "issue": "https://github.com/omdsh-dev/dsh-mnemon/issues/339",
+  "revisions": {
+    "baseline": "main 2296898d (dsh-mnemon 0.5.24)",
+    "fix": "0064b658"
+  },
+  "environment": {
+    "os": "macOS 15.6 arm64",
+    "node": "24.19.0",
+    "dsh": "@deepseek-ai/dsh 0.2.0-rc.2 (npm latest and next, isolated prefix)",
+    "mnemonCli": "0.2.10",
+    "browser": "headless Chrome, 1280x900, device scale 2, zh-CN, light"
+  },
+  "fixture": "MNEMON_CLI_PATH=/opt/homebrew/bin/mnemon pnpm e2e:serve --archive-copies: three working-memory entries (475 of 640 bytes) with an exact copy of each in the Native Memory Space default; embeddings from a loopback service that answers after 12 s; Mnemon CLI timeout 10 s (default). The baseline swaps main's src/host/subagent.ts and the memory-spaces runner into the same build.",
+  "procedure": [
+    "Open Memory System, then Runtime Memory.",
+    "Add memory: the entry the fixture prints (182 bytes), saved to working memory.",
+    "Read the Native store with mnemon --readonly recall --basic."
+  ],
+  "baseline": {
+    "beforeAdd": {
+      "workingMemory": "工作记忆: 475 B / 640 B"
+    },
+    "afterAdd": {
+      "workingMemory": "工作记忆: 475 B / 640 B",
+      "notice": null,
+      "error": "runtime archive skipped an entry without exact durable recall evidence in Memory Space default"
+    },
+    "secondsFromAddToResult": 10.2,
+    "embeddingRequests": 1,
+    "nativeStoreInsights": {
+      "before": 3,
+      "after": 3
+    },
+    "consoleErrors": []
+  },
+  "fix": {
+    "beforeAdd": {
+      "workingMemory": "工作记忆: 475 B / 640 B"
+    },
+    "afterAdd": {
+      "workingMemory": "工作记忆: 345 B / 640 B",
+      "notice": "容量整理完成：已先归档到记忆空间 default，再更新工作记忆 · 当前 2 条",
+      "error": null
+    },
+    "secondsFromAddToResult": 0.3,
+    "embeddingRequests": 0,
+    "nativeStoreInsights": {
+      "before": 3,
+      "after": 3
+    },
+    "consoleErrors": []
+  },
+  "nativeReceiptProbe": {
+    "setup": "Real Mnemon CLI 0.2.10, no embeddings: 400 similar memories, then the same 14 MEMORY.md-sized entries imported twice through remember-many.",
+    "secondAttemptActions": [
+      "skipped"
+    ],
+    "receiptsWithIdAndExactText": 14,
+    "verificationSearchHits": 14,
+    "entries": 14
+  }
+}
