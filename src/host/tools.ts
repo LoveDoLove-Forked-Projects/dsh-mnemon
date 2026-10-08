@@ -252,8 +252,8 @@ export function registerTools(ctx: HostContextShape, runtimeSource: MnemonAgentR
       if (!config.writeEnabled) throw new Error('dsh-mnemon is configured read-only (writeEnabled: false)')
       const agent = requireAgent(exec)
       if (args.action === 'archive') {
+        // Without a Memory Spaces layer to index into, the coordinator archives locally (#336).
         requireSource(exec, 'documents', 'archive')
-        requireSource(exec, 'memory-spaces', 'write')
         if (isSubagent(agent)) throw new Error('idle document workers cannot cold-archive directly')
         if (args.id === undefined) throw new Error('document id is required for archive')
         return coordinator.archiveDocument(agent, args.id, exec.signal)

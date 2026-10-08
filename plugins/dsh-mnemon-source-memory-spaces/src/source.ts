@@ -438,13 +438,16 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
     }
     return {
       facts(request): MemorySourceFacts {
-        const { active, revision } = sourceState(request.scope)
+        const { active, providerReady, revision } = sourceState(request.scope)
         const routeIds: string[] = ['inspect',
           ...(active.some(body => body.provider.capabilities.search) ? ['recall'] : []),
           ...(active.some(body => body.provider.capabilities.related) ? ['related'] : []),
         ]
-        const actionIds: string[] = service.config.writeEnabled ? ['manage-spaces',
-          ...(canRemember ? ['remember'] : []),
+        // With no Provider ready, nothing can be created or remembered: the View
+        // offers no write that is bound to fail (#336).
+        const actionIds: string[] = service.config.writeEnabled ? [
+          ...(providerReady ? ['manage-spaces'] : []),
+          ...(canRemember && providerReady ? ['remember'] : []),
           ...(active.some(body => body.provider.capabilities.link) ? ['link'] : []),
           ...(active.some(body => body.provider.capabilities.forget) ? ['forget'] : []),
         ] : []

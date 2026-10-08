@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as scoped from 'dsh-mnemon-strategy-scoped'
@@ -65,7 +66,7 @@ describe('additive Strategy plugins through the real Host', () => {
     expect(evidence.items[0]?.text).toContain('Additive plugin durable sentinel')
   })
 
-  it('does not archive Runtime into a View-read-only Source on capacity overflow', async () => {
+  it('does not archive Runtime into a View-read-only Source on capacity overflow; it archives locally (issue 336)', async () => {
     const f = await fixture({ runtimeMemory: { memoryLimitBytes: 512 } })
     await f.memorySpace()
     const runtime = f.graph.source('runtime')
@@ -79,10 +80,14 @@ describe('additive Strategy plugins through the real Host', () => {
     const start = vi.fn()
     const coordinator = new MnemonSubagentCoordinator({ start } as unknown as HostSubagentsService, f.live)
     await expect(coordinator.runtime(parent, { action: 'add', target: 'memory', content: 'Pending durable fact. '.repeat(15) }, new AbortController().signal))
-      .rejects.toThrow('Source Action is not offered by the current View: memory-spaces/remember')
+      .resolves.toMatchObject({ added: 'Pending durable fact. '.repeat(15).trim(), maintenance: { kind: 'local-archive', memoryBodyIds: [] } })
+    // The read-only Memory Space is never written; the entry left out of MEMORY.md is in the local archive.
     expect(management.mock.calls.filter(([request]) => request.mode === 'mutate')).toEqual([])
     expect(start).not.toHaveBeenCalled()
-    expect(await runtime.read('snapshot')).toMatchObject({ revision: before.revision, entries: before.entries, targets: before.targets })
+    const after = await runtime.read<RuntimeMemorySnapshot>('snapshot')
+    expect(after.revision).not.toBe(before.revision)
+    expect(after.entries.map(entry => entry.content)).toEqual(['Pending durable fact. '.repeat(15).trim()])
+    expect(readFileSync(join(after.directory, 'archived', 'MEMORY.md'), 'utf8')).toContain('Saved durable fact. '.repeat(15).trim())
   })
 
   it('rejects a read-only Documents mutation before its archive preflight can start a worker', async () => {

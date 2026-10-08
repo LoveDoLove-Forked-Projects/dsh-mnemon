@@ -4,6 +4,7 @@ import { defineMemorySource, installMemory, type MemoryAvailableSource } from 'd
 import { COMPOSABLE_MEMORY_API_VERSION } from 'dsh-mnemon/contracts'
 import { MemoryCompositionRunner, DEFAULT_MEMORY_VIEW_BUDGET } from 'dsh-mnemon/testing'
 import * as plugin from '../src/index.ts'
+import { BOUNDED_RUNTIME_MEMORY_PROTOCOL, LOCAL_ARCHIVE_RUNTIME_MEMORY_PROTOCOL, ROUTING_GUIDANCE, THREE_TIER_REMINDERS } from '../src/guidance.ts'
 
 function fact(role: string, key = role): MemoryAvailableSource {
   return {
@@ -21,6 +22,24 @@ describe('standalone default three-tier Strategy', () => {
     expect(first).toEqual(plugin.DEFAULT_THREE_TIER_VIEW_STRATEGY.compose(request, [...facts].reverse()))
     expect(first.sources.map(source => source.sourceInstanceKey)).toEqual(facts.map(source => source.sourceInstanceKey))
     expect(first.sources.reduce((sum, source) => sum + (source.projection?.maxCharacters ?? 0), 0)).toBeLessThanOrEqual(request.budget.maxProjectionCharacters)
+  })
+
+  it('names mnemon_recall and archiving into Memory Spaces only when they offer recall (issue 336)', () => {
+    const request = { scope: { storage: 'custom' as const }, scenario: 'test', budget: { ...DEFAULT_MEMORY_VIEW_BUDGET } }
+    const layer = (role: string, sourceTypeId: string, routeIds: string[] = []) => ({ ...fact(role, sourceTypeId), routeIds })
+    const runtime = layer('working-context', 'runtime')
+    const documents = layer('narrative', 'documents', ['search'])
+    // With Memory Spaces to recall from, the guidance is exactly what it was.
+    const recalling = plugin.DEFAULT_THREE_TIER_VIEW_STRATEGY.compose(request, [runtime, documents, layer('durable-evidence', 'memory-spaces', ['inspect', 'recall'])])
+    expect(recalling.guidance).toEqual({ routing: ROUTING_GUIDANCE, reminders: THREE_TIER_REMINDERS, system: BOUNDED_RUNTIME_MEMORY_PROTOCOL })
+    // Without a space to read, or without the layer, nothing points at mnemon_recall.
+    for (const facts of [[runtime, documents, layer('durable-evidence', 'memory-spaces', ['inspect'])], [runtime, documents]]) {
+      const guidance = plugin.DEFAULT_THREE_TIER_VIEW_STRATEGY.compose(request, facts).guidance
+      expect(guidance).toEqual({ system: LOCAL_ARCHIVE_RUNTIME_MEMORY_PROTOCOL })
+      expect(guidance?.system).not.toContain('mnemon_recall')
+      expect(guidance?.system).toContain('to a local archive file')
+      expect(guidance?.system).toContain('budget-limited projection')
+    }
   })
 
   it('rejects ambiguous roles instead of selecting by mount order', () => {

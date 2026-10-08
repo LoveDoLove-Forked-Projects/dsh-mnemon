@@ -138,7 +138,9 @@ export function DocumentsPage(props: { client: DocumentsPageClient; revision: nu
     setSaving(true); setError(null); setNotice(null)
     try {
       const result = await props.client.archiveDocument(selected.id)
-      setNotice(t('documents.archived', { spaces: result.maintenance?.memoryBodyIds.join(', ') || '—' }))
+      // A local archive keeps the original without an index in any Memory Space.
+      const spaces = result.maintenance?.memoryBodyIds ?? []
+      setNotice(spaces.length === 0 ? t('documents.archivedLocally') : t('documents.archived', { spaces: spaces.join(', ') }))
       setConfirmArchive(false); setStatus('archived'); setQuery(''); props.onMutate(); await display('', 'archived'); setSelectedId(result.document.id)
     } catch (reason) { setError(message(reason)) } finally { setSaving(false) }
   }

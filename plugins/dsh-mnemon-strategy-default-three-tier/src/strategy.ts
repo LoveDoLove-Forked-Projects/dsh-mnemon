@@ -1,7 +1,7 @@
 import { defineMemoryStrategy, type MemorySourceFacts } from 'dsh-mnemon/extension-sdk'
 import { COMPOSABLE_MEMORY_API_VERSION, type MemoryAvailableSource, type MemoryViewRequest, type MemoryViewSpec } from 'dsh-mnemon/contracts'
 import { createThreeTierTurn } from './retrieval.ts'
-import { BOUNDED_RUNTIME_MEMORY_PROTOCOL, ROUTING_GUIDANCE, SCOPED_RUNTIME_MEMORY_PROTOCOL, THREE_TIER_REMINDERS } from './guidance.ts'
+import { BOUNDED_RUNTIME_MEMORY_PROTOCOL, LOCAL_ARCHIVE_RUNTIME_MEMORY_PROTOCOL, ROUTING_GUIDANCE, SCOPED_RUNTIME_MEMORY_PROTOCOL, THREE_TIER_REMINDERS } from './guidance.ts'
 import { threeTierContributions, type ThreeTierExtensionValues } from './extension-sdk.ts'
 
 const VIEW_ROLES = ['working-context', 'narrative', 'durable-evidence'] as const
@@ -54,7 +54,10 @@ function composeThreeTier(request: MemoryViewRequest, sources: readonly MemorySo
     const runtime = soleSource(sources, 'working-context')
     const documents = soleSource(sources, 'narrative')
     const memorySpaces = soleSource(sources, 'durable-evidence')
-    const classicSources = runtime?.sourceTypeId === 'runtime' && documents?.sourceTypeId === 'documents' && memorySpaces?.sourceTypeId === 'memory-spaces'
+    // Memory Spaces with no space to read, or no Provider, offer no recall: the
+    // guidance then names neither mnemon_recall nor archiving into them (#336).
+    const durable = memorySpaces?.sourceTypeId === 'memory-spaces' && memorySpaces.routeIds.includes('recall')
+    const classicSources = runtime?.sourceTypeId === 'runtime' && documents?.sourceTypeId === 'documents' && durable
     const selected = [runtime, documents, memorySpaces].filter((source): source is MemorySourceFacts => source !== undefined)
     const projectionBudget = request.budget.maxProjectionCharacters
     const runtimeBudget = runtime === undefined || !runtime.capabilities.includes('project') ? 0 : Math.max(1, Math.floor(projectionBudget * 0.9))
@@ -70,7 +73,7 @@ function composeThreeTier(request: MemoryViewRequest, sources: readonly MemorySo
       strategyTypeId: 'default-three-tier',
       guidance: {
         ...(classicSources ? { routing: ROUTING_GUIDANCE, reminders: THREE_TIER_REMINDERS } : {}),
-        ...(runtime?.sourceTypeId === 'runtime' && runtime.capabilities.includes('project') ? { system: BOUNDED_RUNTIME_MEMORY_PROTOCOL } : {}),
+        ...(runtime?.sourceTypeId === 'runtime' && runtime.capabilities.includes('project') ? { system: durable ? BOUNDED_RUNTIME_MEMORY_PROTOCOL : LOCAL_ARCHIVE_RUNTIME_MEMORY_PROTOCOL } : {}),
       },
       sources: selected.map(source => ({
         sourceInstanceKey: source.sourceInstanceKey,

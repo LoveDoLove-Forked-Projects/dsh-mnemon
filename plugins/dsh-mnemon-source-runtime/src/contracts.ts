@@ -58,8 +58,10 @@ export type RuntimeMemoryMutationResult = {
   added?: string
   replaced?: { from: string; to: string }
   removed?: string
+  /** MEMORY.md entries a compaction moved to the local archive, when it ran with `archive: 'local'`. */
+  archived?: { entries: number; path: string }
   maintenance?: {
-    kind: 'local-compaction' | 'mnemon-archive'
+    kind: 'local-compaction' | 'mnemon-archive' | 'local-archive'
     runId: string
     provider: string
     summary: string

@@ -203,7 +203,7 @@ interface SpaceData {
 interface RuntimeOperations {
   mutate(request: RuntimeMemoryMutation): Promise<RuntimeMemoryMutationResult>
   planMaintenance(request: RuntimeMemoryMutation): Promise<RuntimeMemoryMaintenancePlan>
-  compactAndMutate(revision: string, request: RuntimeMemoryMutation, compacted: unknown, maxBytes?: number, lineage?: unknown): Promise<RuntimeMemoryMutationResult>
+  compactAndMutate(revision: string, request: RuntimeMemoryMutation, compacted: unknown, maxBytes?: number, lineage?: unknown, archive?: 'local'): Promise<RuntimeMemoryMutationResult>
 }
 function capacityError(target: string, used: number, projected: number, limit: number) {
   return Object.assign(new Error('Runtime capacity exceeded'), { code: 'runtime-capacity', target, used, projected, limit })
@@ -285,8 +285,10 @@ function runtimeSource(
       if (operation === 'maintenance-plan') return operations!.planMaintenance(input)
       throw new Error('Unexpected Runtime read: ' + operation)
     },
-    mutate: (operation: string, input: RuntimeMemoryMutation & { revision: string; mutation: RuntimeMemoryMutation; compacted: unknown; maxBytes?: number; lineage?: unknown }) =>
-      operation === 'mutate' ? operations!.mutate(input) : operations!.compactAndMutate(input.revision, input.mutation, input.compacted, input.maxBytes, input.lineage),
+    mutate: (operation: string, input: RuntimeMemoryMutation & { revision: string; mutation: RuntimeMemoryMutation; compacted: unknown; maxBytes?: number; lineage?: unknown; archive?: 'local' }) =>
+      operation === 'mutate' ? operations!.mutate(input) : input.archive === undefined
+        ? operations!.compactAndMutate(input.revision, input.mutation, input.compacted, input.maxBytes, input.lineage)
+        : operations!.compactAndMutate(input.revision, input.mutation, input.compacted, input.maxBytes, input.lineage, input.archive),
     action: async (_operation: string, input: RuntimeMemoryMutation) => ({ details: await operations!.mutate(input) }),
   }
   if (!('mutateResult' in runtimeSession)) Object.assign(runtimeSession, {
@@ -297,7 +299,8 @@ function runtimeSource(
     return policyFor(turn).query({ route: { id: 'docs/search', sourceInstanceKey: 'docs', sourceRouteId: operation, readGrantId: 'doc-grant' } as never, input, signal }, async () => ({ id: 'docs', viewId: turn.view.id, routeId: 'docs/search', sourceInstanceKey: 'docs', observedAt: 'now', items: [], truncated: false }))
   } }) }
   // The serving generation composes with the configured Strategy.
-  const generation = { strategy: { definition: { manifest: { typeId: config.memoryTopology.strategyId } } } }
+  const generation = { strategy: { definition: { manifest: { typeId: config.memoryTopology.strategyId } } },
+    sourceInstances: () => [{ sourceInstanceKey: 'source:mnemon-source-memory-spaces', sourceTypeId: 'memory-spaces' }] }
   const graph = { config, memoryComposition: { acquire: () => ({ generation, release: () => {} }) }, composableTurns: turns, source: (type: string) => type === 'runtime' ? runtimeSession : type === 'documents' ? documentSession : spaceSession } as unknown as MnemonRuntimeGraph
   const source = { config, forAgent: vi.fn((_agent: HostAgent) => graph), bindAgentRuntime: vi.fn(() => () => {}) }
   return { ...source, executions: new MemoryExecutions(source) }
@@ -594,14 +597,15 @@ describe('Mnemon memory subagent coordinator', () => {
     expect((await f.controller.read<DocumentView>('document', { id: f.document.id })).status).toBe('active')
   })
 
-  it.each(['inactive', 'disabled', 'async', 'no-forget'])('rejects an unsafe archive destination before model work: %s', async state => {
+  it.each(['inactive', 'disabled', 'async', 'no-forget'])('never indexes into an unsafe destination; archives locally before model work instead (issue 336): %s', async state => {
     const f = await documentArchiveFixture()
     const body = f.spaces.bodyDirectory().items[0]!
     if (state === 'inactive') body.active = false
     if (state === 'disabled') body.providerEnabled = false
     if (state === 'async') body.provider.capabilities.writeMode = 'async-extracting'
     if (state === 'no-forget') body.provider.capabilities.forget = false
-    await expect(f.archive()).rejects.toThrow(/archive.*Memory Space/)
+    await expect(f.archive()).resolves.toMatchObject({ action: 'archived', maintenance: { provider: 'host', memoryBodyIds: [], summary: expect.stringContaining('without a Mnemon index') } })
+    expect((await f.controller.read<DocumentView>('document', { id: f.document.id })).status).toBe('archived')
     expect(f.host.start).not.toHaveBeenCalled()
     expect(f.spaces.rememberMany).not.toHaveBeenCalled()
   })
@@ -2023,13 +2027,14 @@ describe('Mnemon memory subagent coordinator', () => {
     expect(coordinator.snapshot()).toMatchObject({ migrations: 1, lastOperation: 'migration', lastRunId: expect.stringMatching(/^host-/) })
   })
 
-  it('fails before model work when no existing active writable Memory Space can receive an archive', async () => {
+  it('archives locally, without model work, when no Memory Space can receive an archive (issue 336)', async () => {
     const plan = maintenancePlan()
     const host = subagents(undefined)
     const runtime = {
       mutate: vi.fn().mockRejectedValueOnce(capacityError('memory', plan.used, plan.projected, plan.limit)),
       planMaintenance: vi.fn(async () => plan),
-      compactAndMutate: vi.fn(),
+      compactAndMutate: vi.fn(async () => ({ success: true, message: 'Entry added.', target: 'memory', entryCount: 2, usage: { used: 64, limit: plan.limit },
+        added: plan.pending!.content, archived: { entries: 1, path: '/data/runtime/archived/MEMORY.md' } })),
     } as unknown as RuntimeOperations
     const memoryService = service()
     vi.mocked(memoryService.bodyDirectory).mockReturnValue({
@@ -2041,19 +2046,23 @@ describe('Mnemon memory subagent coordinator', () => {
     const coordinator = new MnemonSubagentCoordinator(host.value, runtimeSource(runtime, memoryService) as never, toolRegistry().value)
 
     await expect(coordinator.runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
-      .rejects.toThrow('existing active writable Memory Space')
+      .resolves.toMatchObject({ added: plan.pending!.content, maintenance: { kind: 'local-archive', provider: 'host', memoryBodyIds: [],
+        summary: expect.stringContaining('Moved 1 MEMORY.md entry to the local archive /data/runtime/archived/MEMORY.md, since Memory Space body-directory is empty') } })
+    // The exact committed entries go to the Runtime Source, which archives what compaction leaves out.
+    expect(runtime.compactAndMutate).toHaveBeenCalledWith(plan.revision, expect.objectContaining({ action: 'add' }),
+      plan.entries.map(({ content, importance }) => ({ content, importance })), expect.any(Number), undefined, 'local')
     expect(host.start).not.toHaveBeenCalled()
     expect(memoryService.rememberMany).not.toHaveBeenCalled()
     expect(memoryService.remember).not.toHaveBeenCalled()
-    expect(runtime.compactAndMutate).not.toHaveBeenCalled()
   })
 
-  it.each(['async-extracting', 'no-forget'])('preflights runtime archive destinations before side effects (issue 240): %s', async capability => {
+  it.each(['async-extracting', 'no-forget'])('never archives into an unsafe destination; archives locally instead (issues 240, 336): %s', async capability => {
     const plan = maintenancePlan()
     const runtime = {
       mutate: vi.fn().mockRejectedValue(capacityError('memory', plan.used, plan.projected, plan.limit)),
       planMaintenance: vi.fn(async () => plan),
-      compactAndMutate: vi.fn(),
+      compactAndMutate: vi.fn(async () => ({ success: true, message: 'Entry added.', target: 'memory', entryCount: 2, usage: { used: 64, limit: plan.limit },
+        added: plan.pending!.content, archived: { entries: 1, path: '/data/runtime/archived/MEMORY.md' } })),
     } as unknown as RuntimeOperations
     const spaces = service()
     const body = spaces.bodyDirectory().items[0]!
@@ -2062,13 +2071,11 @@ describe('Mnemon memory subagent coordinator', () => {
     vi.mocked(spaces.rememberMany).mockImplementation(async requests => requests.map(() => ({ action: 'queued', operationId: 'accepted-before-error' })))
     const host = subagents(undefined)
     const coordinator = new MnemonSubagentCoordinator(host.value, runtimeSource(runtime, spaces), toolRegistry().value)
-    for (let attempt = 0; attempt < 2; attempt++) {
-      await expect(coordinator.runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
-        .rejects.toThrow(/exact writes.*safe forget.*memoryLimitBytes/)
-    }
+    await expect(coordinator.runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
+      .resolves.toMatchObject({ maintenance: { kind: 'local-archive', summary: expect.stringContaining('authorized destinations lack exact writes or safe forget') } })
+    expect(runtime.compactAndMutate).toHaveBeenCalledWith(plan.revision, expect.anything(), expect.anything(), expect.any(Number), undefined, 'local')
     expect(spaces.rememberMany).not.toHaveBeenCalled()
     expect(spaces.forget).not.toHaveBeenCalled()
-    expect(runtime.compactAndMutate).not.toHaveBeenCalled()
     expect(host.start).not.toHaveBeenCalled()
   })
 

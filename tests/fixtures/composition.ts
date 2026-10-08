@@ -18,7 +18,7 @@ import { provideMemoryRuntime } from '../../src/core/runtime.ts'
 /** Compose real, public Cordis modules. No Source controller or Host business binding. */
 export async function compositionFixture(options: Config = {}, host: {
   workspaceRegistry?: HostWorkspaceRegistry; agents?: Pick<HostAgentsService, 'get'>; providers?: MemorySpaceProviderEntry[]
-  entryPrefix?: string
+  entryPrefix?: string; documentsLimitBytes?: number
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'mnemon-composition-'))
   const workspace = join(root, 'workspace')
@@ -44,7 +44,7 @@ export async function compositionFixture(options: Config = {}, host: {
   const entryId = (id: string) => (host.entryPrefix ? host.entryPrefix + ':' : '') + id
   const releases = [
     await mount(runtimePlugin, { instanceId: entryId('mnemon-source-runtime') }),
-    await mount(documentsPlugin, { instanceId: entryId('mnemon-source-documents') }),
+    await mount(documentsPlugin, { instanceId: entryId('mnemon-source-documents'), ...(host.documentsLimitBytes === undefined ? {} : { config: { limitBytes: host.documentsLimitBytes } }) }),
     await mount({ inject: ['mnemonMemory'], async apply(ctx: Context) {
       await spacesPlugin.installMemorySpaces(ctx, [
         { instanceId: native.id, module: native, config: undefined },

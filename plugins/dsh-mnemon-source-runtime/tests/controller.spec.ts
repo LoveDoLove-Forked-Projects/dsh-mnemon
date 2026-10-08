@@ -508,6 +508,51 @@ describe('RuntimeMemoryController', () => {
     ])
   })
 
+  it('moves the entries compaction leaves out to the local archive when asked to (issue 336)', async () => {
+    const { directory, controller } = fixture()
+    const first = 'Release gates close at 18:00 on release days.'
+    const second = 'a'.repeat(5_050)
+    const third = 'b'.repeat(5_050)
+    for (const content of [first, second, third]) await controller.mutate({ action: 'add', target: 'memory', content, importance: 'normal' })
+    await controller.mutate({ action: 'add', target: 'user', content: 'Prefers short answers.' })
+    const request = { action: 'add', target: 'memory', content: 'Canary deploys run for one hour before the full rollout, and the release owner approves it.' } as const
+    await expect(controller.mutate(request)).rejects.toBeInstanceOf(RuntimeMemoryCapacityError)
+    const plan = await controller.planMaintenance(request)
+
+    // Exact entries, as the Host passes them when no Memory Space can take an archive.
+    const result = await controller.compactAndMutate(plan.revision, request,
+      plan.entries.map(({ content, importance }) => ({ content, importance })), 6_000, { archive: 'local' })
+
+    expect(controller.snapshot().entries.filter(entry => entry.target === 'memory').map(entry => entry.content)).toEqual([first, second, request.content])
+    expect(result).toMatchObject({ added: request.content, archived: { entries: 1, path: join(directory, 'runtime', 'archived', 'MEMORY.md') } })
+    const archivedLines = readFileSync(join(directory, 'runtime', 'archived', 'memories.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line) as Record<string, unknown>)
+    expect(archivedLines).toEqual([expect.objectContaining({ content: third, target: 'memory', importance: 'normal', fromRevision: plan.revision })])
+    const archivedMarkdown = readFileSync(join(directory, 'runtime', 'archived', 'MEMORY.md'), 'utf8')
+    expect(archivedMarkdown).toContain('# MEMORY.md archive')
+    expect(archivedMarkdown).toContain(third)
+    expect(readFileSync(controller.memoryPath, 'utf8')).not.toContain(third)
+
+    // A later archive appends below the first, with one header.
+    const next = { action: 'add', target: 'memory', content: 'c'.repeat(4_000) } as const
+    const nextPlan = await controller.planMaintenance(next)
+    await controller.compactAndMutate(nextPlan.revision, next, nextPlan.entries.map(({ content, importance }) => ({ content, importance })), 1_000, { archive: 'local' })
+    const appended = readFileSync(join(directory, 'runtime', 'archived', 'MEMORY.md'), 'utf8')
+    expect(appended.match(/# MEMORY\.md archive/g)).toHaveLength(1)
+    expect(appended.indexOf(third)).toBeLessThan(appended.lastIndexOf('## '))
+    expect(readFileSync(join(directory, 'runtime', 'archived', 'memories.jsonl'), 'utf8').trim().split('\n').length).toBeGreaterThan(1)
+  })
+
+  it('archives nothing locally unless asked, and never for USER.md', async () => {
+    const { directory, controller } = fixture()
+    await controller.mutate({ action: 'add', target: 'memory', content: 'a'.repeat(5_000) })
+    await controller.mutate({ action: 'add', target: 'memory', content: 'b'.repeat(5_000) })
+    const request = { action: 'add', target: 'memory', content: 'new durable fact' } as const
+    const plan = await controller.planMaintenance(request)
+    const result = await controller.compactAndMutate(plan.revision, request, [{ content: 'Archived workspace history.', importance: 'normal' }], 6_000)
+    expect(result).not.toHaveProperty('archived')
+    expect(existsSync(join(directory, 'runtime', 'archived'))).toBe(false)
+  })
+
   it('never archives or preserves a removed entry while recovering an already-over-capacity file', async () => {
     const { controller } = fixture()
     const now = '2026-08-13T08:00:00.000Z'

@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -356,6 +357,9 @@ export class RuntimeMemoryController {
   readonly memoryPath: string
   readonly userPath: string
   readonly lockPath: string
+  /** Where MEMORY.md entries go when compaction leaves them out and no Memory Space can take them. */
+  readonly archivePath: string
+  readonly archiveSourcePath: string
   readonly limits: RuntimeMemoryLimits
 
   private queue: Promise<unknown> = Promise.resolve()
@@ -379,6 +383,8 @@ export class RuntimeMemoryController {
     this.memoryPath = join(this.directory, 'MEMORY.md')
     this.localUserPath = join(this.directory, 'USER.md')
     this.lockPath = join(this.directory, '.memories.lock')
+    this.archivePath = join(this.directory, 'archived', 'MEMORY.md')
+    this.archiveSourcePath = join(this.directory, 'archived', 'memories.jsonl')
     const userDirectory = userRunner === undefined ? this.directory : join(userRunner.effectiveDataDir(), 'runtime')
     this.userController = userDirectory === this.directory || userRunner === undefined
       ? undefined
@@ -527,12 +533,17 @@ ${memory || '(empty)'}
     return operation
   }
 
-  /** Commit semantic compaction and the original mutation together, or leave every local file unchanged. */
+  /**
+   * Commit semantic compaction and the original mutation together, or leave every local file unchanged.
+   * With `archive: 'local'`, committed MEMORY.md entries that compaction leaves out are appended to the
+   * local archive first, so a limit with no Memory Space to archive into never loses memory.
+   */
   compactAndMutate(
     expectedRevision: string,
     request: RuntimeMemoryMutation,
     compacted: RuntimeMemoryCompactedEntry[],
     maxCompactedBytes?: number,
+    options: { archive?: 'local' } = {},
   ): Promise<RuntimeMemoryMutationResult> {
     if (request.target === 'user' && this.userController !== undefined) {
       return this.userController.compactAndMutate(expectedRevision, request, compacted, maxCompactedBytes)
@@ -566,11 +577,29 @@ ${memory || '(empty)'}
       const limit = this.limits[request.target]
       if (used > limit) throw new RuntimeMemoryCapacityError(request.target, byteCount(file.entries, request.target), used, limit)
       const next: RuntimeMemoryFile = { version: RUNTIME_MEMORY_VERSION, entries }
+      const kept = new Set(fitted.map(entry => entry.content))
+      const archived = options.archive === 'local' && request.target === 'memory'
+        ? prepared.compactableEntries.filter(entry => !kept.has(entry.content))
+        : undefined
+      // The archive is appended before the compacted store commits: a failure in
+      // between leaves an entry in both places, never in neither.
+      if (archived !== undefined && archived.length > 0) this.archiveLocally(archived, beforeRevision, now)
       this.persist(next)
-      return this.result(request.target, entries, prepared.fields)
+      return {
+        ...this.result(request.target, entries, prepared.fields),
+        ...(archived === undefined ? {} : { archived: { entries: archived.length, path: this.archivePath } }),
+      }
     }))
     this.queue = operation.catch(() => undefined)
     return operation
+  }
+
+  /** Append entries to the local archive: JSON Lines to restore from, and Markdown to read. */
+  private archiveLocally(entries: readonly RuntimeMemoryEntry[], fromRevision: string, archivedAt: string): void {
+    mkdirSync(join(this.directory, 'archived'), { recursive: true, mode: 0o700 })
+    appendFileSync(this.archiveSourcePath, entries.map(entry => `${JSON.stringify({ archivedAt, fromRevision, ...entry })}\n`).join(''), { encoding: 'utf8', mode: 0o600 })
+    const header = existsSync(this.archivePath) ? '' : '# MEMORY.md archive\n\nEntries that left MEMORY.md at its limit while no Memory Space could take them, oldest first.\n'
+    appendFileSync(this.archivePath, `${header}\n## ${archivedAt}\n\n${entries.map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER)}\n`, { encoding: 'utf8', mode: 0o600 })
   }
 
   private initialize(): void {

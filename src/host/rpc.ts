@@ -123,8 +123,8 @@ async function assisted(runtime: ScopedRuntime, lifecycle: MnemonLifecycle, type
   }
   if (typeId === 'documents') {
     if (operation === 'archive') {
+      // Without a Memory Spaces layer to index into, the coordinator archives locally (#336).
       requireCapability(runtime, typeId, 'archive')
-      requireCapability(runtime, 'memory-spaces', 'write')
       return lifecycle.archiveDocument(sessionId, String(input.id ?? ''), workspaceRoot, signal)
     }
     if (operation === 'mutate') {

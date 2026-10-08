@@ -474,11 +474,14 @@ export class MemorySpacesService {
   }
 
   /** One local metadata observation supplies membership and its revision. */
-  memoryState(): { all: MemorySpace[]; active: MemorySpace[]; revision: string } {
+  memoryState(): { all: MemorySpace[]; active: MemorySpace[]; providerReady: boolean; revision: string } {
     const all = this.memorySpaces.list()
     const serviceItems = this.memorySpaces.providerServices().items
     const enabled = new Set(serviceItems.filter(service => service.enabled).map(service => service.providerId))
-    const active = all.filter(body => body.active && (this.isNativeSpace(body) || enabled.has(body.provider.id)))
+    const commandFound = this.runner.commandFound
+    // A Mnemon Native space takes part only while its CLI is found: without it,
+    // every read and write of that space fails (#336).
+    const active = all.filter(body => body.active && (this.isNativeSpace(body) ? commandFound : enabled.has(body.provider.id)))
       .sort((left, right) => left.id.localeCompare(right.id))
     const spaces = [...all]
       .sort((left, right) => left.id.localeCompare(right.id))
@@ -494,7 +497,9 @@ export class MemorySpacesService {
     const services = serviceItems
       .map(service => ({ providerId: service.providerId, enabled: service.enabled, configured: service.configured }))
       .sort((left, right) => left.providerId.localeCompare(right.providerId))
-    return { all, active, revision: createHash('sha256').update(JSON.stringify({ bodies: spaces, services })).digest('hex') }
+    // The revision stays as it was while the CLI is found, so a working setup sees no change.
+    const revision = createHash('sha256').update(JSON.stringify({ bodies: spaces, services, ...(commandFound ? {} : { nativeUnavailable: true }) })).digest('hex')
+    return { all, active, providerReady: this.memorySpaces.defaultProviderId() !== undefined, revision }
   }
 
   /** Return a usable system snapshot without waiting for any Provider I/O. */
