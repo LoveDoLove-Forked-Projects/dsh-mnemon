@@ -58,7 +58,7 @@ Headless 会获得完整模型工具面。它把命令行任务作为普通用�
 | 工具 | 用途 | Root Agent 路径 |
 |---|---|---|
 | `mnemon_runtime_memory` | `add` / `replace` / `remove` 热记忆 | 确定性控制；add 溢出时可能启动 worker |
-| `mnemon_document_manage` | 创建、更新或归档档案 | 创建/更新确定性；归档使用 worker |
+| `mnemon_document_manage` | 创建、更新或归档档案 | 创建/更新确定性；归档使用 worker，没有记忆空间能接收索引时不经 worker 直接归档到本地 |
 | `mnemon_document_create` | 新建独立档案，不更新或归档已有档案 | 确定性 Source `create` Action；供后台审查使用 |
 | `mnemon_remember` | 按 Provider 语义沉淀洞察，回执区分已接受与持久提交 | `spawn` write worker |
 | `mnemon_link` | 在支持能力的 Provider 中建立 typed relationship | `spawn` write worker |

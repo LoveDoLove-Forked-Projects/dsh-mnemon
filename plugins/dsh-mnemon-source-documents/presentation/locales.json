@@ -58,7 +58,7 @@
     "documents.archiveDescription": "独立任务 Agent 先拟定摘要和目标空间；Host 校验后写入冷索引，再移动原文。没有已启用且支持精确写入与删除的记忆空间时，原文直接移入本地归档，不建立索引。",
     "documents.archive": "归档",
     "documents.archiveConfirm": "确认归档这份档案？",
-    "documents.archiving": "索引并迁移中…",
+    "documents.archiving": "归档中…",
     "documents.archiveNow": "确认归档",
     "documents.footnote": "`.mnemon/documents/index.json` 是控制面事实源；active 总量固定不超过 10 MB，archived 不计入上限，项目源文件不会被修改。"
   },
@@ -121,7 +121,7 @@
     "documents.archiveDescription": "An independent task Agent proposes a summary and destination. The Host validates and writes the cold index before moving the original. Without an active Memory Space that has exact writes and safe deletion, the original moves to the local archive without an index.",
     "documents.archive": "Archive",
     "documents.archiveConfirm": "Archive this document?",
-    "documents.archiving": "Indexing and moving…",
+    "documents.archiving": "Archiving…",
     "documents.archiveNow": "Confirm archive",
     "documents.footnote": "`.mnemon/documents/index.json` is the control-plane source of truth. active stays at or below 10 MB, archived is excluded, and project source files are never modified."
   }
