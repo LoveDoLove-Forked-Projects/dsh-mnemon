@@ -43,6 +43,17 @@ describe('independent Memory Spaces Source client', () => {
     expect(mutate).toHaveBeenCalledOnce()
   })
 
+  it('makes its own searches inspections and leaves Ask Agent a use (issue 338)', async () => {
+    const read = vi.fn(async () => ({ revision: 'r2', value: {} }))
+    const execute = vi.fn(async () => ({ revision: 'r3', value: {} }))
+    const client = memorySpacesPageClient({ sourceInstanceKey: 'source:spaces', revision: 'r1', read, mutate: vi.fn(),
+      assistance: { operations: ['agent-search'], execute } })
+    await client.search({ query: 'release gate' })
+    expect(read).toHaveBeenLastCalledWith('search', expect.objectContaining({ query: 'release gate', inspect: true }))
+    await client.agentSearch({ query: 'release gate' })
+    expect(execute).toHaveBeenLastCalledWith('agent-search', expect.not.objectContaining({ inspect: expect.anything() }), expect.anything())
+  })
+
   it('does not retry a rejected assisted activation as a general mutation', async () => {
     const mutate = vi.fn()
     const execute = vi.fn(async () => { throw new Error('activation denied') })
@@ -99,6 +110,8 @@ describe('independent Memory Spaces Source client', () => {
     fireEvent.click(screen.getByRole('button', { name: t('search.action') }))
     fireEvent.click(await screen.findByRole('button', { name: t('card.related') }))
     expect(await screen.findByText(t('search.noRelated'))).not.toBeNull()
+    // The page looks at memory: its searches do not count as uses (#338).
+    expect(read).toHaveBeenCalledWith('search', expect.objectContaining({ query: 'compatibility', inspect: true }))
     fireEvent.click(screen.getByRole('button', { name: t('search.closeRelated') }))
     expect(screen.queryByRole('heading', { name: t('search.related') })).toBeNull()
     // CI's packed-plugin job runs this in four parallel standalone installs, where it has taken 5-5.5 s.

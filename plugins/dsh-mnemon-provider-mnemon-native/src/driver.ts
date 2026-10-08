@@ -204,9 +204,11 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
 
   async search(body: MemorySpace, request: SearchRequest, signal?: AbortSignal): Promise<ProviderSearchResult> {
     const mode = request.mode ?? 'smart'
+    // An inspection reads a snapshot: no access counts, no row in the store's operation log.
+    const readonly = request.inspect === true ? ['--readonly'] : []
     const args = mode === 'keyword'
-      ? ['search', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
-      : ['recall', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
+      ? [...readonly, 'search', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
+      : [...readonly, 'recall', request.query, '--limit', String(request.limit ?? this.config.defaultRecallLimit)]
     if (mode === 'basic') args.push('--basic')
     if (mode !== 'keyword') {
       if (request.category !== undefined) args.push('--cat', request.category)
@@ -323,6 +325,17 @@ export class MnemonNativeProvider implements MemoryProviderAdapter {
       return new Set(stringArray(summary?.auto_pruned_ids) ?? [])
     } finally {
       rmSync(temporary, { recursive: true, force: true })
+    }
+  }
+
+  /** One stored memory by exact id, read from a snapshot without touching access counts or the log. */
+  async get(body: MemorySpace, id: string, signal?: AbortSignal): Promise<Insight | undefined> {
+    try {
+      return normalizeInsight(await this.runner.runJson(['--readonly', 'show', id], { ...(signal === undefined ? {} : { signal }), store: body.id }))
+    } catch (error) {
+      // `mnemon show` exits 1 with SQL's "no rows" for an id the store does not hold, or has forgotten.
+      if (error instanceof Error && /no rows in result set/u.test(error.message)) return undefined
+      throw error
     }
   }
 
