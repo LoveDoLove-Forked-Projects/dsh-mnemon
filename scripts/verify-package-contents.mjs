@@ -94,7 +94,9 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // System page and how an update ended, from the Profile's record (#325), bring it to 1,520,447 bytes.
 // The Entities page's two lists, loading placeholders and copy, bundled from the Memory
 // Spaces presentation, bring it to 1,524,506 bytes.
-const maximumUnpackedBytes = 1_525_500
+// Archiving working memory and Project Documents locally when no Memory Space can take
+// them, with the Runtime and Documents copy for it (#336), brings it to 1,533,295 bytes.
+const maximumUnpackedBytes = 1_534_000
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)
