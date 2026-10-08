@@ -51,7 +51,7 @@ async function fixture(state: SpacesState, config: Config = {}, documentsLimitBy
   const execute = (name: string, input: object) => Promise.resolve().then(() => tools.get(name)!.execute(input as never, { agent: root, signal: new AbortController().signal }))
   const runtimeSnapshot = () => f.graph.source('runtime').read<RuntimeMemorySnapshot>('snapshot')
   const archiveText = async () => readFileSync(join((await runtimeSnapshot()).directory, 'archived', 'MEMORY.md'), 'utf8')
-  return { ...f, start, write, begin, execute, runtimeSnapshot, archiveText }
+  return { ...f, start, coordinator, root, write, begin, execute, runtimeSnapshot, archiveText }
 }
 
 describe('memory layer combinations at their capacity limits (issue 336)', () => {
@@ -84,6 +84,20 @@ describe('memory layer combinations at their capacity limits (issue 336)', () =>
     }
   })
 
+  it.each(['ready', 'inactive-space', 'no-provider', 'layer-off', 'component-off'] as const)('keeps MEMORY.md writable outside a turn when Memory Spaces is %s', async state => {
+    const f = await fixture(state)
+    await f.graph.source('runtime').mutate('mutate', { action: 'add', target: 'memory', content: saved })
+    // No turn is begun: the write takes the Host's own path, without a View.
+    const result = await f.coordinator.runtime(f.root, { action: 'add', target: 'memory', content: pending }, new AbortController().signal)
+    expect((await f.runtimeSnapshot()).entries.map(item => item.content)).toEqual([pending])
+    if (state === 'ready') expect(result).toMatchObject({ maintenance: { kind: 'mnemon-archive' } })
+    else {
+      expect(result).toMatchObject({ maintenance: { kind: 'local-archive', memoryBodyIds: [] } })
+      expect(await f.archiveText()).toContain(saved)
+    }
+    expect(f.start).not.toHaveBeenCalled()
+  })
+
   it.each(['ready', 'inactive-space', 'no-provider', 'layer-off', 'component-off'] as const)('names only what the View offers when Memory Spaces is %s', async state => {
     const f = await fixture(state)
     const turn = await f.begin()
@@ -97,6 +111,13 @@ describe('memory layer combinations at their capacity limits (issue 336)', () =>
       expect(system).not.toContain('mnemon_recall')
       expect(system).toContain('to a local archive file')
     }
+    // Documents routing and the write rules stay while Memory Spaces is there to read.
+    const routing = turn.view.guidance?.routing
+    if (state === 'ready') expect(routing).toContain('Call mnemon_recall')
+    else if (state === 'inactive-space' || state === 'no-provider') {
+      expect(routing).toContain('Search Mnemon Documents for substantial project records')
+      expect(routing).not.toContain('mnemon_recall')
+    } else expect(routing).toBeUndefined()
     // Without a ready Provider nothing can be created or remembered, so nothing is offered.
     if (state === 'no-provider') expect(offers).toEqual([])
     f.graph.composableTurns.endTurn(turn.turnId)

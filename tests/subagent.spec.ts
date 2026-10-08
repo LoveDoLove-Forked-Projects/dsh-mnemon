@@ -2202,13 +2202,14 @@ describe('Mnemon memory subagent coordinator', () => {
     expect(recalled.results).toEqual([])
   })
 
-  it('enforces automatic Memory Space write participation before capacity archival', async () => {
+  it('enforces automatic Memory Space write participation before capacity archival, archiving locally instead (issue 336)', async () => {
     const plan = maintenancePlan()
     const host = subagents(undefined)
     const runtime = {
       mutate: vi.fn().mockRejectedValueOnce(capacityError('memory', plan.used, plan.projected, plan.limit)),
       planMaintenance: vi.fn(async () => plan),
-      compactAndMutate: vi.fn(),
+      compactAndMutate: vi.fn(async () => ({ success: true, message: 'Entry added.', target: 'memory', entryCount: 2, usage: { used: 64, limit: plan.limit },
+        added: plan.pending!.content, archived: { entries: 1, path: '/data/runtime/archived/MEMORY.md' } })),
     } as unknown as RuntimeOperations
     const memoryService = service()
     const source = runtimeSource(runtime, memoryService)
@@ -2216,9 +2217,11 @@ describe('Mnemon memory subagent coordinator', () => {
     graph.config.memoryTopology.layers['memory-spaces']!.participation.write = 'manual'
     vi.mocked(source.forAgent).mockReturnValue(graph)
 
+    // Memory Spaces take no automatic writes, so working memory makes room locally.
     await expect(new MnemonSubagentCoordinator(host.value, source as never, toolRegistry().value)
       .runtime(parent(), { action: 'add', target: 'memory', content: plan.pending!.content }, new AbortController().signal))
-      .rejects.toThrow('does not allow automatic write')
+      .resolves.toMatchObject({ added: plan.pending!.content, maintenance: { kind: 'local-archive', memoryBodyIds: [] } })
+    expect(runtime.compactAndMutate).toHaveBeenCalledWith(plan.revision, expect.anything(), expect.anything(), expect.any(Number), undefined, 'local')
     expect(host.start).not.toHaveBeenCalled()
     expect(memoryService.rememberMany).not.toHaveBeenCalled()
     expect(memoryService.remember).not.toHaveBeenCalled()

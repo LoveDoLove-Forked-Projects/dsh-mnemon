@@ -1,5 +1,5 @@
 import { join } from 'node:path'
-import { mkdirSync, readFileSync } from 'node:fs'
+import { mkdirSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import * as scoped from 'dsh-mnemon-strategy-scoped'
 import * as lightContext from 'dsh-mnemon-strategy-light-context'
@@ -279,20 +279,17 @@ describe('default Runtime capacity workflow across Host entry points', () => {
     },
   )
 
-  it.each(['tool', 'action', 'web'] as const)('respects a read-only archive destination through %s, archiving locally (issue 336)', async entry => {
+  it.each(['tool', 'action', 'web'] as const)('respects a read-only archive destination through %s', async entry => {
     const f = await fixture()
     await f.mount(scoped, { instanceId: 'scoped', config: { sourceKeys: [runtimeKey, spacesKey], writableSourceKeys: [runtimeKey] } })
     const turn = await f.begin()
+    const before = await f.graph.source('runtime').read<RuntimeMemorySnapshot>('snapshot')
     const input = { action: 'add', target: 'memory', content: pending }
-    if (entry === 'web') expect(await f.write('source-management-mutate', await f.management())).toMatchObject({ ok: true })
+    if (entry === 'web') expect(await f.write('source-management-mutate', await f.management())).toMatchObject({ ok: false, error: { message: expect.stringContaining('not offered') } })
     else await expect(f.execute(entry === 'tool' ? 'mnemon_runtime_memory' : 'mnemon_view_action', entry === 'tool' ? input : {
       offerId: turn.view.actionOffers.find(offer => offer.sourceInstanceKey === runtimeKey)!.id, input,
-    }, f.child)).resolves.toBeDefined()
-    // The read-only Memory Space is never written; the entry compaction left out is in the local archive.
-    const after = await f.graph.source('runtime').read<RuntimeMemorySnapshot>('snapshot')
-    expect(after.entries.map(item => item.content)).toEqual([pending])
-    expect(readFileSync(join(after.directory, 'archived', 'MEMORY.md'), 'utf8')).toContain(saved)
-    expect(await f.graph.source('memory-spaces').read('search', { query: 'Saved durable fact' })).toMatchObject({ results: [] })
+    }, f.child)).rejects.toThrow('not offered')
+    expect(await f.graph.source('runtime').read('snapshot')).toMatchObject({ revision: before.revision, entries: before.entries, targets: before.targets })
     expect(f.start).not.toHaveBeenCalled()
   })
 
