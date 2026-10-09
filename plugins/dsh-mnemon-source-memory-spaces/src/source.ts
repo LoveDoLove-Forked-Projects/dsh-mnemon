@@ -180,6 +180,7 @@ async function manageMemorySpaces(service: MemorySpacesService, request: MemoryS
         ...(text(input.source, 'source', 30, false) === undefined ? {} : { source: text(input.source, 'source', 30, false)! as Source }),
         ...(text(input.intent, 'intent', 30, false) === undefined ? {} : { intent: text(input.intent, 'intent', 30, false)! as Intent }),
         ...(stringArray(input.memoryBodyIds, 'memoryBodyIds', 10_000) === undefined ? {} : { memoryBodyIds: stringArray(input.memoryBodyIds, 'memoryBodyIds', 10_000)! }),
+        ...(input.inspect === true ? { inspect: true } : {}),
       }, request.signal))
       case 'related': return managementResult(service, await service.related(
         text(input.id, 'id', 2_000)!,
@@ -383,6 +384,31 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
       admittedByView.set(viewId, current)
       while (admittedByView.size > 128) admittedByView.delete(admittedByView.keys().next().value!)
     }
+    /**
+     * The Memory Space an exact id belongs to, for an action or traversal that
+     * names a memory by id. Evidence this View returned decides first, as
+     * before. Otherwise the Providers that can look an id up are asked among
+     * the spaces in `scope`, and a found memory is admitted to this View. An
+     * Agent can so forget what it just wrote, and a delegated worker can act on
+     * an id from its parent's turn (#337). A Provider that cannot look ids up
+     * keeps to evidence: its own call may reach beyond the space named.
+     */
+    const ownerOf = async (viewId: string, id: string, requestedSpace: string | undefined, scope: readonly string[], signal?: AbortSignal): Promise<string | undefined> => {
+      const entries = admittedByView.get(viewId)
+      if (requestedSpace !== undefined) {
+        if (entries?.has(requestedSpace + '/' + id) === true) return requestedSpace
+      } else {
+        const owners = [...(entries?.entries() ?? [])].filter(([reference]) => reference.endsWith('/' + id)).map(([, owner]) => owner)
+        if (owners.length > 0) return owners.length === 1 ? owners[0] : undefined
+      }
+      const candidates = requestedSpace === undefined ? scope : scope.includes(requestedSpace) ? [requestedSpace] : []
+      if (candidates.length === 0) return undefined
+      const found = await service.locate(id, candidates, signal)
+      const owners = [...new Set(found.flatMap(item => item.memoryBodyId === undefined ? [] : [item.memoryBodyId]))]
+      if (owners.length !== 1) return undefined
+      admit(viewId, [{ id, memoryBodyId: owners[0]! }])
+      return owners[0]
+    }
     const evidence = (
       request: { view: { id: string }; route: MemoryViewRoute },
       items: Insight[],
@@ -438,13 +464,16 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
     }
     return {
       facts(request): MemorySourceFacts {
-        const { active, revision } = sourceState(request.scope)
+        const { active, providerReady, revision } = sourceState(request.scope)
         const routeIds: string[] = ['inspect',
           ...(active.some(body => body.provider.capabilities.search) ? ['recall'] : []),
           ...(active.some(body => body.provider.capabilities.related) ? ['related'] : []),
         ]
-        const actionIds: string[] = service.config.writeEnabled ? ['manage-spaces',
-          ...(canRemember ? ['remember'] : []),
+        // With no Provider ready, nothing can be created or remembered: the View
+        // offers no write that is bound to fail (#336).
+        const actionIds: string[] = service.config.writeEnabled ? [
+          ...(providerReady ? ['manage-spaces'] : []),
+          ...(canRemember && providerReady ? ['remember'] : []),
           ...(active.some(body => body.provider.capabilities.link) ? ['link'] : []),
           ...(active.some(body => body.provider.capabilities.forget) ? ['forget'] : []),
         ] : []
@@ -457,7 +486,11 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
         return {
           sourceInstanceKey: context.sourceInstanceKey, sourceTypeId: 'memory-spaces', role: 'durable-evidence',
           availability: active.length === 0 ? 'degraded' : 'ready', revision, capabilities: [...capabilities], routeIds, actionIds,
-          hints: { activeCount: active.length, providerCount: new Set(active.map(body => body.provider.id)).size },
+          hints: {
+            activeCount: active.length, providerCount: new Set(active.map(body => body.provider.id)).size,
+            // Spaces that can take a MEMORY.md archive or a Document's index: exact writes and safe forget.
+            archivableCount: active.filter(body => body.provider.capabilities.remember && body.provider.capabilities.forget && body.provider.capabilities.writeMode === 'exact').length,
+          },
         }
       },
       project(request) {
@@ -527,10 +560,8 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
         if (request.route.sourceRouteId === 'related') {
           const id = text(input.id, 'id', 2_000)!
           const requestedSpace = text(input.memoryBodyId, 'memoryBodyId', 300, false)
-          const admitted = admittedByView.get(request.view.id)
-          const owners = [...(admitted?.entries() ?? [])].filter(([reference]) => reference.endsWith('/' + id)).map(([, bodyId]) => bodyId)
-          const owner = requestedSpace === undefined ? owners.length === 1 ? owners[0] : undefined : admitted?.get(requestedSpace + '/' + id)
-          if (owner === undefined) throw new Error('related-memory traversal requires evidence already admitted by this View')
+          const owner = await ownerOf(request.view.id, id, requestedSpace, allowedBodies, request.signal)
+          if (owner === undefined) throw new Error('related-memory traversal requires evidence already admitted by this View, or an id found in a Memory Space it can read')
           if (!allowedBodies.includes(owner)) throw new Error('related-memory owner is outside this View ReadGrant')
           const edge = text(input.edge, 'edge', 30, false) as EdgeType | undefined
           if (edge !== undefined && !EDGES.has(edge)) throw new Error(`unsupported edge: ${edge}`)
@@ -547,13 +578,8 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
         const allowedBodies = grantIds(grant)
         const created = createdByView.get(request.view.id) ?? new Set<string>()
         const writableBodies = writeBodies(request.view.id, grant)
-        const admittedOwner = (id: string): string | undefined => {
-          const requestedSpace = text(input.memoryBodyId, 'memoryBodyId', 300, false)
-          const entries = admittedByView.get(request.view.id)
-          if (requestedSpace !== undefined) return entries?.get(requestedSpace + '/' + id)
-          const owners = [...(entries?.entries() ?? [])].filter(([reference]) => reference.endsWith('/' + id)).map(([, owner]) => owner)
-          return owners.length === 1 ? owners[0] : undefined
-        }
+        const admittedOwner = (id: string): Promise<string | undefined> =>
+          ownerOf(request.view.id, id, text(input.memoryBodyId, 'memoryBodyId', 300, false), allowedBodies, request.signal)
         let result: MemoryJsonValue
         let bodyId: string | undefined
         if (request.offer.sourceActionId === 'manage-spaces') {
@@ -606,10 +632,10 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
         } else if (request.offer.sourceActionId === 'link') {
           const sourceId = text(input.sourceId, 'sourceId', 2_000)!
           const targetId = text(input.targetId, 'targetId', 2_000)!
-          const sourceSpace = admittedOwner(sourceId)
-          const targetSpace = admittedOwner(targetId)
+          const sourceSpace = await admittedOwner(sourceId)
+          const targetSpace = await admittedOwner(targetId)
           if (sourceSpace === undefined || targetSpace === undefined || sourceSpace !== targetSpace || !allowedBodies.includes(sourceSpace)) {
-            throw new Error('link requires two evidence items admitted by this View from the same Memory Space')
+            throw new Error('link requires two evidence items admitted by this View from the same Memory Space, or two ids found in one Memory Space it can read')
           }
           bodyId = sourceSpace
           const edge = text(input.type, 'type', 30, false) as EdgeType | undefined
@@ -618,8 +644,10 @@ export function createMemorySpacesSource(providerSnapshot: MemorySpaceProviderSn
           result = await service.link(sourceId, targetId, edge, weight, text(input.reason, 'reason', 1_000, false), request.signal, bodyId) as MemoryJsonValue
         } else if (request.offer.sourceActionId === 'forget') {
           const id = text(input.id, 'id', 2_000)!
-          bodyId = admittedOwner(id)
-          if (bodyId === undefined || !allowedBodies.includes(bodyId)) throw new Error('forget requires evidence already admitted by this View')
+          bodyId = await admittedOwner(id)
+          if (bodyId === undefined || !allowedBodies.includes(bodyId)) {
+            throw new Error('forget requires evidence already admitted by this View, or an id found in one Memory Space it can read; name the space (memoryBodyId) when several hold it')
+          }
           result = await service.forget(id, request.signal, bodyId) as MemoryJsonValue
         } else {
           throw new Error(`unsupported Memory Spaces action: ${request.offer.sourceActionId}`)

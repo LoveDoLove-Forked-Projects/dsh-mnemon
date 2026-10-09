@@ -98,7 +98,7 @@ const LABELS: Readonly<Record<WriteOutcome, MnemonKey>> = {
  * What a task Agent did with a candidate: the outcome, the Agent's own
  * summary, and, when something was written, a way to see it.
  */
-export function WriteReceipt(props: { action?: string | undefined; summary?: string | undefined; error?: string | undefined; t?: MnemonTranslate | undefined; onView?: (() => void) | undefined }): JSX.Element {
+export function WriteReceipt(props: { action?: string | undefined; summary?: string | undefined; error?: string | undefined; t?: MnemonTranslate | undefined; onView?: (() => void) | undefined; viewLabel?: string | undefined }): JSX.Element {
   const shared = useT()
   const t = props.t ?? shared
   if (props.error !== undefined) {
@@ -112,7 +112,7 @@ export function WriteReceipt(props: { action?: string | undefined; summary?: str
   return <div className={css.receipt} role="status" data-outcome={outcome}>
     <Tag tone={TONES[outcome]}>{t(LABELS[outcome])}</Tag>
     {props.summary !== undefined && props.summary !== '' && <p>{props.summary}</p>}
-    {props.onView !== undefined && viewable && <Button variant="ghost" size="sm" className={css.receiptAction} onClick={props.onView}>{t('receipt.view')}</Button>}
+    {props.onView !== undefined && viewable && <Button variant="ghost" size="sm" className={css.receiptAction} onClick={props.onView}>{props.viewLabel ?? t('receipt.view')}</Button>}
   </div>
 }
 

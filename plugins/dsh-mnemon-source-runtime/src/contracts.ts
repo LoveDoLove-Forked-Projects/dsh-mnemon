@@ -67,8 +67,10 @@ export type RuntimeMemoryMutationResult = {
   added?: string
   replaced?: { from: string; to: string }
   removed?: string
+  /** MEMORY.md entries a compaction moved to the local archive, when it ran with `archive: 'local'`. */
+  archived?: { entries: number; path: string }
   maintenance?: {
-    kind: 'local-compaction' | 'mnemon-archive'
+    kind: 'local-compaction' | 'mnemon-archive' | 'local-archive'
     runId: string
     provider: string
     summary: string
@@ -87,6 +89,8 @@ export interface RuntimeMemoryMaintenancePlan {
   projected: number
   limit: number
   requiresMaintenance: boolean
+  /** This Runtime Source moves the entries compaction leaves out to its local archive when asked (#336). */
+  localArchive?: true
 }
 
 import { DEFAULT_RUNTIME_MEMORY_LIMIT_BYTES, DEFAULT_RUNTIME_USER_LIMIT_BYTES } from './defaults.ts'

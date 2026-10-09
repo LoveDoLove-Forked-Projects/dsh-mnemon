@@ -1166,7 +1166,40 @@ describe('Mnemon DSH lifecycle integration', () => {
       source: 'explicit assistant memory action',
     }, expect.any(AbortSignal))
     expect(value.lifecycle.snapshot('session-1').counters.supervisedRequests).toBe(1)
-    await expect(value.lifecycle.supervise('session-1', 'Different content.', 'message-1')).rejects.toThrow('different content')
+  })
+
+  it('treats an edited candidate for the same message as a request of its own', async () => {
+    const value = fixture()
+    const first = await value.lifecycle.supervise('session-1', 'Keep the release checklist durable.', 'message-1')
+
+    // Issue #342: the Save to memory dialog lets the user edit a candidate after it was answered.
+    const edited = await value.lifecycle.supervise('session-1', 'Keep the release checklist and its owner durable.', 'message-1')
+
+    expect(edited).toMatchObject({ delegated: true, sessionId: 'session-1' })
+    expect(value.coordinator.write).toHaveBeenCalledTimes(2)
+    expect(value.coordinator.write).toHaveBeenLastCalledWith(value.agent, 'supervised-writeback', {
+      content: 'Keep the release checklist and its owner durable.',
+      source: 'explicit assistant memory action',
+    }, expect.any(AbortSignal))
+    // Sending the latest text again replays its result instead of writing it twice.
+    await expect(value.lifecycle.supervise('session-1', 'Keep the release checklist and its owner durable.', 'message-1')).resolves.toEqual(edited)
+    expect(value.coordinator.write).toHaveBeenCalledTimes(2)
+    // Editing back to the first text is a request of its own as well: the edited
+    // write may have replaced it, so its first receipt no longer answers it.
+    await expect(value.lifecycle.supervise('session-1', 'Keep the release checklist durable.', 'message-1')).resolves.not.toBe(first)
+    expect(value.coordinator.write).toHaveBeenCalledTimes(3)
+    expect(value.lifecycle.snapshot('session-1').counters.supervisedRequests).toBe(3)
+  })
+
+  it('replays and takes edits per message for the dialog in a disposable task Agent', async () => {
+    const value = fixture()
+    // The Save to memory dialog sends its message id through superviseTask, scoped to the workspace.
+    const first = await value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', '/tmp/workspace-two')
+    await expect(value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', '/tmp/workspace-two')).resolves.toEqual(first)
+    expect(value.coordinator.write).toHaveBeenCalledTimes(1)
+    await value.lifecycle.superviseTask('session-1', 'Keep the release checklist and its owner durable.', 'message-1', '/tmp/workspace-two')
+    expect(value.coordinator.write).toHaveBeenCalledTimes(2)
+    expect(value.createTaskAgent).toHaveBeenCalledTimes(2)
   })
 
   it('extracts assistant text from the durable DSH message content', () => {

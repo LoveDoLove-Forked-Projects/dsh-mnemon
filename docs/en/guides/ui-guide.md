@@ -43,16 +43,20 @@ Temporary progress, guesses and secrets are not written.
 
 Each finished reply has a brain-shaped **Save to memory** in its action strip, the same mark as the Memory System; the database icon beside it is DSH's usage, not memory. Selecting it reads that reply and opens a dialog:
 
-- The title is **Save to memory**, with one line on what the task Agent does. **Task Agent ready** means you can send.
+- The title is **Save to memory**, with one line on what happens to the text. **Task Agent ready** means the task Agent can take it.
 - **Candidate (editable)** starts with the whole reply; usually you keep only the sentence worth remembering. **Cancel** changes nothing.
-- **Send to task Agent** hands it to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
-- A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), the task Agent's summary of where it went, in the candidate's language, and **View in Memory Spaces**. **Cancel** becomes **Close**, and sending again needs an edit to the candidate.
+- **Save to** picks where it goes:
+  - **Let the Agent decide** is the default while a task Agent can write. **Send to task Agent** hands the text to an independent task Agent, which decides whether it is worth keeping, picks the right Memory Space, removes duplicates, distils and writes, outside the conversation.
+  - **Working memory (MEMORY.md)**, **User profile (USER.md)** or an active Memory Space by name: **Save** writes the text there at once, through the same write as that place's page; no task Agent decides where it goes. Working memory and the user profile keep it as one line. Before saving, the dialog says when the text is too long for one entry or for the file, and when the file is full: working memory then keeps part of its entries and moves the rest out, and a task Agent condenses the user profile, which needs one.
+  - A place is listed while its layer is on, its component runs and its writes are not switched off.
+  - Without a task Agent, or without a Memory Space Provider, the dialog starts on **Working memory** while it is listed. With no place open at all, it says so and sending stays closed.
+- A receipt follows: the outcome (**Saved**, **Updated**, **Submitted; the Provider confirms later**, **Skipped**, **Partly saved**, **Not finished** or **Failed**), a summary of where the text went, and a link to it: **View in Memory Spaces**, or Runtime Memory for working memory and the user profile. **Cancel** becomes **Close**. Sending the same text to the same place again needs an edit, and with **Let the Agent decide** the task Agent takes the edited text as a new candidate; another place, or a send that failed, takes it as it is.
 
 | Edit the candidate | The task Agent's receipt |
 |---|---|
 | ![Save to memory with Task Agent ready and the candidate cut down to one fact](../../assets/webui-v0.5.19/en/chat-save.jpg) | ![Receipt: saved in the Lumen project Memory Space, with View in Memory Spaces](../../assets/webui-v0.5.19/en/chat-save-receipt.jpg) |
 
-**Save to memory** at the top of Memory Spaces opens the same dialog. The turn memory bar and the Save to memory button are on by default and can be turned off under [Interface](#interface). In the conversation-tab placement, these entries open the Memory System tab of the conversation they came from; with several eligible tabs in split panes, open the intended one yourself.
+**Save to memory** at the top of Memory Spaces opens the Memory Spaces dialog, without the conversation's **Save to** choice. The turn memory bar and the Save to memory button are on by default and can be turned off under [Interface](#interface). In the conversation-tab placement, these entries open the Memory System tab of the conversation they came from; with several eligible tabs in split panes, open the intended one yourself.
 
 ## The Memory System
 
@@ -83,14 +87,14 @@ Runtime memory is the compact context injected into every turn. **User profile**
 - Entries are newest first, with filters for target and text. Editing an older entry keeps its place. **Add memory** opens the dialog for a new runtime entry.
 - Keep entries short, independent and repeatedly useful; temporary progress and raw logs do not belong here.
 - A working-memory entry can be limited to git branches. It is then injected only while the session's workspace is on one of them; the page and the files on disk are unaffected.
-- When working memory reaches its limit, the Host archives the oldest entries into a memory space before adding the new one.
+- When working memory reaches its limit, the Host archives its entries into a memory space, keeps the most important ones that fit in about 70% of the limit, and adds the new one. With no memory space that can take them, for example without the Mnemon CLI or another Provider, the entries it does not keep move to the local archive `runtime/archived/MEMORY.md` in the data directory instead.
 
 <details>
 <summary>Editing, capacity and branch details</summary>
 
 Edit and Remove match an entry's full content within its target, so a short entry such as `X` can change without touching `EGO_LINUX_CHROME`. Identical entries in one target are ambiguous and are rejected without changing data.
 
-Capacity archiving moves the exact original entries. If a routing batch fails or returns an invalid proposal, that batch goes to the eligible default memory space, or the first eligible one, and the summary records why. Spaces created or activated during the current turn can receive the archive once they are active and support it. If no destination works, existing entries stay intact and the pending add is not saved; retry it after fixing the cause.
+Capacity archiving moves the exact original entries. If a routing batch fails or returns an invalid proposal, that batch goes to the eligible default memory space, or the first eligible one, and the summary records why. Spaces created or activated during the current turn can receive the archive once they are active and support it. If a memory space could take the archive but this turn cannot write to it, existing entries stay intact and the pending add is not saved; retry it in a new turn after fixing the cause. With no memory space that could take it at all, the entries that are not kept move to the local archive instead.
 
 When the Agent writes the user profile, `branches` must be omitted or empty. For working memory, `branches: []` on replace clears the scope; omitting it keeps the scope. The model-facing snapshot adds each entry's importance and age in days for the new turn; stored text is unchanged. See [projection format and limits](../reference/storage-model.md#source-of-truth-and-projections).
 
@@ -105,12 +109,12 @@ Documents hold complete narratives: designs, investigations, procedures and hand
 - Switch between **Active** and **Archived**. The reader keeps the title, retrieval description, provenance, revision, hash, size and full Markdown.
 - Search matches the title, description and body. Lists are newest first; updating an older document does not move it.
 - Source files in your project are never modified; a document is a managed copy.
-- Archiving indexes the document in a memory space before moving the original, so the cold copy stays findable. The destination must be active and support exact writes and safe forget.
+- Archiving indexes the document in a memory space before moving the original, so the cold copy stays findable. The destination must be active and support exact writes and safe forget. With no such memory space at all, the document is archived locally without an index and stays readable under **Archived**.
 
 <details>
 <summary>Archiving and background review details</summary>
 
-For an explicit archive or capacity maintenance, an independent task Agent without memory tools proposes a summary and one eligible memory space. The Host validates it, adds the exact cold path and content hash, writes the index and records lineage before moving the original. An invalid proposal changes nothing. If the move fails, the Host removes only the index it just created; existing verified indexes are reused and never deleted. If cleanup fails or the Provider outcome is uncertain, inspect the reported destination before retrying.
+When a memory space can take the index, for an explicit archive or capacity maintenance, an independent task Agent without memory tools proposes a summary and one eligible memory space. A local archive needs no task Agent: the Host moves the original and notes why there is no index. The Host validates it, adds the exact cold path and content hash, writes the index and records lineage before moving the original. An invalid proposal changes nothing. If the move fails, the Host removes only the index it just created; existing verified indexes are reused and never deleted. If cleanup fails or the Provider outcome is uncertain, inspect the reported destination before retrying.
 
 Background review never edits existing documents. It searches first, skips what is covered, and creates a separate supplementary document only for substantial new knowledge; with no capacity left, it skips creation. It reuses evidence already in the finished conversation and cannot reopen files.
 
@@ -150,9 +154,9 @@ Each space declares what its Provider can really supply. Mnemon Native gives typ
 
 #### Save to memory
 
-![Save to memory on the Memory Spaces page, the same dialog as in a conversation](../../assets/webui-v0.5.19/en/memory-remember.jpg)
+![Save to memory on the Memory Spaces page](../../assets/webui-v0.5.19/en/memory-remember.jpg)
 
-**Save to memory** here is the same dialog as in a conversation: write the candidate, send it to the task Agent, and view the result under **Content** from the receipt. Open **Advanced options** only when a target, category or importance is genuinely required.
+**Save to memory** here works like the conversation's dialog with **Let the Agent decide**: write the candidate, send it to the task Agent, and view the result under **Content** from the receipt. Open **Advanced options** only when a target, category or importance is genuinely required.
 
 ### On a phone
 
@@ -285,7 +289,7 @@ Use the paired selector in an unlayered stylesheet. Its specificity `(0,2,0)` be
 Memory surfaces follow one set of conventions everywhere:
 
 - **One mark**: the turn memory bar, Save to memory and the Memory System in the sidebar share the brain mark; DSH's database icon means usage, not memory.
-- **One name, one dialog**: writing to long-term memory is called **Save to memory** everywhere and opens the same dialog, which a task Agent completes with a receipt.
+- **One name, one receipt**: writing to long-term memory is called **Save to memory** everywhere, and the task Agent, or the place you choose in a conversation, answers with the same receipt.
 - **Names over identifiers**: memories are referred to by title, content and space name, never by raw id or path; **Copy ID** stays on the cards for when you need one.
 - **The same controls**: search boxes, choices, switches and dialog buttons use DSH's input, selector, switch and outlined Cancel; menus and tooltips open above dialogs.
 - **Refresh lives in the header**: **Refresh** reloads the open page; pages carry no refresh or sync buttons of their own.

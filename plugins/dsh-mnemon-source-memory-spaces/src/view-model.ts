@@ -40,8 +40,15 @@ export function modelStatus(status: MemorySpacesStatus) {
     provider.enabled || provider.configured || provider.memoryBodyCount > 0 || provider.status === 'unhealthy'
   )) ?? []
   const providers = relevantProviders.slice(0, 16)
+  // Without any Memory Space, durable memory has nowhere to go, and a full
+  // MEMORY.md archives to a local file instead. Say so, and what a space needs (#336).
+  const providerReady = status.commandFound === true || (status.providerServices ?? []).some(provider => provider.enabled && provider.configured)
+  const notice = status.memoryBodies.length > 0 ? undefined : providerReady
+    ? 'No Memory Space exists yet, so durable memory has nowhere to go and a full MEMORY.md archives to a local file. Create and activate a Memory Space to keep durable memory.'
+    : 'No Memory Space exists, and none can be created until a memory Provider is ready, so durable memory has nowhere to go and a full MEMORY.md archives to a local file. Install the Mnemon CLI for Mnemon Native, or connect another Provider on the dsh-mnemon page under Plugins, then create and activate a Memory Space.'
   return {
     healthy: status.healthy && unhealthy.length === 0,
+    ...(notice === undefined ? {} : { notice }),
     ...(status.error === undefined ? {} : { error: boundedToolText(status.error, 1_000) }),
     ...(status.version === undefined ? {} : { version: boundedToolText(status.version, 120) }),
     commandFound: status.commandFound,

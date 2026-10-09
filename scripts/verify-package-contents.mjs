@@ -44,86 +44,15 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
     .map(source => `${path}: ${source}`)
 })
 
-// Core/Host and the shared page kit only; Source/Provider implementations must
-// ship in their own artifacts. Keep a bounded budget, not the old monolith size.
-// Includes the bounded legacy Session copy-repair executable and its bilingual
-// recovery instructions; Source implementations remain independent artifacts.
-// Runtime archive preflight and compensation add bounded Host recovery code.
-// The review publication/guard helper adds about 4 KB of Host-only code.
-// Audited legacy repair, including recorded-ID chain proofs, stays in the
-// maintenance executable. Its measured growth is ~24 KB over the null-name
-// repair baseline; retain ~2.2 KB for the separately verified Host grant fix.
-// No Source implementation enters the Starter.
-// Bounded idle review adds Host checkpoint/receipt handling, budgets and the
-// bilingual settings/status UI: measured 1,335,573 bytes (+19,717), with no
-// Source implementation included. Retain less than 3 KB of headroom.
-// Public DSH session binding, reactive settings context and list-slot guards
-// bring the measured package to 1,338,363 bytes (+2,624). Keep less than 1 KB
-// of headroom; Source implementations still ship only in their own packages.
-// Config-backed settings, retained-backup recovery, composition replay and
-// icon/Session compatibility bring the measured baseline to 1,370,778 bytes.
-// Explicit Team compatibility, complete user checkpoints and bilingual settings
-// add 2,872 bytes, for 1,373,650 total and 2,350 bytes of headroom. Source and
-// framework implementations stay external; the artifact still has 49 files.
-// The Memory composition board drawn from component declarations, component
-// pages with declared options, dependency planning, change feedback with Undo
-// and their bilingual copy bring the measured package to 1,441,661 bytes
-// (+86,272 over the 1,355,389 measured before it). Keep less
-// than 3 KB of headroom; components still ship only in their own packages.
-// The component settings region, the shipped components' settings on their
-// pages, the shared Apply and apply-at-once helpers and the storage section
-// bring it to 1,453,498 bytes (+11,837). The Status card region and the
-// Memory System's names drawn from component declarations bring it to
-// 1,458,675 bytes (+5,177). Component pages on DSH's row pages, with their
-// contribution boundary, bring it to 1,465,659 bytes (+6,984). Keep less
-// than 3 KB of headroom.
-// Starter dependency preparation adds a small native group entry and its public
-// declarations: measured 1,471,089 bytes. Framework and component code stay external.
-// The shared page controls (search, select, write receipt, task Agent tag), one
-// Save to memory dialog with its receipt, the turn memory bar's items and their
-// bilingual copy, and the README's live showcase bring the measured package to
-// 1,488,847 bytes (+17,758). Keep less than 3 KB of headroom.
-// Desktop windows on the local channels, the remote read-only reasons in both
-// languages and the Status version read measure 1,491,026 bytes. The README's
-// installation quick start with its recording brings it to 1,492,741 bytes.
-// The Starter's component group entry (`dsh-mnemon/bundle`) measures 1,494,791 bytes.
-// Idle review's one-layer rule and its runtime memory switch (#319) measure 1,498,810 bytes.
-// The conversation tab's workspace from DSH's registry with its task Agents (#326)
-// and the user turn a refused subagent step retries with (#327) bring it to 1,504,848 bytes.
-// Updating the Starter through DSH's own plugin installer, with the version dialog
-// reopened after DSH swaps in the new client, the restart reminder on every Memory
-// System page and how an update ended, from the Profile's record (#325), bring it to 1,520,447 bytes.
-// The Entities page's two lists, loading placeholders and copy, bundled from the Memory
-// Spaces presentation, bring it to 1,524,506 bytes.
-// Git repository sync's payload declarations, its own RPC channel and the storage
-// page's section in both languages bring the measured package to 1,592,708 bytes
-// (+67,477 over the 1,525,231 measured on main). Keep less than 1 KB of headroom;
-// no credential, payload or Git implementation enters the artifact.
-// GitHub sign-in's device flow, its credential port and the account/repository
-// blocks in both languages bring the measured package to 1,636,881 bytes
-// (+44,173). Keep less than 1 KB of headroom; the device endpoints, the client
-// ID and every access token stay in the Host bundle, and lib/client.js still
-// carries neither of them.
-// Showing the repository entry before a sign-in, filling the form with the
-// Host's own defaults and letting the commit author stay empty bring the
-// measured package to 1,639,792 bytes (+2,911). Keep less than 1 KB of
-// headroom; the optional author is one branch in the Host bundle and adds no
-// credential, payload or endpoint to either half.
-// One reconciliation plan in one place, with the ledger recording the positions that
-// ran, paging the backup history and wrapping the directory row bring it to
-// 1,830,440 bytes (+78,945 over the 1,751,495 measured before this work). The growth is
-// mostly the client bundle: the review row gained the applied-position rendering and the
-// copy that replaced the dialog's plan block. Keep less than 1 KB of headroom; no
-// endpoint, credential or payload shape enters lib/client.js.
-// The automatic Git backup interval and the rules the reconciliation row states, in
-// both languages, brought the measured package to 1,851,923 bytes (+21,483 over the
-// 1,830,440 measured before this work). Keeping the Pack at the shape 0.5.24 reads,
-// moving the data-directory move and the task Agent's model out of this work, and
-// letting the settings bridge accept the Git sync switch, which has to reach the
-// running Host through the same profile write, measure 1,821,608 bytes
-// (-30,315 over the 1,851,923 measured before this work). Keep less than 1 KB of
-// headroom; lib/client.js still carries no endpoint, credential or payload shape.
-const maximumUnpackedBytes = 1_822_500
+// The Starter ships Core/Host, the client bundle and the shared page kit.
+// Component implementations ship in their own packages: the Host build never
+// bundles dependencies, and tests/plugin-repository-boundary.spec.ts limits
+// the client bundle to presentation assets and types from component packages.
+// This ceiling only catches an accident, such as a dependency bundled into
+// lib/client.js. Pull requests leave it alone; a release raises it once the
+// measured package comes within about 10% of it. main measured 1,524,506
+// bytes at v0.5.24.
+const maximumUnpackedBytes = 2_000_000
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)

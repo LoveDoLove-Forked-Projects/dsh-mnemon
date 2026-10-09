@@ -45,6 +45,9 @@ Use `global` for a common local root, `custom` for an explicitly agreed root, or
 |   +-- memories.json
 |   +-- USER.md
 |   +-- MEMORY.md
+|   +-- archived/                  # local archive, only when no Memory Space could take one
+|       +-- MEMORY.md
+|       +-- memories.jsonl
 +-- documents/
 |   +-- index.json
 |   +-- active/
@@ -120,9 +123,9 @@ These lines annotate the unchanged entry content. `old_text` / `oldText` must ma
 | Target | Default limit | Maintenance method |
 |---|---:|---|
 | `USER.md` | 4 KiB | A local no-tool worker merges conservatively; content never enters a Memory Space |
-| `MEMORY.md` | 10 KiB | The Host archives exact committed entries, then deterministically packs the hot remainder |
+| `MEMORY.md` | 10 KiB | The Host archives exact committed entries, then deterministically packs the hot remainder; with no Memory Space that can take them, the entries it does not keep go to `runtime/archived/` |
 
-Both limits are configurable as `runtimeMemory.userLimitBytes` and `runtimeMemory.memoryLimitBytes`; see [Runtime Memory budgets](./configuration.md#runtime-memory-budgets). With the Layered strategy, capacity maintenance starts when an authorized write would exceed the limit; other strategies reject that write instead. Named tools, generic Actions, background child Agents and browser management share the same Host workflow. Browser writes use the selected storage scope without requiring an open user conversation. Archive failures preserve hot memory and return an error. Standalone Sources retain their own storage semantics; custom Strategies do not implicitly inherit default archival.
+Both limits are configurable as `runtimeMemory.userLimitBytes` and `runtimeMemory.memoryLimitBytes`; see [Runtime Memory budgets](./configuration.md#runtime-memory-budgets). With the Layered strategy, capacity maintenance starts when an authorized write would exceed the limit; other strategies reject that write instead. Named tools, generic Actions, background child Agents and browser management share the same Host workflow. Browser writes use the selected storage scope without requiring an open user conversation. Archive failures preserve hot memory and return an error. With no Memory Space that could take the archive at all, the Runtime Source moves the entries it does not keep to `runtime/archived/` instead, under the same lock and before it commits. Standalone Sources retain their own storage semantics; custom Strategies do not implicitly inherit default archival.
 
 Capacity is measured from the stored content and entry delimiters in UTF-8 bytes, excluding prompt-only metadata. A single item is limited to 8 KiB. On an overflowing `add`, `replace`, or `remove`, the Host rechecks the source revision before any Provider write. With one eligible writable Memory Space it routes without a model; with several spaces, workers see only bounded routing excerpts and return destination ids, never rewritten memory. Mnemon Native reuses exact content from a readonly namespace snapshot, groups identical pending entries, and imports the remaining originals once per destination through a schema-v1 draft with `--no-diff`. Similar but distinct facts cannot be skipped or semantically replace each other during archival. Other Providers use their adapter write semantics. The Host requires one exact terminal receipt per source (and exact Recall evidence for a skipped duplicate), then selects the retained entries by importance within a byte budget and commits that remainder together with the pending mutation under the original revision fence. A Provider cannot share the local filesystem transaction, so a later revision conflict or concurrent external write may leave already archived duplicates; existing hot facts remain protected by the revision fence.
 

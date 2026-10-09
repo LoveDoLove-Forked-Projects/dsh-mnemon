@@ -138,7 +138,9 @@ export function DocumentsPage(props: { client: DocumentsPageClient; revision: nu
     setSaving(true); setError(null); setNotice(null)
     try {
       const result = await props.client.archiveDocument(selected.id)
-      setNotice(t('documents.archived', { spaces: result.maintenance?.memoryBodyIds.join(', ') || '—' }))
+      // A local archive keeps the original without an index in any Memory Space.
+      const spaces = result.maintenance?.memoryBodyIds ?? []
+      setNotice(spaces.length === 0 ? t('documents.archivedLocally') : t('documents.archived', { spaces: spaces.join(', ') }))
       setConfirmArchive(false); setStatus('archived'); setQuery(''); props.onMutate(); await display('', 'archived'); setSelectedId(result.document.id)
     } catch (reason) { setError(message(reason)) } finally { setSaving(false) }
   }
@@ -202,7 +204,7 @@ export function DocumentsPage(props: { client: DocumentsPageClient; revision: nu
             <header><div><span>{selected.status === 'active' ? t('documents.active') : t('documents.coldArchive')}</span><h3>{selected.title}</h3><p>{selected.description || t('documents.noDescription')}</p></div><div>{props.writeEnabled && selected.status === 'active' && <button type="button" className={documentEditActionClass} onClick={beginEdit}>{t('documents.edit')}</button>}</div></header>
             <dl><div><dt>{t('documents.path')}</dt><dd><code>{selected.relativePath}</code></dd></div><div><dt>{t('documents.revision')}</dt><dd>{selected.revision}</dd></div><div><dt>{t('documents.hash')}</dt><dd><code>{selected.contentHash.slice(0, 16)}</code></dd></div><div><dt>{t('documents.size')}</dt><dd>{humanBytes(selected.sizeBytes)}</dd></div></dl>
             {selected.sourcePaths.length > 0 && <div className={css.documentSources}><span>{t('documents.sources')}</span>{selected.sourcePaths.map(path => <code key={path}>{path}</code>)}</div>}
-            {selected.status === 'archived' && <div className={css.documentArchiveReceipt}><strong>{t('documents.archiveReceipt')}</strong><p>{selected.archiveSummary}</p><div>{selected.memoryBodyIds.map(id => <code key={id}>{id}</code>)}</div></div>}
+            {selected.status === 'archived' && <div className={css.documentArchiveReceipt}><strong>{t(selected.memoryBodyIds.length === 0 ? 'documents.archiveNote' : 'documents.archiveReceipt')}</strong><p>{selected.archiveSummary}</p><div>{selected.memoryBodyIds.map(id => <code key={id}>{id}</code>)}</div></div>}
             <DocumentMarkdown content={selected.content} />
             {props.writeEnabled && selected.status === 'active' && <footer className={css.documentDanger}>{<><div><strong>{t('documents.archiveTitle')}</strong><p>{t('documents.archiveDescription')}</p></div><button type="button" className={documentArchiveActionClass} onClick={() => setConfirmArchive(true)}>{t('documents.archive')}</button></>}</footer>}
           </article>)}

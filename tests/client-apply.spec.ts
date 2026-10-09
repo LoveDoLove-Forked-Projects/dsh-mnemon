@@ -119,6 +119,8 @@ describe('Mnemon Web client composition', () => {
     expect(props.interactionScope).toBeInstanceOf(MnemonSettingsScope)
     expect(props.interactionScope).not.toBe(scope)
     expect(props.t('config.strategyTitle')).toBe('主策略')
+    // A shell that draws this page outside DSH's slot renderer passes no renderSlot (#340).
+    expect(props.renderContributed).toBeTypeOf('function')
     // Each component row DSH lists under the bundle opens that component's page, with the same services.
     const rows = slots.filter(options => options.name === 'plugins.row.config')
     expect(rows.map(row => row.key)).toEqual(STARTER_COMPONENT_ROWS.map(({ rowId }) => `dsh-mnemon#${rowId}`))
