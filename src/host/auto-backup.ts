@@ -78,9 +78,13 @@ export class MnemonAutoBackupScheduler {
   /**
    * The saved interval, or zero when it cannot be read at all. A configuration
    * file a human edited by hand can fail to parse, and a timer is the last
-   * place that should turn that into an exception nobody sees.
+   * place that should turn that into an exception nobody sees. A profile with
+   * Git sync switched off reads as zero here too, so the switch alone decides
+   * whether anything is ever pushed: the block on the settings page is a title
+   * and a switch while it is off, and a timer must not be the one exception.
    */
   private minutes(): number {
+    if (!this.runtime.config.syncEnabled) return 0
     try {
       return this.runtime.sync.settings().read().autoBackupMinutes
     } catch {

@@ -2,7 +2,7 @@ import { isDefaultSourceInstance, isWorkspaceStorageScope, type MnemonSyncAutoBa
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type { HostAgent, HostAgentsService, HostWorkspace, HostWorkspaceRegistry } from './dsh.ts'
-import { MnemonPackManager, type MnemonSettingsBridge } from './pack.ts'
+import { MnemonPackManager } from './pack.ts'
 import { MnemonReviewLedger } from './review-ledger.ts'
 import { MnemonGitSync } from './git-sync.ts'
 import type { MnemonGitHubAuth } from './github-auth.ts'
@@ -74,7 +74,7 @@ export function memoryGenerationOptions(config: ResolvedConfig, workspaceRoot: s
 }
 
 /** One default-product scope over the single Composable Runtime. */
-export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string | undefined, extensions: MemoryRuntime, settings?: MnemonSettingsBridge): MnemonRuntimeGraph {
+export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string | undefined, extensions: MemoryRuntime): MnemonRuntimeGraph {
   const root = createStorageRoot(config, workspaceRoot)
   const directory = root.effectiveDataDir()
   const attachment = extensions.attachGeneration(memoryGenerationOptions(config, workspaceRoot))
@@ -84,7 +84,7 @@ export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string
     throw new Error(evaluation.diagnostics.map(value => value.message).join('; '))
   }
   const composableTurns = new ComposableMemoryTurnManager(attachment.host)
-  const packs = new MnemonPackManager(root, config, () => {}, () => new Date(), settings)
+  const packs = new MnemonPackManager(root, config, () => {}, () => new Date())
   let disposed = false
   return {
     config, directory, storage: new StorageScopeInspector(root, config), packs, sync: new MnemonGitSync(root, config, packs),
@@ -135,7 +135,6 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
   private readonly agentGraphs = new Map<string, { token: symbol; graph: MnemonRuntimeGraph }>()
   private readonly retiredGraphs = new Set<MnemonRuntimeGraph>()
   private githubAuth: MnemonGitHubAuth | undefined
-  private settingsBridge: MnemonSettingsBridge | undefined
   private autoBackupView: (() => MnemonSyncAutoBackup | undefined) | undefined
   private closed = false
 
@@ -169,19 +168,6 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
   }
 
   /**
-   * Settings are owned by the profile, not by any one generation, so the bridge is
-   * shared the same way the GitHub grant is: every later graph keeps exporting them.
-   */
-  useSettingsBridge(bridge: MnemonSettingsBridge | undefined): void {
-    this.settingsBridge = bridge
-    if (bridge !== undefined) this.current.packs.useSettingsBridge(bridge)
-  }
-
-  private applySettingsBridge(graph: MnemonRuntimeGraph): void {
-    if (this.settingsBridge !== undefined) graph.packs.useSettingsBridge(this.settingsBridge)
-  }
-
-  /**
    * Let the settings page read the background cadence without owning the timer.
    * The timer belongs to the plugin root, one instance for the whole Host, so
    * it is shared with every generation the same way the GitHub grant is.
@@ -203,7 +189,6 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     const previous = this.current
     this.current = next
     this.applyGitHubAuth(next)
-    this.applySettingsBridge(next)
     this.applyAutoBackup(next)
     this.retireGraph(previous)
     for (const graph of this.workspaceGraphs.values()) this.retireGraph(graph)
@@ -311,7 +296,7 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     if (graph === undefined) {
       graph = createRuntimeGraph(this.current.config, key, this.extensions)
       this.applyGitHubAuth(graph)
-      this.applySettingsBridge(graph)
+      this.applyAutoBackup(graph)
       this.workspaceGraphs.set(key, graph)
     }
     return graph

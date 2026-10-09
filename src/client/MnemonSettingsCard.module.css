@@ -458,7 +458,8 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 /* Git repository sync: the same shape as the ZIP row, with a configuration
    form under it that only opens when the user asks for it. */
 .syncRow { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding-bottom: 14px; }
-.syncRow > .settingRow { padding-bottom: 6px; border-bottom: 0; }
+.syncRow > .settingRow,
+.syncRow > .toggleRow { padding-bottom: 6px; border-bottom: 0; }
 .syncRow:has(> .syncFeedback:empty):not(:has(> .syncForm)):not(:has(> .syncBar)) > .settingRow { padding-bottom: 0; }
 .rows > .syncRow:not(:last-child) { border-bottom: .5px solid var(--dsw-alias-border-l2); }
 .syncState { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px 10px; }

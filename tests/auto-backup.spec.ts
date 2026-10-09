@@ -9,6 +9,7 @@ interface Harness {
   minutes: number
   repoUrl?: string
   writeEnabled: boolean
+  syncEnabled: boolean
   pushes: number
   failure?: Error
   pushed: boolean
@@ -22,7 +23,10 @@ interface Harness {
  */
 function runtimeFor(state: Harness): LiveMnemonRuntime {
   return {
-    config: { get writeEnabled(): boolean { return state.writeEnabled } },
+    config: {
+      get writeEnabled(): boolean { return state.writeEnabled },
+      get syncEnabled(): boolean { return state.syncEnabled },
+    },
     sync: {
       settings: () => ({ read: () => ({ ...(state.repoUrl === undefined ? {} : { repoUrl: state.repoUrl }), autoBackupMinutes: state.minutes }) }),
       push: async () => {
@@ -54,7 +58,7 @@ afterEach(() => {
 
 describe('automatic Git backup', () => {
   it('arms nothing while the interval is off', async () => {
-    const state: Harness = { minutes: 0, writeEnabled: true, pushes: 0, pushed: true, committed: true }
+    const state: Harness = { minutes: 0, syncEnabled: true, writeEnabled: true, pushes: 0, pushed: true, committed: true }
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
     const stop = scheduler.start()
 
@@ -66,8 +70,36 @@ describe('automatic Git backup', () => {
     stop()
   })
 
+  it('arms nothing while Git sync itself is switched off, whatever the interval says', async () => {
+    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', writeEnabled: true, syncEnabled: false, pushes: 0, pushed: true, committed: true }
+    const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
+    const stop = scheduler.start()
+
+    // The switch is the whole gate: while it is off the block on the settings
+    // page is a title and a switch, and no Git check runs behind it - a saved
+    // interval that a reader cannot see must not be the one exception.
+    expect(scheduler.snapshot()).toEqual({ available: false })
+    await vi.advanceTimersByTimeAsync(12 * 60 * MINUTE)
+    expect(state.pushes).toBe(0)
+
+    // Switching it on arms the cadence from that moment, with no restart.
+    state.syncEnabled = true
+    scheduler.refresh()
+    expect(scheduler.snapshot()).toMatchObject({ available: true, nextAt: '2026-08-14T13:00:00.000Z' })
+    await vi.advanceTimersByTimeAsync(60 * MINUTE)
+    expect(state.pushes).toBe(1)
+
+    // Switching it back off drops the timer again.
+    state.syncEnabled = false
+    scheduler.refresh()
+    expect(scheduler.snapshot()).toEqual({ available: false, lastAt: '2026-08-14T12:00:00.000Z', lastCommit: 'abcdef1234567890', lastPushed: true })
+    await vi.advanceTimersByTimeAsync(10 * 60 * MINUTE)
+    expect(state.pushes).toBe(1)
+    stop()
+  })
+
   it('pushes once per interval and moves the next run forward', async () => {
-    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', writeEnabled: true, pushes: 0, pushed: true, committed: true }
+    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', syncEnabled: true, writeEnabled: true, pushes: 0, pushed: true, committed: true }
     const time = clock()
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), time.now)
     const stop = scheduler.start()
@@ -89,7 +121,7 @@ describe('automatic Git backup', () => {
   })
 
   it('takes a saved change to the interval without a restart', async () => {
-    const state: Harness = { minutes: 0, repoUrl: '/srv/memory.git', writeEnabled: true, pushes: 0, pushed: true, committed: true }
+    const state: Harness = { minutes: 0, repoUrl: '/srv/memory.git', syncEnabled: true, writeEnabled: true, pushes: 0, pushed: true, committed: true }
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
     const stop = scheduler.start()
     expect(scheduler.snapshot().available).toBe(false)
@@ -112,7 +144,7 @@ describe('automatic Git backup', () => {
   })
 
   it('keeps the timer running when there is no repository yet', async () => {
-    const state: Harness = { minutes: 60, writeEnabled: true, pushes: 0, pushed: true, committed: true }
+    const state: Harness = { minutes: 60, syncEnabled: true, writeEnabled: true, pushes: 0, pushed: true, committed: true }
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
     const stop = scheduler.start()
 
@@ -130,7 +162,7 @@ describe('automatic Git backup', () => {
   })
 
   it('reports a read-only Host instead of pushing, and pushes once it is writable', async () => {
-    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', writeEnabled: false, pushes: 0, pushed: true, committed: true }
+    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', syncEnabled: true, writeEnabled: false, pushes: 0, pushed: true, committed: true }
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
     const stop = scheduler.start()
 
@@ -151,7 +183,7 @@ describe('automatic Git backup', () => {
   })
 
   it('reports a failed push and says nothing about the lock it is meant to lose to', async () => {
-    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', writeEnabled: true, pushes: 0, pushed: true, committed: true, failure: new Error('authentication failed') }
+    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', syncEnabled: true, writeEnabled: true, pushes: 0, pushed: true, committed: true, failure: new Error('authentication failed') }
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
     const stop = scheduler.start()
 
@@ -173,7 +205,7 @@ describe('automatic Git backup', () => {
   })
 
   it('stops with the runtime it reads', async () => {
-    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', writeEnabled: true, pushes: 0, pushed: true, committed: true }
+    const state: Harness = { minutes: 60, repoUrl: '/srv/memory.git', syncEnabled: true, writeEnabled: true, pushes: 0, pushed: true, committed: true }
     const scheduler = new MnemonAutoBackupScheduler(runtimeFor(state), clock().now)
     const stop = scheduler.start()
     stop()

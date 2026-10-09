@@ -473,7 +473,7 @@ describe('Host assistance and channels', () => {
     expect(f.graph.sync.pull).toHaveBeenCalledWith({ mode: 'merge', components: ['documents'] })
     expect(f.sources['memory-spaces']!.mutate).toHaveBeenCalledWith('reload', {})
     expect(await handler('pull', { components: [], confirmed: true })).toMatchObject({ ok: false, error: { message: 'components must be a non-empty array' } })
-    expect(await handler('pull', { components: ['unknown'], confirmed: true })).toMatchObject({ ok: false, error: { message: 'components must be one or more of runtime, documents, memory-spaces, settings' } })
+    expect(await handler('pull', { components: ['unknown'], confirmed: true })).toMatchObject({ ok: false, error: { message: 'components must be one or more of runtime, documents, memory-spaces' } })
     expect(await handler('nope', {})).toMatchObject({ ok: false, error: { code: 'bad-request', message: 'unknown sync endpoint: nope' } })
 
     const readonly = protocolFixture({ writeEnabled: false })

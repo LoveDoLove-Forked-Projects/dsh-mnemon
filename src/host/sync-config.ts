@@ -242,12 +242,14 @@ export class MnemonSyncSettingsStore {
 
   /**
    * The saved view. Only the two sources this file can see are named here; the
-   * channel layers a stored GitHub grant on top when neither is set.
+   * channel layers a stored GitHub grant on top when neither is set, and passes in
+   * the profile switch, which is not part of the stored settings at all.
    */
-  view(settings: MnemonSyncSettings): MnemonSyncConfigView {
+  view(settings: MnemonSyncSettings, enabled: boolean): MnemonSyncConfigView {
     const token = this.token(settings)
     const present = token !== undefined && token !== ''
     return {
+      enabled,
       ...(settings.repoUrl === undefined ? {} : { repoUrl: settings.repoUrl }),
       branch: settings.branch,
       subdir: settings.subdir,

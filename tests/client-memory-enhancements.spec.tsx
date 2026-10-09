@@ -15,10 +15,13 @@ const FEATURES = [
   ['scoped', 'dsh-mnemon-strategy-scoped', 'Scoped composition', '范围组合'],
 ] as const
 
-function readyScope() {
+/** A profile that has switched Git sync on, which is what unfolds the repository block. */
+const SYNCING: Config = { storageScope: 'global', syncEnabled: true }
+
+function readyScope(value: Config = { storageScope: 'global' }) {
   return settingsScope<Config>({
     status: 'ready',
-    value: { storageScope: 'global' },
+    value,
     base: {}, user: {}, revision: 0, writable: true, mode: 'host',
   })
 }
@@ -179,10 +182,7 @@ describe('Memory enhancement settings', () => {
         flow: { userCode: '2654-9D74', verificationUri: 'https://github.com/login/device', expiresAt: new Date(Date.now() + 600_000).toISOString(), intervalMs: 5_000 },
       },
     })
-    render(<MnemonSettingsCard scope={readyScope()} connection={connection} />)
-
-    await waitFor(() => expect(screen.getByRole('button', { name: '配置' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+    render(<MnemonSettingsCard scope={readyScope(SYNCING)} connection={connection} />)
 
     expect(await screen.findByText('已登录 @octocat')).toBeTruthy()
     expect(screen.queryByText('2654-9D74')).toBeNull()
@@ -192,10 +192,7 @@ describe('Memory enhancement settings', () => {
 
   it('offers the repository entry before a sign-in and marks the author as optional', async () => {
     const { connection } = fixture({ github: { available: true, signedIn: false, writable: true } })
-    render(<MnemonSettingsCard scope={readyScope()} connection={connection} />)
-
-    await waitFor(() => expect(screen.getByRole('button', { name: '配置' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+    render(<MnemonSettingsCard scope={readyScope(SYNCING)} connection={connection} />)
 
     // Signed out, the block still explains what a sign-in adds instead of hiding itself.
     expect(await screen.findByText('登录后这里会列出你的仓库，可直接选用或新建；不登录也可以在手填表单里填写地址')).toBeTruthy()
@@ -209,9 +206,7 @@ describe('Memory enhancement settings', () => {
     cleanup()
 
     const signedIn = fixture({ github: { available: true, signedIn: true, writable: true, login: 'octocat' } })
-    render(<MnemonSettingsCard scope={readyScope()} connection={signedIn.connection} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: '配置' })).toBeTruthy())
-    fireEvent.click(screen.getByRole('button', { name: '配置' }))
+    render(<MnemonSettingsCard scope={readyScope(SYNCING)} connection={signedIn.connection} />)
 
     // The same entry turns into a real picker and a create form once signed in.
     expect((await screen.findByLabelText('新建仓库') as HTMLInputElement).placeholder).toBe('mnemon-memory')

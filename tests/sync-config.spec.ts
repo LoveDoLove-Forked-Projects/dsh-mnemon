@@ -54,8 +54,12 @@ describe('Mnemon sync configuration', () => {
   it('never returns the token, only whether one is available', () => {
     const { settings } = store()
     settings.write(settings.patch({ repoUrl: '/srv/memory.git', token: 'ghp_secret' }))
-    const view = settings.view(settings.read())
-    expect(view).toEqual({ repoUrl: '/srv/memory.git', branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR, hasToken: true, credentialSource: 'token', authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL, autoBackupMinutes: 0 })
+    const view = settings.view(settings.read(), true)
+    expect(view).toEqual({ enabled: true, repoUrl: '/srv/memory.git', branch: MNEMON_SYNC_DEFAULT_BRANCH, subdir: MNEMON_SYNC_DEFAULT_SUBDIR, hasToken: true, credentialSource: 'token', authorName: MNEMON_SYNC_DEFAULT_AUTHOR_NAME, authorEmail: MNEMON_SYNC_DEFAULT_AUTHOR_EMAIL, autoBackupMinutes: 0 })
+    // The switch is not a stored setting: it comes from the profile and is
+    // carried in by the caller, so a stored file can never turn sync on.
+    expect(settings.view(settings.read(), false).enabled).toBe(false)
+    expect(JSON.stringify(settings.read())).not.toContain('enabled')
     expect(JSON.stringify(view)).not.toContain('ghp_secret')
   })
 
@@ -65,7 +69,7 @@ describe('Mnemon sync configuration', () => {
     expect(settings.token(stored)).toBe('stored')
     vi.stubEnv(MNEMON_SYNC_TOKEN_ENV, 'from-environment')
     expect(settings.token(stored)).toBe('from-environment')
-    expect(settings.view(stored).hasToken).toBe(true)
+    expect(settings.view(stored, true).hasToken).toBe(true)
     vi.stubEnv(MNEMON_SYNC_TOKEN_ENV, '   ')
     expect(settings.token(stored)).toBe('stored')
   })
@@ -102,7 +106,7 @@ describe('Mnemon sync configuration', () => {
     // The interval is part of the file, so a Host that restarts keeps the cadence.
     expect(JSON.parse(readFileSync(settings.path(), 'utf8'))).toMatchObject({ autoBackupMinutes: 120 })
     expect(settings.read().autoBackupMinutes).toBe(120)
-    expect(settings.view(settings.read()).autoBackupMinutes).toBe(120)
+    expect(settings.view(settings.read(), true).autoBackupMinutes).toBe(120)
     // The field's own hint says an empty value turns the automatic backup off.
     expect(settings.patch({ autoBackupMinutes: null }).autoBackupMinutes).toBe(0)
     expect(settings.patch({ autoBackupMinutes: '' }).autoBackupMinutes).toBe(0)

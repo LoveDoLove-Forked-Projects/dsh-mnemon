@@ -12,7 +12,7 @@ import { MNEMON_GITHUB_DEFAULT_CLIENT_ID, MnemonGitHubAuth, type MnemonGitHubCre
 const directories: string[] = []
 const releases: Array<() => Promise<void>> = []
 const TOKEN = 'ghp_secret_token_value'
-const COMPONENTS = ['runtime', 'documents', 'memory-spaces', 'settings']
+const COMPONENTS = ['runtime', 'documents', 'memory-spaces']
 
 async function git(args: string[], cwd?: string): Promise<string> {
   const result = await runProcess('git', args, { timeoutMs: 60_000, env: gitEnvironment(), ...(cwd === undefined ? {} : { cwd }), label: 'git' })
@@ -59,7 +59,8 @@ function temporary(label: string): string {
 
 /** One machine: the real runtime graph plus the sync channel registered over it. */
 async function machine() {
-  const fixture = await compositionFixture()
+  // Git sync is opt-in; this suite drives the channel the profile switched on.
+  const fixture = await compositionFixture({ syncEnabled: true })
   releases.push(fixture.dispose)
   return { fixture, sync: createSyncHandler(fixture.live) as HostRpcHandler, data: join(fixture.root, 'data') }
 }

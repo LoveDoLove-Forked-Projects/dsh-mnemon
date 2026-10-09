@@ -265,6 +265,12 @@ export interface Config {
   persistenceStrategy?: MemoryPersistenceStrategy
   /** Model route used by clean, session-independent maintenance Agents. */
   taskAgentModel?: TaskAgentModelConfig
+  /**
+   * Whether this profile runs Git repository sync at all. It lives here rather than
+   * in the data directory because the settings page has to draw the block without
+   * asking the Host anything: a disabled block must not run a single Git command.
+   */
+  syncEnabled?: boolean
 }
 
 export interface TaskAgentModelConfig {
@@ -341,6 +347,7 @@ export interface ResolvedConfig {
   }
   persistenceStrategy: ResolvedMemoryPersistenceStrategy
   taskAgentModel: ResolvedTaskAgentModelConfig
+  syncEnabled: boolean
 }
 
 export interface ResolvedInteractionConfig {
@@ -563,9 +570,9 @@ export interface StatusView {
   stats?: MemorySpaceStats & { dbPath?: string }
 }
 
-export type MnemonPackComponent = 'runtime' | 'documents' | 'memory-spaces' | 'settings'
+export type MnemonPackComponent = 'runtime' | 'documents' | 'memory-spaces'
 /** The Sources that keep their data in Mnemon's data directory, in the order a backup lists them. */
-export const MNEMON_PACK_COMPONENTS = ['runtime', 'documents', 'memory-spaces', 'settings'] as const satisfies readonly MnemonPackComponent[]
+export const MNEMON_PACK_COMPONENTS = ['runtime', 'documents', 'memory-spaces'] as const satisfies readonly MnemonPackComponent[]
 export type MnemonPackScope = 'full' | MnemonPackComponent
 export type MnemonPackImportMode = 'merge' | 'replace'
 
@@ -582,8 +589,6 @@ export interface MnemonPackManifest {
   scope: MnemonPackScope
   exportedAt: string
   source: { plugin: 'dsh-mnemon'; pluginVersion: string }
-  /** The installation that wrote this payload, so a reader can tell two machines apart. */
-  machine?: MnemonMachineIdentity
   components: MnemonPackComponent[]
   summary: MnemonPackComponentSummary[]
 }
@@ -637,26 +642,9 @@ export interface MnemonPackImportResult {
 }
 
 /**
- * The profile settings a backup carries. Only the user layer travels: machine
- * local keys (the data directory, the CLI path, the storage scope, and custom
- * pack ids) describe one installation and are never restored from a Pack.
- */
-export interface MnemonSettingsNamespaceSnapshot {
-  ns: string
-  user: JsonValue
-  updatedAt: string
-}
-
-export interface MnemonSettingsPayload {
-  version: 1
-  exportedAt: string
-  namespaces: MnemonSettingsNamespaceSnapshot[]
-}
-
-/**
  * The identity one installation signs its entries with. It stays in the data
- * directory's state area, which no Pack component carries, and travels only as
- * the provenance of the entries a Pack does carry.
+ * directory's state area, which no Pack component carries, and travels only
+ * over the sync channel, never inside a Pack.
  */
 export interface MnemonMachineIdentity {
   id: string
@@ -787,6 +775,12 @@ export interface MnemonStorageMigration {
  * actions, and the token is read per operation and never leaves the Host.
  */
 export interface MnemonSyncConfigView {
+  /**
+   * Whether this profile syncs at all. It lives in the profile rather than in the
+   * data directory so the settings page can draw the block without asking the Host
+   * anything - a disabled block must not run a single Git command to render.
+   */
+  enabled: boolean
   repoUrl?: string
   branch: string
   subdir: string
@@ -881,6 +875,8 @@ export interface MnemonSyncCommit {
 }
 
 export interface MnemonSyncStatus {
+  /** Whether this profile syncs at all; when false nothing else here was checked. */
+  enabled: boolean
   configured: boolean
   config: MnemonSyncConfigView
   configPath: string
@@ -888,8 +884,12 @@ export interface MnemonSyncStatus {
   mirrorPath: string
   git: MnemonSyncGitStatus
   remote: MnemonSyncRemoteStatus
-  /** This installation's identity, which its entries and its commits carry. */
-  machine: MnemonMachineIdentity
+  /**
+   * This installation's identity, which its entries and its commits carry. Absent
+   * while sync is switched off: the identity is only ever minted for a channel that
+   * runs, and a disabled block writes nothing.
+   */
+  machine?: MnemonMachineIdentity
   lastCommit?: MnemonSyncCommit
   /** The background cadence this Host keeps; absent when no timer runs for this runtime. */
   autoBackup?: MnemonSyncAutoBackup

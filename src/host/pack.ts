@@ -20,9 +20,8 @@ import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped, type Zippable } 
 import type { ResolvedConfig } from './config.ts'
 import { DOCUMENTS_ACTIVE_LIMIT_BYTES, DOCUMENTS_VERSION, type DocumentRecord } from 'dsh-mnemon-source-documents/contracts'
 import { RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_MEMORY_VERSION, type RuntimeMemoryEntry, type RuntimeMemoryLimits, type RuntimeMemoryTarget } from 'dsh-mnemon-source-runtime/contracts'
-import { canonicalMemoryJson } from '../core/definitions.ts'
 import { createStorageRoot, type StorageRoot } from './storage-root.ts'
-import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonRuntimeMergeReport, type MnemonSettingsPayload, type MnemonSettingsNamespaceSnapshot, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
+import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonRuntimeMergeReport, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
 import { MnemonMachineStore } from './machine-identity.ts'
 
 export type { MnemonPackComponent, MnemonPackComponentSummary, MnemonPackExport, MnemonPackImportMode, MnemonPackImportResult, MnemonPackManifest, MnemonPackPreview, MnemonPackScope } from "./protocol.ts"
@@ -47,10 +46,8 @@ const MAX_FILES = 4096
 const LOCK_TIMEOUT_MS = 5_000
 const LOCK_STALE_MS = 30_000
 const LOCK_RETRY_MS = 20
-const COMPONENT_DIRECTORIES = { runtime: 'runtime', documents: 'documents', 'memory-spaces': 'data', settings: 'settings' } as const
+const COMPONENT_DIRECTORIES = { runtime: 'runtime', documents: 'documents', 'memory-spaces': 'data' } as const
 export const RUNTIME_MEMORIES_PATH = 'payload/runtime/memories.json'
-export const RUNTIME_TOMBSTONE_PATH = 'payload/runtime/tombstones.json'
-const SETTINGS_PAYLOAD_PATH = 'payload/settings/mnemon.json'
 const STATE_TOMBSTONE_FILE = 'tombstones.json'
 const STATE_RUNTIME_INDEX_FILE = 'runtime-index.json'
 const COMPONENT_ORDER = MNEMON_PACK_COMPONENTS
@@ -136,14 +133,18 @@ function payloadComponent(path: string): MnemonPackComponent | undefined {
   if (path.startsWith('payload/runtime/')) return 'runtime'
   if (path.startsWith('payload/documents/')) return 'documents'
   if (path.startsWith('payload/data/')) return 'memory-spaces'
-  if (path.startsWith('payload/settings/')) return 'settings'
   return undefined
 }
 
+/**
+ * The exact entry list a Pack may hold, kept deliberately identical to the list
+ * version 0.5.24 accepts: a backup written here opens there, and one written
+ * there opens here. A file this list does not name is not "extra data", it is a
+ * Pack the other side refuses outright, so machine-local state (deletions, the
+ * machine identity) travels over the sync channel instead of inside an archive.
+ */
 function allowedPayloadPath(path: string): boolean {
   if (path === 'payload/runtime/memories.json' || path === 'payload/runtime/USER.md' || path === 'payload/runtime/MEMORY.md') return true
-  if (path === RUNTIME_TOMBSTONE_PATH) return true
-  if (path === SETTINGS_PAYLOAD_PATH) return true
   if (path === 'payload/documents/index.json') return true
   if (/^payload\/documents\/(active|archived)\/[a-zA-Z0-9._-]+\.md$/u.test(path)) return true
   if (path === 'payload/data/.dsh-memory-bodies.json') return true
@@ -152,7 +153,7 @@ function allowedPayloadPath(path: string): boolean {
 
 function componentsForScope(scope: MnemonPackScope): MnemonPackComponent[] {
   if (scope === 'full') return [...COMPONENT_ORDER]
-  if (!COMPONENT_ORDER.includes(scope)) throw new Error('Mnemon Pack scope must be full, runtime, documents, memory-spaces, or settings')
+  if (!COMPONENT_ORDER.includes(scope)) throw new Error('Mnemon Pack scope must be full, runtime, documents, or memory-spaces')
   return [scope]
 }
 
@@ -181,20 +182,22 @@ export function parseManifest(value: unknown): MnemonPackManifest {
     }
     return { component, files: Number(item!.files), bytes: Number(item!.bytes), items: Number(item!.items) }
   })
-  const machine = parseMachineIdentity(manifest.machine)
+  // Anything else the writer put in the manifest (a newer field, a sync channel's
+  // own extension) is ignored rather than rejected: a reader has to open a Pack
+  // written by a version it has never seen.
   return {
     format: MNEMON_PACK_FORMAT,
     version: MNEMON_PACK_VERSION,
     scope: manifest.scope as MnemonPackScope,
     exportedAt: manifest.exportedAt,
     source: { plugin: 'dsh-mnemon', pluginVersion: source.pluginVersion },
-    ...(machine === undefined ? {} : { machine }),
     components,
     summary,
   }
 }
 
-function parseMachineIdentity(value: unknown): MnemonMachineIdentity | undefined {
+/** The sync channel reads its machine identity with this parser; no Pack carries one. */
+export function parseMachineIdentity(value: unknown): MnemonMachineIdentity | undefined {
   if (value === undefined || value === null) return undefined
   const machine = record(value)
   if (typeof machine?.id !== 'string' || machine.id.trim() === '' || typeof machine.label !== 'string' || typeof machine.createdAt !== 'string') {
@@ -305,20 +308,6 @@ export function parseTombstones(value: unknown): MnemonTombstoneFile {
   return { version: 1, tombstones }
 }
 
-function parseSettingsPayload(value: unknown): MnemonSettingsPayload {
-  const source = record(value)
-  if (source?.version !== 1 || !Array.isArray(source.namespaces)) throw new Error('settings mnemon.json is invalid')
-  const namespaces = source.namespaces.map((raw): MnemonSettingsNamespaceSnapshot => {
-    const entry = record(raw)
-    if (typeof entry?.ns !== 'string' || entry.ns.trim() === '' || typeof entry.updatedAt !== 'string' || entry.user === undefined) {
-      throw new Error('settings mnemon.json contains an invalid namespace')
-    }
-    return { ns: entry.ns, user: entry.user as MnemonSettingsPayload['namespaces'][number]['user'], updatedAt: entry.updatedAt }
-  })
-  if (typeof source.exportedAt !== 'string') throw new Error('settings mnemon.json is invalid')
-  return { version: 1, exportedAt: source.exportedAt, namespaces }
-}
-
 function runtimeBytes(entries: StoredRuntimeEntry[], target: RuntimeMemoryTarget): number {
   return Buffer.byteLength(entries.filter(entry => entry.target === target).map(entry => entry.content).join(RUNTIME_ENTRY_DELIMITER), 'utf8')
 }
@@ -401,10 +390,6 @@ function validatePackPayload(files: Unzipped, components: MnemonPackComponent[],
     const databases = Object.keys(files).filter(path => /^payload\/data\/[^/]+\/mnemon\.db$/u.test(path))
     if (databases.length !== registry.bodies.length) throw new Error('Memory Space registry does not match the database payload')
   }
-  if (components.includes('runtime') && files[RUNTIME_TOMBSTONE_PATH] !== undefined) {
-    parseTombstones(json(files[RUNTIME_TOMBSTONE_PATH]!, RUNTIME_TOMBSTONE_PATH))
-  }
-  if (components.includes('settings')) parseSettingsPayload(json(files[SETTINGS_PAYLOAD_PATH] ?? new Uint8Array(), SETTINGS_PAYLOAD_PATH))
 }
 
 function sleepSync(milliseconds: number): void {
@@ -558,8 +543,7 @@ function writeRegistry(directory: string, registry: BodyRegistry, databases: Map
 function componentItems(component: MnemonPackComponent, files: Record<string, Uint8Array>, runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): number {
   if (component === 'runtime') return parseRuntime(json(files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits).entries.length
   if (component === 'documents') return parseDocumentIndex(json(files['payload/documents/index.json']!, 'payload/documents/index.json')).documents.length
-  if (component === 'memory-spaces') return parseRegistry(json(files['payload/data/.dsh-memory-bodies.json']!, 'payload/data/.dsh-memory-bodies.json')).bodies.length
-  return parseSettingsPayload(json(files[SETTINGS_PAYLOAD_PATH]!, SETTINGS_PAYLOAD_PATH)).namespaces.length
+  return parseRegistry(json(files['payload/data/.dsh-memory-bodies.json']!, 'payload/data/.dsh-memory-bodies.json')).bodies.length
 }
 
 function summaryFor(components: MnemonPackComponent[], files: Record<string, Uint8Array>, runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS): MnemonPackComponentSummary[] {
@@ -570,18 +554,27 @@ function summaryFor(components: MnemonPackComponent[], files: Record<string, Uin
   })
 }
 
+/**
+ * The payload of one Pack, and nothing else.
+ *
+ * A removal record and the identity that signs one are machine-local state: they
+ * describe how two installations reconcile, not what a memory is, so they travel
+ * over the sync channel and never appear here. An archive that carried them would
+ * also stop opening in a version that does not know them.
+ *
+ * `stamp` is passed by the sync channel alone: signing entries with the writing
+ * machine is what lets a later merge attribute an entry, and it advances the local
+ * deletion ledger because publishing is what makes a removal visible.
+ */
 function collectExport(root: string, components: MnemonPackComponent[], runtimeLimits: RuntimeMemoryLimits = RUNTIME_MEMORY_LIMITS, stamp?: { machine: MnemonMachineIdentity; at: string }): Record<string, Uint8Array> {
   const files: Record<string, Uint8Array> = {}
   if (components.includes('runtime')) {
     const runtime = readCurrentRuntime(root, runtimeLimits)
     const entries = stamp === undefined ? runtime.entries : stampedEntries(runtime.entries, stamp.machine)
-    // Recording this export is what makes a later deletion visible to the merge, so the
-    // tombstones written here are the ones this Pack carries.
-    const tombstones = stamp === undefined ? readCurrentTombstones(root) : advanceTombstones(root, runtime.entries, stamp.machine, stamp.at)
+    if (stamp !== undefined) advanceTombstones(root, runtime.entries, stamp.machine, stamp.at)
     files[RUNTIME_MEMORIES_PATH] = strToU8(`${JSON.stringify({ ...runtime, entries }, null, 2)}\n`)
     files['payload/runtime/USER.md'] = strToU8(runtimeProjection(entries, 'user'))
     files['payload/runtime/MEMORY.md'] = strToU8(runtimeProjection(entries, 'memory'))
-    files[RUNTIME_TOMBSTONE_PATH] = strToU8(`${JSON.stringify(tombstones, null, 2)}\n`)
   }
   if (components.includes('documents')) {
     const current = readCurrentDocuments(root)
@@ -593,48 +586,7 @@ function collectExport(root: string, components: MnemonPackComponent[], runtimeL
     files['payload/data/.dsh-memory-bodies.json'] = strToU8(`${JSON.stringify(current.registry, null, 2)}\n`)
     for (const body of current.registry.bodies) files[`payload/data/${body.id}/mnemon.db`] = current.databases.get(body.id)!
   }
-  if (components.includes('settings')) files[SETTINGS_PAYLOAD_PATH] = strToU8(`${JSON.stringify(readSettingsPayload(root, stamp?.at), null, 2)}\n`)
   return files
-}
-
-/**
- * The settings the Host staged for the next export. The profile itself is never read here.
- * Without a staged file the payload is empty, and its stamp comes from the caller so that two
- * exports of the same data stay byte-identical.
- */
-function readSettingsPayload(root: string, fallbackExportedAt?: string): MnemonSettingsPayload {
-  const path = join(root, 'settings', 'mnemon.json')
-  if (!existsSync(path)) return { version: 1, exportedAt: fallbackExportedAt ?? new Date().toISOString(), namespaces: [] }
-  return parseSettingsPayload(JSON.parse(readFileSync(path, 'utf8')) as unknown)
-}
-
-/** A staging file this process cannot parse is replaced, never repaired. */
-function tryReadSettingsPayload(path: string): MnemonSettingsPayload | undefined {
-  try {
-    return parseSettingsPayload(JSON.parse(readFileSync(path, 'utf8')) as unknown)
-  } catch {
-    return undefined
-  }
-}
-
-/**
- * Keep the stamps of a namespace whose settings did not change, so two exports of the
- * same profile stay byte-identical. A namespace that changed, appeared, or disappeared
- * carries the stamp of this export, which is also what decides merge precedence.
- */
-function restampSettings(previous: MnemonSettingsPayload | undefined, collected: MnemonSettingsPayload): MnemonSettingsPayload {
-  if (previous === undefined) return collected
-  const before = new Map(previous.namespaces.map(entry => [entry.ns, entry]))
-  let changed = previous.namespaces.length !== collected.namespaces.length
-  const namespaces = collected.namespaces.map((entry) => {
-    const existing = before.get(entry.ns)
-    if (existing !== undefined && canonicalMemoryJson(entry.user, 'settings') === canonicalMemoryJson(existing.user, 'settings')) {
-      return { ...entry, updatedAt: existing.updatedAt }
-    }
-    changed = true
-    return entry
-  })
-  return { version: 1, exportedAt: changed ? collected.exportedAt : previous.exportedAt, namespaces }
 }
 
 function readCurrentTombstones(root: string): MnemonTombstoneFile {
@@ -645,11 +597,6 @@ function readCurrentTombstones(root: string): MnemonTombstoneFile {
 function writeTombstones(directory: string, file: MnemonTombstoneFile): void {
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   writeFileSync(join(directory, STATE_TOMBSTONE_FILE), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 })
-}
-
-function writeSettingsPayload(directory: string, payload: MnemonSettingsPayload): void {
-  mkdirSync(directory, { recursive: true, mode: 0o700 })
-  writeFileSync(join(directory, 'mnemon.json'), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 })
 }
 
 /**
@@ -761,17 +708,21 @@ type RuntimeMergeReport = MnemonRuntimeMergeReport
 /**
  * Fold one Pack's runtime entries into this data directory.
  *
- * A tombstone is this machine's own record that it deleted an entry, and it normally
- * wins over the branch: without that rule a deleted memory would come back on every
- * merge. `revive` is the one case where the reader says the deletion was wrong: the
- * branch's copy is written again, and the tombstone is dropped so the next merge keeps
- * agreeing with the branch instead of hiding the entry a second time.
+ * `tombstones` is the removal ledger of the other side, and only the sync channel has one:
+ * a ZIP carries none, and a merge without a ledger adds what is missing and removes nothing.
+ * That is the safe-import rule — an archive a person opens by hand must never delete a memory.
+ *
+ * With a ledger, a tombstone is this machine's own record that it deleted an entry, and it
+ * normally wins over the branch: without that rule a deleted memory would come back on every
+ * merge. `revive` is the one case where the reader says the deletion was wrong: the branch's
+ * copy is written again, and the tombstone is dropped so the next merge keeps agreeing with
+ * the branch instead of hiding the entry a second time.
  */
-function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemoryLimits, options: { revive?: boolean } = {}): { runtime: RuntimeFile; report: RuntimeMergeReport; revived: MnemonTombstone[] } {
+function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemoryLimits, options: { revive?: boolean; tombstones?: MnemonTombstoneFile } = {}): { runtime: RuntimeFile; report: RuntimeMergeReport; revived: MnemonTombstone[] } {
   const current = readCurrentRuntime(root, runtimeLimits)
   const incoming = parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits)
-  const tombstones = mergeTombstones(root, pack).tombstones
-  const entries = current.entries.filter(entry => !tombstones.some(tombstone => tombstoneCovers(tombstone, entry)))
+  const tombstones = options.tombstones === undefined ? undefined : mergeTombstoneFiles(readCurrentTombstones(root), options.tombstones).tombstones
+  const entries = tombstones === undefined ? [...current.entries] : current.entries.filter(entry => !tombstones.some(tombstone => tombstoneCovers(tombstone, entry)))
   // What is present is what survives this machine's own deletions. Keying the merge off the
   // stored file instead would count a deleted entry as already here, so reviving it would
   // report nothing added while the tombstone kept it hidden — an add that adds nothing.
@@ -780,7 +731,7 @@ function mergeRuntime(root: string, pack: ParsedPack, runtimeLimits: RuntimeMemo
   const revived: MnemonTombstone[] = []
   for (const entry of incoming.entries) {
     const key = entryKey(entry)
-    const hidden = tombstones.filter(tombstone => tombstoneCovers(tombstone, entry))
+    const hidden = tombstones === undefined ? [] : tombstones.filter(tombstone => tombstoneCovers(tombstone, entry))
     if (hidden.length > 0) {
       if (options.revive !== true) { report.held += 1; continue }
       // The reader overrules their own deletion: the entry comes back and the
@@ -808,23 +759,6 @@ function mergeTombstoneFiles(current: MnemonTombstoneFile, incoming: MnemonTombs
     if (existing === undefined || tombstone.deletedAt > existing.deletedAt) byKey.set(key, tombstone)
   }
   return { version: 1, tombstones: [...byKey.values()].sort((left, right) => left.deletedAt < right.deletedAt ? -1 : left.deletedAt > right.deletedAt ? 1 : 0) }
-}
-
-/** The tombstones this data directory and one Pack agree on. */
-function mergeTombstones(root: string, pack: ParsedPack): MnemonTombstoneFile {
-  const bytes = pack.files[RUNTIME_TOMBSTONE_PATH]
-  const incoming = bytes === undefined ? emptyTombstones() : parseTombstones(json(bytes, RUNTIME_TOMBSTONE_PATH))
-  return mergeTombstoneFiles(readCurrentTombstones(root), incoming)
-}
-
-/** Settings merge at namespace granularity: the newer snapshot of one namespace wins, both sides keep the rest. */
-function mergeSettings(current: MnemonSettingsPayload, incoming: MnemonSettingsPayload): MnemonSettingsPayload {
-  const byNamespace = new Map(current.namespaces.map(entry => [entry.ns, entry]))
-  for (const entry of incoming.namespaces) {
-    const existing = byNamespace.get(entry.ns)
-    if (existing === undefined || entry.updatedAt >= existing.updatedAt) byNamespace.set(entry.ns, entry)
-  }
-  return { version: 1, exportedAt: incoming.exportedAt, namespaces: [...byNamespace.values()] }
 }
 
 function mergeDocuments(root: string, pack: ParsedPack): { index: DocumentIndex; files: Map<string, Uint8Array> } {
@@ -895,7 +829,7 @@ function reconcilePersistedStore(root: string): void {
   }
 }
 
-function stageImport(root: string, pack: ParsedPack, components: MnemonPackComponent[], mode: MnemonPackImportMode, runtimeLimits: RuntimeMemoryLimits, options: { revive?: boolean } = {}): { staging: string; report: RuntimeMergeReport | undefined; revived: MnemonTombstone[] } {
+function stageImport(root: string, pack: ParsedPack, components: MnemonPackComponent[], mode: MnemonPackImportMode, runtimeLimits: RuntimeMemoryLimits, options: { revive?: boolean; tombstones?: MnemonTombstoneFile } = {}): { staging: string; report: RuntimeMergeReport | undefined; revived: MnemonTombstone[] } {
   const staging = join(root, `.dsh-pack-stage-${randomUUID()}`)
   mkdirSync(staging, { recursive: true, mode: 0o700 })
   try {
@@ -905,26 +839,29 @@ function stageImport(root: string, pack: ParsedPack, components: MnemonPackCompo
       const merged = mode === 'merge' ? mergeRuntime(root, pack, runtimeLimits, options) : undefined
       const runtime = merged === undefined ? parseRuntime(json(pack.files['payload/runtime/memories.json']!, 'payload/runtime/memories.json'), runtimeLimits) : merged.runtime
       writeRuntime(join(staging, 'runtime'), runtime)
-      const tombstones = mergeTombstones(root, pack)
-      if (merged === undefined) {
-        writeTombstones(join(staging, 'state'), tombstones)
-      } else {
+      // A ZIP carries no removal ledger, and a safe import must not touch the one this
+      // machine keeps: without a ledger there is nothing to write and nothing to swap.
+      if (options.tombstones !== undefined) {
+        const tombstones = mergeTombstoneFiles(readCurrentTombstones(root), options.tombstones)
+        if (merged === undefined) {
+          writeTombstones(join(staging, 'state'), tombstones)
+        } else {
+          report = merged.report
+          revived = merged.revived
+          // A revived entry stays revived only if the tombstones that hid it are gone
+          // from the state this import commits, so they are dropped here rather than
+          // after the commit has already put them back.
+          const dropped = new Set(revived.map(tombstoneKey))
+          writeTombstones(join(staging, 'state'), dropped.size === 0 ? tombstones : { version: 1, tombstones: tombstones.tombstones.filter(tombstone => !dropped.has(tombstoneKey(tombstone))) })
+        }
+      } else if (merged !== undefined) {
         report = merged.report
         revived = merged.revived
-        // A revived entry stays revived only if the tombstones that hid it are gone
-        // from the state this import commits, so they are dropped here rather than
-        // after the commit has already put them back.
-        const dropped = new Set(revived.map(tombstoneKey))
-        writeTombstones(join(staging, 'state'), dropped.size === 0 ? tombstones : { version: 1, tombstones: tombstones.tombstones.filter(tombstone => !dropped.has(tombstoneKey(tombstone))) })
       }
     }
     if (components.includes('documents')) {
       const documents = mode === 'merge' ? mergeDocuments(root, pack) : archiveDocuments(pack)
       writeDocuments(join(staging, 'documents'), documents.index, documents.files)
-    }
-    if (components.includes('settings')) {
-      const incoming = parseSettingsPayload(json(pack.files[SETTINGS_PAYLOAD_PATH]!, SETTINGS_PAYLOAD_PATH))
-      writeSettingsPayload(join(staging, 'settings'), mode === 'merge' ? mergeSettings(readSettingsPayload(root), incoming) : incoming)
     }
     if (components.includes('memory-spaces')) {
       const memory = mode === 'merge' ? mergeRegistry(root, pack) : archiveRegistry(pack)
@@ -967,8 +904,10 @@ function commitStaging(root: string, staging: string, components: MnemonPackComp
       committed.push({ directory, hadPrevious })
     }
     // Tombstones live beside the other machine-local state files, so they are swapped
-    // file by file instead of by replacing the whole state directory.
-    if (components.includes('runtime')) {
+    // file by file instead of by replacing the whole state directory — and only when
+    // the import staged a ledger at all, so a ZIP import leaves this machine's own
+    // record of what it deleted exactly as it found it.
+    if (components.includes('runtime') && existsSync(join(staging, 'state', STATE_TOMBSTONE_FILE))) {
       const directory = join(root, 'state')
       mkdirSync(directory, { recursive: true, mode: 0o700 })
       const target = join(directory, STATE_TOMBSTONE_FILE)
@@ -1004,7 +943,6 @@ function commitStaging(root: string, staging: string, components: MnemonPackComp
 }
 
 function occupied(root: string, component: MnemonPackComponent): boolean {
-  if (component === 'settings') return existsSync(join(root, 'settings', 'mnemon.json'))
   const directory = join(root, COMPONENT_DIRECTORIES[component])
   if (!existsSync(directory)) return false
   try { return readdirSync(directory).some(name => !name.startsWith('.')) } catch { return true }
@@ -1016,30 +954,18 @@ function safeName(value: string | undefined): string | undefined {
   return name === '' ? undefined : name.slice(0, 160)
 }
 
-/**
- * Settings belong to the DSH profile rather than to the Mnemon data directory, so the
- * Pack carries a snapshot of the Mnemon namespaces the Host collects and writes back.
- */
-export interface MnemonSettingsBridge {
-  collect(): Promise<MnemonSettingsPayload>
-  apply(payload: MnemonSettingsPayload): Promise<void>
-}
-
 /** Native, checksummed import/export for the one currently effective Mnemon root. */
 export class MnemonPackManager {
   private readonly root: string
   private readonly runtimeLimits: RuntimeMemoryLimits
   private readonly machine: MnemonMachineStore
-  private settings: MnemonSettingsBridge | undefined
 
   constructor(
     private readonly runner: StorageRoot,
     private readonly config: Pick<ResolvedConfig, 'storageScope' | 'runtimeMemory'>,
     private readonly afterImport: (components: MnemonPackComponent[]) => void = () => {},
     private readonly now: () => Date = () => new Date(),
-    settings: MnemonSettingsBridge | undefined = undefined,
   ) {
-    this.settings = settings
     this.root = resolve(runner.effectiveDataDir())
     this.machine = new MnemonMachineStore(runner)
     this.runtimeLimits = {
@@ -1048,14 +974,19 @@ export class MnemonPackManager {
     }
   }
 
-  /** The identity this machine stamps onto everything it exports. */
+  /** The identity this machine stamps onto what it publishes to a sync branch. */
   identity(): MnemonMachineIdentity {
     return this.machine.read()
   }
 
-  /** Late binding keeps one bridge across every runtime generation the Host swaps in. */
-  useSettingsBridge(bridge: MnemonSettingsBridge | undefined): void {
-    this.settings = bridge
+  /**
+   * What this data directory deleted, as of its last export.
+   *
+   * The ZIP path never reads this: a removal record describes how two installations
+   * reconcile, so it travels over the sync channel and stays out of the archive.
+   */
+  tombstones(): MnemonTombstoneFile {
+    return readCurrentTombstones(this.root)
   }
 
   /**
@@ -1076,39 +1007,28 @@ export class MnemonPackManager {
     })
   }
 
-  /**
-   * Settings are staged into the data directory only for the duration of one export:
-   * the profile itself stays the source of truth and is never rewritten by an export.
-   *
-   * The staging file is rewritten on every export, so an unchanged profile must keep
-   * the stamps it already had: a fresh timestamp would make the payload bytes differ
-   * and turn an otherwise identical push into a second commit.
-   */
-  private async stageSettings(components: MnemonPackComponent[]): Promise<void> {
-    if (!components.includes('settings') || this.settings === undefined) return
-    const collected = await this.settings.collect()
-    const path = join(this.root, 'settings', 'mnemon.json')
-    const previous = existsSync(path) ? tryReadSettingsPayload(path) : undefined
-    writeSettingsPayload(join(this.root, 'settings'), restampSettings(previous, collected))
-  }
-
   target(): MnemonPackTarget {
     return { root: this.root, scope: this.config.storageScope, defaultRoot: resolve(createStorageRoot({ storageScope: 'global' }).effectiveDataDir()) }
   }
 
-  async exportPack(scope: MnemonPackScope): Promise<MnemonPackExport> {
+  /**
+   * `stamp` is what the sync channel asks for and the ZIP path never does: signing entries
+   * with the writing machine is what lets a later merge attribute one, and it advances the
+   * local deletion ledger because publishing is what makes a removal visible. A backup a
+   * person downloads carries neither, so it stays readable by any version that knows the
+   * format.
+   */
+  async exportPack(scope: MnemonPackScope, options: { stamp?: boolean } = {}): Promise<MnemonPackExport> {
     const components = componentsForScope(scope)
     return this.runner.withExclusive(async () => {
       await new Promise<void>(resolveReady => setImmediate(resolveReady))
-      await this.stageSettings(components)
       return withLocks(this.root, components, () => {
         const exportedAt = this.now().toISOString()
-        const machine = this.identity()
-        const payload = collectExport(this.root, components, this.runtimeLimits, { machine, at: exportedAt })
+        const payload = collectExport(this.root, components, this.runtimeLimits, options.stamp === true ? { machine: this.identity(), at: exportedAt } : undefined)
         const summary = summaryFor(components, payload, this.runtimeLimits)
         const manifest: MnemonPackManifest = {
           format: MNEMON_PACK_FORMAT, version: MNEMON_PACK_VERSION, scope, exportedAt,
-          source: { plugin: 'dsh-mnemon', pluginVersion: '0.1.0' }, machine, components, summary,
+          source: { plugin: 'dsh-mnemon', pluginVersion: '0.1.0' }, components, summary,
         }
         const checksums: ChecksumFile = { algorithm: 'sha256', files: Object.fromEntries(Object.entries(payload).map(([path, bytes]) => [path, sha256(bytes)])) }
         const entries: Zippable = {
@@ -1140,9 +1060,12 @@ export class MnemonPackManager {
     }
   }
 
-  async importPack(base64: string, options: { mode: MnemonPackImportMode; components?: MnemonPackComponent[]; revive?: boolean }): Promise<MnemonPackImportResult> {
+  async importPack(base64: string, options: { mode: MnemonPackImportMode; components?: MnemonPackComponent[]; revive?: boolean; tombstones?: MnemonTombstoneFile }): Promise<MnemonPackImportResult> {
     const pack = parseArchive(base64, this.runtimeLimits)
     if (options.mode !== 'merge' && options.mode !== 'replace') throw new Error('Pack import mode must be merge or replace')
+    // The ledger arrives over the sync channel, so it is checked the same way a Pack is: a
+    // malformed removal record would otherwise merge silently and hide nothing.
+    const tombstones = options.tombstones === undefined ? undefined : parseTombstones(options.tombstones)
     if (options.components !== undefined && (new Set(options.components).size !== options.components.length || options.components.some(component => !COMPONENT_ORDER.includes(component)))) {
       throw new Error('requested import components are invalid')
     }
@@ -1152,7 +1075,7 @@ export class MnemonPackManager {
       await new Promise<void>(resolveReady => setImmediate(resolveReady))
       mkdirSync(this.root, { recursive: true, mode: 0o700 })
       return withLocks(this.root, components, (): MnemonPackImportResult => {
-        const staged = stageImport(this.root, pack, components, options.mode, this.runtimeLimits, options)
+        const staged = stageImport(this.root, pack, components, options.mode, this.runtimeLimits, { ...options, ...(tombstones === undefined ? {} : { tombstones }) })
         commitStaging(this.root, staged.staging, components)
         this.afterImport(components)
         return {
@@ -1161,13 +1084,6 @@ export class MnemonPackManager {
           ...(staged.report === undefined ? {} : { runtime: staged.report }),
         }
       })
-    }).then(async (result): Promise<MnemonPackImportResult> => {
-      // The data directory now holds the merged settings snapshot; applying it is
-      // what makes the running profile match what this Pack carried.
-      if (components.includes('settings') && this.settings !== undefined) {
-        await this.settings.apply(parseSettingsPayload(json(pack.files[SETTINGS_PAYLOAD_PATH]!, SETTINGS_PAYLOAD_PATH)))
-      }
-      return result
     })
   }
 }

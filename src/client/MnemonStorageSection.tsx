@@ -16,7 +16,7 @@ import { MnemonSyncSection } from './MnemonSyncSection.tsx'
 import { humanBytes, message } from './page-kit.tsx'
 import type { MnemonDirectoryPicker } from './picker.ts'
 import { SelectRow, SettingRow } from './settings-controls.tsx'
-import { PanelActions, useStaged } from './settings-panel.tsx'
+import { PanelActions, useLive, WriteFailure, useStaged } from './settings-panel.tsx'
 
 type StorageChoice = 'global' | 'workspace' | 'workspaces'
 /** Whether a shared or central directory is Mnemon's default one or one the user chose. */
@@ -165,6 +165,13 @@ export function MnemonStorageSection(props: MnemonStorageSectionProps): JSX.Elem
     await props.scope.mutate(operations)
     props.onSaved()
   })
+  // Git sync is one choice with no half-typed state: it saves the moment it is
+  // made, and the switch that made it shows the saved value again if the Host
+  // refuses the write. The choice lives in the profile rather than in the storage
+  // root, so a reader who has not switched it on has no Git run for them at all.
+  const sync = useLive(props.value?.syncEnabled === true, async value => {
+    await props.scope.mutate([{ op: 'set', path: ['syncEnabled'], value }])
+  })
   const { draft } = storage
   const problem = storageProblem(t, draft)
   // Choosing to type a directory puts the cursor in the field.
@@ -273,9 +280,12 @@ export function MnemonStorageSection(props: MnemonStorageSectionProps): JSX.Elem
       <MnemonPackSection {...(props.connection === undefined ? {} : { connection: props.connection })} {...(props.sessionId === undefined ? {} : { sessionId: props.sessionId })}
         {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} target={props.target} t={t} />
       <MnemonSyncSection {...(props.connection === undefined ? {} : { connection: props.connection })} {...(props.sessionId === undefined ? {} : { sessionId: props.sessionId })}
-        {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} disabled={props.disabled} t={t} />
-      <MnemonReviewSection {...(props.connection === undefined ? {} : { connection: props.connection })} {...(props.sessionId === undefined ? {} : { sessionId: props.sessionId })}
-        {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} disabled={props.disabled} t={t} />
+        {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} disabled={props.disabled} enabled={sync.value} onEnabled={sync.set} t={t} />
+      <WriteFailure error={sync.failed} t={t} />
+      {/* The reconciliation is the other half of one channel: it reads the branch the
+          switch above publishes to, so it only exists once that switch is on. */}
+      {sync.value && <MnemonReviewSection {...(props.connection === undefined ? {} : { connection: props.connection })} {...(props.sessionId === undefined ? {} : { sessionId: props.sessionId })}
+        {...(props.workspaceId === undefined ? {} : { workspaceId: props.workspaceId })} disabled={props.disabled} t={t} />}
     </div>
     {move !== null && <MnemonDialog title={t('storage.moveTitle')} closeLabel={t('common.close')} description={t('storage.moveDescription')} busy={moving}
       onClose={() => { if (!moving) setMove(null) }}

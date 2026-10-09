@@ -5,8 +5,9 @@ import { zipSync, unzipSync, type Unzipped } from 'fflate'
 import type { ResolvedConfig } from './config.ts'
 import { runProcess, type ProcessRunner } from './process.ts'
 import {
-  MnemonPackManager, MNEMON_PACK_MAX_EXPANDED_BYTES, RUNTIME_MEMORIES_PATH, RUNTIME_TOMBSTONE_PATH,
-  entryKey, parseManifest as parseManifestJson, parseRuntime, parseTombstones, tombstoneCovers, tombstoneKey,
+  MnemonPackManager, MNEMON_PACK_MAX_EXPANDED_BYTES, RUNTIME_MEMORIES_PATH,
+  entryKey, parseMachineIdentity, parseManifest as parseManifestJson, parseRuntime, parseTombstones,
+  tombstoneCovers, tombstoneKey,
   type RuntimeFile, type StoredRuntimeEntry,
 } from './pack.ts'
 import type {
@@ -15,7 +16,7 @@ import type {
   MnemonSyncDiffEntry,
   MnemonSyncAutoBackup, MnemonSyncCompaction, MnemonSyncFileDelta, MnemonSyncGitStatus, MnemonSyncPreview,
   MnemonSyncPullResult, MnemonSyncPushResult,
-  MnemonSyncRemoteStatus, MnemonSyncStatus, MnemonTombstone, MnemonTombstoneFile,
+  MnemonMachineIdentity, MnemonSyncRemoteStatus, MnemonSyncStatus, MnemonTombstone, MnemonTombstoneFile,
 } from './protocol.ts'
 import { RUNTIME_MEMORY_LIMITS, type RuntimeMemoryLimits } from 'dsh-mnemon-source-runtime/contracts'
 import { MNEMON_PACK_COMPONENTS, MNEMON_SYNC_TOKEN_ENV } from './protocol.ts'
@@ -86,11 +87,20 @@ interface GitOptions {
   maxOutputBytes?: number | undefined
 }
 
+/**
+ * What a sync branch records beside a plain Mnemon Pack. Everything here describes
+ * *this* machine rather than the memories: which installation pushed the payload and
+ * which removals it had recorded when it did. A Pack never carries either, so an older
+ * plugin can still open one, and only the channel that moves payloads between machines
+ * reads them back.
+ */
 interface MnemonSyncRemoteExtension {
   channel: 'git'
   branch: string
   subdir: string
   pushedAt: string
+  machine?: MnemonMachineIdentity
+  tombstones?: MnemonTombstone[]
 }
 
 /** The credential one operation resolved, and where it came from. */
@@ -104,6 +114,10 @@ interface RemotePayload {
   commit: string
   manifest: MnemonPackManifest
   pushedAt?: string
+  /** The installation that pushed the tip, when the branch recorded one. */
+  machine?: MnemonMachineIdentity
+  /** Every removal the branch has recorded; a branch without the extension recorded none. */
+  tombstones: MnemonTombstone[]
   files: Record<string, Uint8Array>
   archive: Uint8Array
 }
@@ -130,19 +144,30 @@ function versionAtLeast(version: string, minimum: string): boolean {
 function componentDirectory(component: MnemonPackComponent): string {
   if (component === 'runtime') return 'payload/runtime/'
   if (component === 'documents') return 'payload/documents/'
-  if (component === 'memory-spaces') return 'payload/data/'
-  return 'payload/settings/'
+  return 'payload/data/'
 }
 
-/** How many deletions the payload carries; a merge reports them so a push is not silent about them. */
-function tombstoneCount(entries: Record<string, Uint8Array>): number {
-  const bytes = entries['payload/runtime/tombstones.json']
-  if (bytes === undefined) return 0
+/**
+ * The deletions one side of the channel recorded. They live in the sync extension, never
+ * in the payload, so a Pack stays readable by any version; a branch that predates the
+ * extension recorded none, and an unreadable list is treated the same way rather than
+ * failing a push over bookkeeping.
+ */
+function extensionTombstones(extension: Record<string, unknown> | undefined): MnemonTombstone[] {
+  if (extension?.tombstones === undefined) return []
   try {
-    const value = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) as unknown)
-    return Array.isArray(value?.tombstones) ? value.tombstones.length : 0
+    return parseTombstones({ version: 1, tombstones: extension.tombstones }).tombstones
   } catch {
-    return 0
+    return []
+  }
+}
+
+/** The installation a payload was pushed from, read off the same extension. */
+function extensionMachine(extension: Record<string, unknown> | undefined): MnemonMachineIdentity | undefined {
+  try {
+    return parseMachineIdentity(extension?.machine)
+  } catch {
+    return undefined
   }
 }
 
@@ -372,29 +397,21 @@ function runtimeOf(files: Record<string, Uint8Array>, limits: RuntimeMemoryLimit
   }
 }
 
-/** The removals the branch recorded. A missing or unreadable file means it recorded none. */
-function tombstonesOf(files: Record<string, Uint8Array>): MnemonTombstone[] {
-  const bytes = files[RUNTIME_TOMBSTONE_PATH]
-  if (bytes === undefined) return []
-  try {
-    return parseTombstones(parseJson(bytes, 'runtime tombstones.json')).tombstones
-  } catch {
-    return []
-  }
-}
-
 /**
  * The removals this machine has not applied yet. The branch carries every removal both
- * sides ever recorded — tombstones only grow — so the raw file is not the answer to "what
- * does the branch know that I do not". A removal this machine already applied is not
- * outstanding, and one this machine has since written over no longer hides anything.
- * What remains is what the branch recorded and this machine has not carried out.
+ * sides ever recorded — tombstones only grow — so the list the branch holds is not the
+ * answer to "what does the branch know that I do not". A removal this machine already
+ * applied is not outstanding, and one this machine has since written over no longer hides
+ * anything. What remains is what the branch recorded and this machine has not carried out.
  */
-function unappliedRemovals(local: Record<string, Uint8Array>, remote: Record<string, Uint8Array>): MnemonTombstone[] {
-  const mine = tombstonesOf(local)
+function unappliedRemovals(
+  local: Record<string, Uint8Array>,
+  mine: MnemonTombstone[],
+  theirs: MnemonTombstone[],
+): MnemonTombstone[] {
   const held = new Set(mine.map(tombstoneKey))
   const entries = runtimeOf(local, RUNTIME_MEMORY_LIMITS, 'the local').entries
-  return tombstonesOf(remote).filter(tombstone =>
+  return theirs.filter(tombstone =>
     !held.has(tombstoneKey(tombstone)) && entries.some(entry => tombstoneCovers(tombstone, entry)),
   )
 }
@@ -459,7 +476,7 @@ export class MnemonGitSync {
 
   constructor(
     runner: StorageRoot,
-    private readonly config: Pick<ResolvedConfig, 'storageScope' | 'runtimeMemory'>,
+    private readonly config: Pick<ResolvedConfig, 'storageScope' | 'runtimeMemory' | 'syncEnabled'>,
     private readonly packs: MnemonPackManager,
     private readonly run: ProcessRunner = runProcess,
     private readonly now: () => Date = () => new Date(),
@@ -517,16 +534,33 @@ export class MnemonGitSync {
   private async credentialView(settings: MnemonSyncSettings): Promise<MnemonSyncConfigView> {
     const credential = await this.credential(settings)
     return {
-      ...this.store.view(settings),
+      ...this.store.view(settings, this.config.syncEnabled),
       hasToken: credential.token !== undefined,
       credentialSource: credential.source,
       ...(credential.login === undefined ? {} : { credentialLogin: credential.login }),
     }
   }
 
+  /**
+   * What the settings page reads. A profile that switched sync off gets the saved
+   * configuration and nothing else: no Git is probed, no mirror is walked, and no
+   * machine identity is minted, so drawing a disabled block stays free and a
+   * disabled channel cannot leave a trace on disk.
+   */
   async status(signal?: AbortSignal): Promise<MnemonSyncStatus> {
     const settings = this.store.read()
     const repoUrl = settings.repoUrl
+    if (!this.config.syncEnabled) {
+      return {
+        enabled: false,
+        configured: repoUrl !== undefined,
+        config: await this.credentialView(settings),
+        configPath: this.store.path(),
+        mirrorPath: this.store.mirror(),
+        git: { available: false, required: MNEMON_SYNC_MINIMUM_GIT },
+        remote: { reachable: false, branchExists: false },
+      }
+    }
     const git = await this.gitStatus(signal)
     const remote = repoUrl === undefined
       ? { reachable: false, branchExists: false }
@@ -536,6 +570,7 @@ export class MnemonGitSync {
     const commit = existsSync(this.store.mirror()) && git.available ? await this.lastCommit(signal) : undefined
     const autoBackup = this.autoBackupView?.()
     return {
+      enabled: true,
       configured: repoUrl !== undefined,
       config: await this.credentialView(settings),
       configPath: this.store.path(),
@@ -573,18 +608,28 @@ export class MnemonGitSync {
       const remote = await this.readRemote(settings, input.signal)
       let merged: MnemonSyncPushResult['merged']
       if (remote !== undefined) {
-        const imported = await this.packs.importPack(Buffer.from(remote.archive).toString('base64'), { mode: 'merge' })
+        // The branch's own removals are what make the fold-in a merge rather than an
+        // import: an entry another machine deleted stays deleted here, and the ledger
+        // that says so travels in the extension rather than in the payload.
+        const imported = await this.packs.importPack(
+          Buffer.from(remote.archive).toString('base64'),
+          { mode: 'merge', tombstones: { version: 1, tombstones: remote.tombstones } },
+        )
         merged = {
           commit: remote.commit,
-          ...(remote.manifest.machine === undefined ? {} : { machine: { id: remote.manifest.machine.id, label: remote.manifest.machine.label } }),
+          ...(remote.machine === undefined ? {} : { machine: { id: remote.machine.id, label: remote.machine.label } }),
           components: imported.components, summary: imported.summary,
-          tombstones: tombstoneCount(remote.files),
+          tombstones: remote.tombstones.length,
         }
       }
-      const exported = await this.packs.exportPack('full')
+      // Stamping records which entries this machine wrote, and advances its own ledger
+      // of what it deleted. Neither belongs in the payload, so the archive stays exactly
+      // what the ZIP path produces and any version can still open it.
+      const exported = await this.packs.exportPack('full', { stamp: true })
       const entries = unpack(Buffer.from(exported.base64, 'base64'))
       const extension: MnemonSyncRemoteExtension = {
         channel: 'git', branch: settings.branch, subdir: settings.subdir, pushedAt: exported.manifest.exportedAt,
+        machine: this.machine.read(), tombstones: this.packs.tombstones().tombstones,
       }
       entries[MANIFEST] = new TextEncoder().encode(JSON.stringify({ ...exported.manifest, [SYNC_EXTENSION]: extension }, null, 2) + '\n')
       const before = readFiles(this.payloadRoot(settings.subdir))
@@ -723,7 +768,7 @@ export class MnemonGitSync {
       // An entry the branch holds and this machine once deleted stays out of every merge
       // until the reader says that deletion was wrong. Counting them here is what lets a
       // page that offers to add the branch's memories say how many the offer would skip.
-      const mineTombstones = tombstonesOf(local)
+      const mineTombstones = this.packs.tombstones().tombstones
       const heldBack = theirs.entries.filter(entry =>
         !mineKeys.has(entryKey(entry)) && mineTombstones.some(tombstone => tombstoneCovers(tombstone, entry)),
       ).length
@@ -731,13 +776,10 @@ export class MnemonGitSync {
         repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir,
         commit: remote.commit, ...(remote.pushedAt === undefined ? {} : { pushedAt: remote.pushedAt }),
         localExportAt: exported.manifest.exportedAt,
-        local: {
-          exportedAt: exported.manifest.exportedAt, entries: mine.entries.length,
-          ...(exported.manifest.machine === undefined ? {} : { machine: exported.manifest.machine }),
-        },
+        local: { exportedAt: exported.manifest.exportedAt, entries: mine.entries.length, machine: this.machine.read() },
         remote: {
           exportedAt: remote.manifest.exportedAt, entries: theirs.entries.length,
-          ...(remote.manifest.machine === undefined ? {} : { machine: remote.manifest.machine }),
+          ...(remote.machine === undefined ? {} : { machine: remote.machine }),
         },
         localOnly, remoteOnly, conflicts, shared,
         // A page that stopped early must say so: a reader who cannot tell a complete
@@ -746,7 +788,7 @@ export class MnemonGitSync {
           || theirs.entries.length - shared > remoteOnly.length
           || found.length > conflicts.length,
         heldBack,
-        remoteTombstones: unappliedRemovals(local, remote.files),
+        remoteTombstones: unappliedRemovals(local, mineTombstones, remote.tombstones),
       }
     })
   }
@@ -781,7 +823,10 @@ export class MnemonGitSync {
     return this.lock(async () => {
       const remote = await this.readRemote(settings, input.signal)
       if (remote === undefined) throw new Error(this.absentPayload(settings))
-      const imported = await this.packs.importPack(Buffer.from(remote.archive).toString('base64'), options)
+      const imported = await this.packs.importPack(
+        Buffer.from(remote.archive).toString('base64'),
+        { ...options, tombstones: { version: 1, tombstones: remote.tombstones } },
+      )
       return {
         imported: true, mode: imported.mode,
         repoUrl: settings.repoUrl, branch: settings.branch, subdir: settings.subdir,
@@ -900,6 +945,7 @@ export class MnemonGitSync {
     const bytes = await this.show(row.commit, subdir + MANIFEST, signal)
     if (bytes === undefined) return undefined
     let manifest: MnemonPackManifest
+    let machine: MnemonMachineIdentity | undefined
     let pushedAt: string | undefined
     try {
       const raw = record(parseJson(bytes, 'the backup manifest'))
@@ -908,13 +954,14 @@ export class MnemonGitSync {
       // so the sync extension is read off the raw object, exactly as the tip is.
       const extension = record(raw[SYNC_EXTENSION])
       pushedAt = typeof extension?.pushedAt === 'string' ? extension.pushedAt : undefined
+      machine = extensionMachine(extension)
       manifest = parseManifestJson(raw)
     } catch {
       return undefined
     }
     return {
       commit: row.commit, message: row.message, committedAt: row.committedAt,
-      ...(manifest.machine === undefined ? {} : { machine: manifest.machine }),
+      ...(machine === undefined ? {} : { machine }),
       ...(pushedAt === undefined ? {} : { pushedAt }),
       components: manifest.summary,
     }
@@ -1058,11 +1105,15 @@ export class MnemonGitSync {
     }
     const extension = record(parsed[SYNC_EXTENSION])
     const pushedAt = typeof extension?.pushedAt === 'string' ? extension.pushedAt : undefined
+    const machine = extensionMachine(extension)
     // The pin keeps the rebuilt archive byte-stable across timezones.
     const archive = zipSync(files, { level: 6, mtime: new Date(1980, 0, 1) })
     return {
       commit: prepared.tip, manifest: parsed as unknown as MnemonPackManifest,
-      ...(pushedAt === undefined ? {} : { pushedAt }), files, archive,
+      ...(pushedAt === undefined ? {} : { pushedAt }),
+      ...(machine === undefined ? {} : { machine }),
+      tombstones: extensionTombstones(extension),
+      files, archive,
     }
   }
 

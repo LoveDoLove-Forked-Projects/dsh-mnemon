@@ -18,7 +18,6 @@ import { registerViewRpc } from './view-rpc.ts'
 import { MemoryPluginInstallation } from './plugin-installation.ts'
 import { MnemonRemoteService } from './remote-rpc.ts'
 import { plainHostConfig, type LiveHostConfig } from './live-config.ts'
-import { MnemonProfileSettingsBridge } from './settings-bridge.ts'
 import { ProfileMnemonSettings } from './settings-service.ts'
 import { VersionUpdateManager, type DshBundleInstaller } from './version-updates.ts'
 
@@ -97,7 +96,6 @@ export function apply(rawContext: unknown, rawConfig: MnemonConfig | LiveHostCon
   })
   const runtime = new LiveMnemonRuntime(createRuntimeGraph(effectiveConfig(settings.get()), undefined, extensions), optionalWorkspaceRegistry(ctx), ctx.agents, extensions)
   runtime.useGitHubAuth(optionalGitHubAuth(ctx))
-  runtime.useSettingsBridge(new MnemonProfileSettingsBridge(hostSettings))
   // The automatic Git backup is one timer for the whole Host, not one per
   // graph: a settings write builds and disposes a throwaway graph to validate
   // itself, and a timer owned by a graph would be armed and dropped again on

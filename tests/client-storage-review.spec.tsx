@@ -454,10 +454,55 @@ function syncHost(state: { difference: Record<string, unknown>; backups?: Record
 
 const syncCalls = (calls: Array<{ endpoint: string; payload: Record<string, unknown> }>, endpoint: string) => calls.filter(call => call.endpoint === endpoint)
 
+/** The switch a reader uses to decide whether this installation syncs at all. */
+const switched = (element: HTMLElement) => element.getAttribute('aria-checked') === 'true'
+
+/**
+ * The sync row with the switch already on, which is how the storage section renders it
+ * once the profile says so. The choice itself belongs to that section, so a page that
+ * only reads this row is handed the value rather than owning it.
+ */
+const renderSync = (connection: ClientConnectionHandle, enabled = true): void => {
+  render(<MnemonSyncSection connection={connection} disabled={false} enabled={enabled} onEnabled={vi.fn()} t={translateZh} />)
+}
+
+/** The card the switch really lives in: the storage section saves the choice where it is made. */
+function storageWith(connection: ClientConnectionHandle, value: Config, mutate = vi.fn(async () => {})) {
+  const scope = liveSettingsScope<Config>({ status: 'ready' as const, value, base: {}, user: {}, revision: 0, writable: true, mode: 'host' as const }, mutate)
+  render(<MnemonSettingsCard scope={scope} connection={connection} />)
+  return { scope, mutate }
+}
+
+describe('the Git sync switch', () => {
+  it('asks the Host nothing while it is off, and one switch turns the whole block on', async () => {
+    const { connection, calls } = syncHost({ difference: differenceOf() })
+    const { mutate } = storageWith(connection, { storageScope: 'global' })
+
+    const toggle = screen.getByRole('switch', { name: 'Git 同步' })
+    expect(switched(toggle)).toBe(false)
+    // Off is a title and a switch: no operations, no form, and no reconciliation row.
+    expect(screen.queryByRole('button', { name: '推送' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '备份历史' })).toBeNull()
+    expect(screen.queryByRole('group', { name: '记忆整理' })).toBeNull()
+    // Off is silent on the channel too: the page has talked to the Host, and none of
+    // what it asked for is the branch, the account or the ledger.
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0))
+    expect(calls.filter(call => call.endpoint === 'status' || call.endpoint === 'github-status' || call.endpoint === 'view')).toEqual([])
+
+    fireEvent.click(toggle)
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith([{ op: 'set', path: ['syncEnabled'], value: true }]))
+    // The saved value is the switch: the form unfolds and the row reads the branch.
+    expect(switched(screen.getByRole('switch', { name: 'Git 同步' }))).toBe(true)
+    expect(await screen.findByText('远端 abcdef12')).toBeTruthy()
+    expect(button('推送')).toBeTruthy()
+    expect(button('备份历史')).toBeTruthy()
+  })
+})
+
 describe('the branch history and the memories that differ', () => {
   it('lists every backup in the dialog and asks for a plan only where a subject is stated twice', async () => {
     const { connection, calls } = syncHost({ difference: differenceOf() })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
     fireEvent.click(button('备份历史'))
@@ -494,10 +539,9 @@ describe('the branch history and the memories that differ', () => {
     const { connection, calls } = syncHost(state, {
       '/dsh-mnemon-sync configure': payload => ({ ...syncConfig, autoBackupMinutes: Number(payload.autoBackupMinutes) }),
     })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
-    fireEvent.click(button('配置'))
     const select = await screen.findByLabelText('自动备份') as HTMLSelectElement
     // A channel nobody configured is a manual one, and the page says so instead of
     // naming a time that will never arrive.
@@ -521,7 +565,7 @@ describe('the branch history and the memories that differ', () => {
         ? { ...syncBackups, truncated: true }
         : { ...syncBackups, commits: [oldest], truncated: false },
     })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
     fireEvent.click(button('备份历史'))
@@ -546,7 +590,7 @@ describe('the branch history and the memories that differ', () => {
         return { imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [] }
       },
     })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
     fireEvent.click(button('备份历史'))
@@ -574,7 +618,7 @@ describe('the branch history and the memories that differ', () => {
         return { imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [], runtime: { added: 1, held: 0 } }
       },
     })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
     fireEvent.click(button('备份历史'))
@@ -597,7 +641,7 @@ describe('the branch history and the memories that differ', () => {
     const { connection, calls } = syncHost(state, {
       '/dsh-mnemon-sync pull': () => ({ imported: true, mode: 'merge', repoUrl: syncConfig.repoUrl, branch: syncConfig.branch, subdir: syncConfig.subdir, commit: 'abcdef1234567890', manifest: { format: 'mnemonpack', version: 1, scope: 'full', exportedAt: '2026-08-13T09:00:00.000Z', source: { plugin: 'dsh-mnemon', pluginVersion: '0.5.24' }, components: ['runtime'], summary: [] }, targetRoot: '/data/mnemon', components: ['runtime'], summary: [], runtime: { added: 1, held: 1 } }),
     })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
     fireEvent.click(button('备份历史'))
@@ -618,7 +662,7 @@ describe('the branch history and the memories that differ', () => {
     // One control runs the plan. The dialog reads the branch and says where the plan lives;
     // it never runs a second copy of it, which is what it used to do.
     const { connection, calls } = syncHost({ difference: differenceOf() })
-    render(<MnemonSyncSection connection={connection} disabled={false} t={translateZh} />)
+    renderSync(connection)
     await screen.findByText('远端 abcdef12')
 
     fireEvent.click(button('备份历史'))

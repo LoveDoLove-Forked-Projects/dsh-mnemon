@@ -87,7 +87,7 @@ describe('Mnemon Pack', () => {
 
     expect(exported).toMatchObject({ mimeType: MNEMON_PACK_MIME, targetRoot: source.root })
     expect(exported.fileName).toMatch(/^mnemon-backup-.*\.zip$/u)
-    expect(manifest).toMatchObject({ format: MNEMON_PACK_FORMAT, version: 1, scope: 'full', components: ['runtime', 'documents', 'memory-spaces', 'settings'] })
+    expect(manifest).toMatchObject({ format: MNEMON_PACK_FORMAT, version: 1, scope: 'full', components: ['runtime', 'documents', 'memory-spaces'] })
     expect(Object.keys(files)).toEqual(expect.arrayContaining([
       'payload/runtime/memories.json',
       'payload/documents/index.json',
@@ -119,7 +119,7 @@ describe('Mnemon Pack', () => {
     }
   })
 
-  it.each(['full', 'runtime', 'documents', 'memory-spaces', 'settings'] as const)('exports byte-identical %s Packs across timezones', async (scope) => {
+  it.each(['full', 'runtime', 'documents', 'memory-spaces'] as const)('exports byte-identical %s Packs across timezones', async (scope) => {
     const source = await fixture('pack-timezones', 23)
     vi.stubEnv('TZ', 'UTC')
     const reference = await source.manager.exportPack(scope)
@@ -224,12 +224,12 @@ describe('Mnemon Pack', () => {
     const refreshed = vi.fn()
     const manager = new MnemonPackManager(target.runner, target.config, refreshed, now)
 
-    await expect(manager.importPack(exported.base64, { mode: 'replace' })).resolves.toMatchObject({ imported: true, components: ['runtime', 'documents', 'memory-spaces', 'settings'] })
+    await expect(manager.importPack(exported.base64, { mode: 'replace' })).resolves.toMatchObject({ imported: true, components: ['runtime', 'documents', 'memory-spaces'] })
 
     expect(readdirSync(join(target.root, 'data')).filter(name => !name.startsWith('.'))).toEqual(['source'])
     expect(readFileSync(join(target.root, 'data', 'source', 'mnemon.db'))).toEqual(sqlite(4))
     expect(readFileSync(join(target.root, 'active'), 'utf8')).toBe('source\n')
-    expect(refreshed).toHaveBeenCalledWith(['runtime', 'documents', 'memory-spaces', 'settings'])
+    expect(refreshed).toHaveBeenCalledWith(['runtime', 'documents', 'memory-spaces'])
     expect(readdirSync(target.root).some(name => name.startsWith('.dsh-pack-stage-') || name.startsWith('.dsh-pack-backup-'))).toBe(false)
   })
 

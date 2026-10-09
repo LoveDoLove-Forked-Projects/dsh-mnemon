@@ -66,10 +66,10 @@ export function SelectRow<T extends string>(props: { id: string; label: string; 
  * A row whose control is the DSH Switch. A note under the hint states what the
  * switch depends on and offers what resolves it; it slides in and out.
  */
-export function ToggleRow(props: { id: string; label: string; hint: string; checked: boolean; disabled: boolean; ariaLabel?: string | undefined; note?: ReactNode; target?: string | undefined; onChange: (value: boolean) => void }): JSX.Element {
+export function ToggleRow(props: { id: string; label: string; titleId?: string | undefined; hint: string; checked: boolean; disabled: boolean; ariaLabel?: string | undefined; note?: ReactNode; target?: string | undefined; onChange: (value: boolean) => void }): JSX.Element {
   return <div className={css.toggleRow} id={props.id} {...targetOf(props.target)}>
     <div className={css.settingCopy}>
-      <strong>{props.label}</strong>
+      <strong id={props.titleId}>{props.label}</strong>
       {props.hint !== '' && <small>{props.hint}</small>}
       <Reveal>{props.note === undefined ? null : <div className={css.rowNote}>{props.note}</div>}</Reveal>
     </div>

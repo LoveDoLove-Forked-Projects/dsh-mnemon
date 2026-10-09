@@ -4,9 +4,10 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { unzipSync } from 'fflate'
 import { resolveConfig } from '../src/host/config.ts'
-import { MnemonPackManager, type MnemonSettingsBridge } from '../src/host/pack.ts'
+import { MnemonPackManager } from '../src/host/pack.ts'
 import { createStorageRoot } from '../src/host/storage-root.ts'
 import { MnemonGitSync, gitEnvironment } from '../src/host/git-sync.ts'
+import { MnemonMachineStore } from '../src/host/machine-identity.ts'
 import { runProcess } from '../src/host/process.ts'
 import { sourceFixture } from './fixtures/sources.ts'
 
@@ -53,18 +54,48 @@ function entriesOf(root: string): string[] {
   return (JSON.parse(readFileSync(path, 'utf8')) as { entries: { content: string }[] }).entries.map(entry => entry.content)
 }
 
+/**
+ * The identity a data directory carries. A profile that never switched sync on
+ * mints none, and asking for one here would hide exactly that: a machine identity
+ * that only exists because the test wanted to read it.
+ */
+function identityOf(root: string): { id: string; label: string } {
+  return new MnemonMachineStore({ effectiveDataDir: () => root }).read()
+}
+
 /** One machine: a storage root, its pack manager and the sync channel over it. */
-async function machine(label: string, repository?: string, clock: () => Date = now, bridge?: MnemonSettingsBridge) {
+async function machine(label: string, repository?: string, clock: () => Date = now) {
   const root = temporary(label)
   const workspace = temporary(label + '-workspace')
-  const config = resolveConfig({ storageScope: 'custom', dataDir: root, cliPath: '/fake/mnemon' })
+  // Git sync is opt-in, so the suite switches it on exactly where the product does.
+  const config = resolveConfig({ storageScope: 'custom', dataDir: root, cliPath: '/fake/mnemon', syncEnabled: true })
   const runner = createStorageRoot(config)
   const sources = await sourceFixture({ dataDir: root, workspace })
   releases.push(sources.dispose)
-  const packs = new MnemonPackManager(runner, config, undefined, clock, bridge)
+  const packs = new MnemonPackManager(runner, config, undefined, clock)
   const sync = new MnemonGitSync(runner, config, packs, undefined, clock)
   if (repository !== undefined) sync.configure({ repoUrl: repository })
   return { root, workspace, runner, config, packs, sync, sources }
+}
+
+/**
+ * Run with the Git identity of a machine that has one configured. Git reads the same
+ * variables whether it commits or reports the identity it would use, and the suite
+ * sanitizes only the location variables, so these reach every child process.
+ */
+async function withGitIdentity(name: string, email: string, run: () => Promise<void>): Promise<void> {
+  const keys = ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']
+  const saved = keys.map(key => process.env[key])
+  for (const key of keys) process.env[key] = key === 'GIT_AUTHOR_NAME' || key === 'GIT_COMMITTER_NAME' ? name : email
+  try {
+    await run()
+  } finally {
+    keys.forEach((key, index) => {
+      const value = saved[index]
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    })
+  }
 }
 
 async function repository(label: string): Promise<string> {
@@ -108,7 +139,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const pushed = await machineA.sync.push({ message: 'Sync memory' })
     expect(pushed).toMatchObject({ branch: 'mnemon-sync', subdir: 'mnemon/', committed: true, pushed: true, message: 'Sync memory' })
     expect(pushed.commit).toMatch(/^[0-9a-f]{40}$/u)
-    expect(pushed.summary.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
+    expect(pushed.summary.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces'])
     expect(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin)).toContain('"mnemonpack"')
     expect(await git(['show', 'mnemon-sync:mnemon/payload/runtime/USER.md'], origin)).toContain('Prefer concise answers')
     expect(await git(['show', 'mnemon-sync:mnemon/checksums.json'], origin)).toContain('"sha256"')
@@ -120,17 +151,22 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
   })
 
   it('commits under the identity of this machine when the author is blank', async () => {
-    // The identity Git would use on its own, as Git itself reports it.
-    const identity = (await git(['var', 'GIT_AUTHOR_IDENT'])).trim()
-    const expected = identity.slice(0, identity.indexOf('>') + 1)
-    const origin = await repository('sync-author-remote')
-    const machineA = await machine('sync-author', origin)
-    const cleared = await machineA.sync.configure({ authorName: '', authorEmail: '' })
-    expect(cleared).toMatchObject({ authorName: '', authorEmail: '', branch: 'mnemon-sync', subdir: 'mnemon/' })
+    // A blank author leaves the commit to the identity Git resolves on its own, and a
+    // machine without one cannot commit at all. CI configures none, so the case brings
+    // its own instead of reading whatever machine happens to run the suite.
+    await withGitIdentity('Test Machine', 'machine@localhost', async () => {
+      const identity = (await git(['var', 'GIT_AUTHOR_IDENT'])).trim()
+      const expected = identity.slice(0, identity.indexOf('>') + 1)
+      expect(expected).toContain('machine@localhost')
+      const origin = await repository('sync-author-remote')
+      const machineA = await machine('sync-author', origin)
+      const cleared = await machineA.sync.configure({ authorName: '', authorEmail: '' })
+      expect(cleared).toMatchObject({ authorName: '', authorEmail: '', branch: 'mnemon-sync', subdir: 'mnemon/' })
 
-    const pushed = await machineA.sync.push({ message: 'Sync without an author' })
-    expect(pushed).toMatchObject({ committed: true, pushed: true })
-    expect(await git(['log', '-1', '--format=%an <%ae>', 'mnemon-sync'], origin)).toBe(expected + '\n')
+      const pushed = await machineA.sync.push({ message: 'Sync without an author' })
+      expect(pushed).toMatchObject({ committed: true, pushed: true })
+      expect(await git(['log', '-1', '--format=%an <%ae>', 'mnemon-sync'], origin)).toBe(expected + '\n')
+    })
   })
 
   it('records the channel on the manifest without breaking the Mnemon Pack reader', async () => {
@@ -140,7 +176,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const manifest = JSON.parse(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin))
     expect(manifest).toMatchObject({ format: 'mnemonpack', version: 1, scope: 'full', sync: { channel: 'git', branch: 'mnemon-sync', subdir: 'mnemon/' } })
     expect(manifest.sync.pushedAt).toBe('2026-08-14T12:00:00.000Z')
-    expect(manifest.components).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
+    expect(manifest.components).toEqual(['runtime', 'documents', 'memory-spaces'])
   })
 
   it('does not commit a second time when the payload has not changed', async () => {
@@ -180,32 +216,6 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     expect(await git(['show', 'mnemon-sync:mnemon/payload/runtime/memories.json'], origin)).toBe(published)
   })
 
-  it('still publishes nothing new when this installation also carries settings', async () => {
-    // The settings component is staged into the data directory on every export, so
-    // an unchanged profile must not restamp the payload and fake a change.
-    const origin = await repository('sync-settings-idempotent-remote')
-    const clock = tickingClock()
-    // The bridge stamps every collection with the current time, exactly as the
-    // profile-backed bridge does, so only the restamping keeps the bytes stable.
-    const bridge: MnemonSettingsBridge = {
-      collect: async () => ({
-        version: 1,
-        exportedAt: clock.now().toISOString(),
-        namespaces: [{ ns: 'mnemon-ui', user: { displayMode: 'sidebar' }, updatedAt: clock.now().toISOString() }],
-      }),
-      apply: async () => {},
-    }
-    const machineA = await machine('sync-settings-idempotent', origin, clock.now, bridge)
-    const first = await machineA.sync.push({ message: 'First' })
-    const published = await git(['show', 'mnemon-sync:mnemon/payload/settings/mnemon.json'], origin)
-    const second = await machineA.sync.push({ message: 'Second' })
-
-    expect(first).toMatchObject({ committed: true, pushed: true })
-    expect(second).toMatchObject({ committed: false, pushed: false, reason: 'the branch already holds this payload' })
-    expect((await git(['rev-list', '--count', 'mnemon-sync'], origin)).trim()).toBe('1')
-    expect(await git(['show', 'mnemon-sync:mnemon/payload/settings/mnemon.json'], origin)).toBe(published)
-  })
-
   it('pulls the branch into a second machine as the second machine would', async () => {
     const origin = await repository('sync-pull-remote')
     const machineA = await machine('sync-pull-a', origin)
@@ -216,14 +226,14 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const preview = await machineB.sync.preview()
     expect(preview).toMatchObject({ branch: 'mnemon-sync', subdir: 'mnemon/', pushedAt: '2026-08-14T12:00:00.000Z' })
     expect(preview.manifest.scope).toBe('full')
-    expect(preview.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
+    expect(preview.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces'])
     // The published profile differs from the empty one this machine holds.
     expect(preview.components.find(entry => entry.component === 'runtime')).toMatchObject({ changed: true, items: 1 })
     expect(preview.files.changed).toBeGreaterThan(0)
     expect(preview.expandedBytes).toBeGreaterThan(0)
 
     const pulled = await machineB.sync.pull({ mode: 'merge' })
-    expect(pulled).toMatchObject({ imported: true, mode: 'merge', components: ['runtime', 'documents', 'memory-spaces', 'settings'] })
+    expect(pulled).toMatchObject({ imported: true, mode: 'merge', components: ['runtime', 'documents', 'memory-spaces'] })
     expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).toContain('Prefers table output')
 
     // The pulled payload is the same pack the ZIP path would have produced.
@@ -262,8 +272,8 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Table output note', importance: 'normal' }, { confirmed: true })
     const second = await machineB.sync.push({ message: 'Publish from B' })
 
-    const identityA = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
-    const identityB = JSON.parse(readFileSync(join(machineB.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
+    const identityA = identityOf(machineA.root)
+    const identityB = identityOf(machineB.root)
     const history = await machineB.sync.backups()
     expect(history.repoUrl).toBe(origin)
     expect(history.truncated).toBe(false)
@@ -271,7 +281,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     // The newest commit is the one this machine just wrote; the older one is A's.
     expect(history.commits[0]).toMatchObject({ message: 'Publish from B', machine: { id: identityB.id, label: identityB.label } })
     expect(history.commits[1]).toMatchObject({ message: 'Publish from A', machine: { id: identityA.id, label: identityA.label } })
-    expect(history.commits[1]!.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces', 'settings'])
+    expect(history.commits[1]!.components.map(entry => entry.component)).toEqual(['runtime', 'documents', 'memory-spaces'])
     expect(history.commits[1]!.components.find(entry => entry.component === 'runtime')).toMatchObject({ items: 1 })
     expect(history.commits[1]!.committedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u)
 
@@ -299,8 +309,8 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
 
     const machineB = await machine('sync-diff-b', origin)
     await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Local only note', importance: 'critical' }, { confirmed: true })
-    const identityA = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
-    const identityB = (await machineB.sync.status()).machine
+    const identityA = identityOf(machineA.root)
+    const identityB = identityOf(machineB.root)
 
     const apart = await machineB.sync.diff()
     expect(apart).toMatchObject({ repoUrl: origin, branch: 'mnemon-sync', subdir: 'mnemon/', shared: 0, truncated: false })
@@ -345,7 +355,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     await machineA.sources.runtime.mutate('mutate', { action: 'add', target: 'memory', content: 'Deploy on Fridays', importance: 'critical' }, { confirmed: true })
     await machineA.sync.push({ message: 'Publish from A' })
 
-    const identityA = JSON.parse(readFileSync(join(machineA.root, 'state', 'machine.json'), 'utf8')) as { id: string; label: string }
+    const identityA = identityOf(machineA.root)
 
     const machineB = await machine('sync-conflict-b', origin)
     // The same preference, written another way, plus a memory only this side holds.
@@ -440,7 +450,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
   it('reports an empty remote instead of importing an empty payload', async () => {
     const origin = await repository('sync-empty-remote')
     const machineA = await machine('sync-empty', origin)
-    await git(['commit', '--quiet', '--allow-empty', '-m', 'Unrelated'], await unrelatedCommit(origin))
+    await git(['-c', 'user.name=Test', '-c', 'user.email=test@localhost', 'commit', '--quiet', '--allow-empty', '-m', 'Unrelated'], await unrelatedCommit(origin))
     await expect(machineA.sync.preview()).rejects.toThrow('holds no Mnemon payload')
     await expect(machineA.sync.pull({ mode: 'merge' })).rejects.toThrow('holds no Mnemon payload')
   })
@@ -455,7 +465,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     await machineB.sources.runtime.mutate('mutate', { action: 'add', target: 'user', content: 'Prefers table output', importance: 'normal' }, { confirmed: true })
     const pushed = await machineB.sync.push({ message: 'Publish from B' })
 
-    expect(pushed.merged).toMatchObject({ components: ['runtime', 'documents', 'memory-spaces', 'settings'] })
+    expect(pushed.merged).toMatchObject({ components: ['runtime', 'documents', 'memory-spaces'] })
     expect(pushed.merged?.commit).toMatch(/^[0-9a-f]{40}$/u)
     // The merge lands locally first, so the machine that pushes keeps both entries too.
     expect(readFileSync(join(machineB.root, 'runtime', 'USER.md'), 'utf8')).toContain('Prefer concise answers')

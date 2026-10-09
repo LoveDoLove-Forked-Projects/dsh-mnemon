@@ -19,7 +19,7 @@ import { MnemonClient } from './api.ts'
 import type { MnemonTranslate } from './locales.ts'
 import { humanBytes, message } from './page-kit.tsx'
 import css from './MnemonSettingsCard.module.css'
-import { SettingRow } from './settings-controls.tsx'
+import { ToggleRow } from './settings-controls.tsx'
 import { MnemonDialog } from './MnemonDialog.tsx'
 
 /** How many backups one page of the branch history holds. */
@@ -114,6 +114,13 @@ interface MnemonSyncSectionProps {
   workspaceId?: string
   /** Whether the Host accepts writes at all; a read-only Host only reports status. */
   disabled: boolean
+  /**
+   * Whether this installation syncs at all. Off is the default, and off is
+   * silent: the section asks the Host nothing and runs no Git.
+   */
+  enabled: boolean
+  /** Saves the switch's choice; the storage section above owns the stored value. */
+  onEnabled: (enabled: boolean) => void
   t: MnemonTranslate
 }
 
@@ -127,12 +134,15 @@ interface MnemonSyncSectionProps {
  * The credential is optional: signing in to GitHub stores a grant the Host reads
  * per operation, and the repository then comes from the account instead of being
  * typed. The access token field stays as the fallback for every other host.
+ *
+ * The switch is the whole gate: switched off, this section is one row that asks
+ * the Host nothing — no status, no repository, no Git — and switching it on is
+ * what unfolds the form, the operations and the branch history.
  */
-export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled, t }: MnemonSyncSectionProps): JSX.Element {
+export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled, enabled, onEnabled, t }: MnemonSyncSectionProps): JSX.Element {
   const client = useMemo(() => connection === undefined ? null : new MnemonClient(connection, sessionId, workspaceId), [connection, sessionId, workspaceId])
   const [status, setStatus] = useState<MnemonSyncStatus | null>(null)
   const [loaded, setLoaded] = useState(false)
-  const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState<SyncDraft>(() => draftOf(undefined))
   const [pending, setPending] = useState<MnemonSyncPreview | null>(null)
   const [busy, setBusy] = useState<'save' | 'push' | 'preview' | 'pull' | 'backups' | 'more' | 'diff' | 'add' | 'revive' | 'github' | 'repos' | 'create' | null>(null)
@@ -160,7 +170,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const askedRepositories = useRef(false)
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (client === null) return
+    if (client === null || !enabled) return
     try {
       setStatus(await client.syncStatus())
     } catch (reason) {
@@ -173,10 +183,13 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     } catch {
       // The sign-in block reports its own failures; the repository row works without it.
     }
-  }, [client])
+  }, [client, enabled])
 
   useEffect(() => {
     if (client === null) { setLoaded(true); return }
+    // Switched off there is nothing to report: reading the channel here would run
+    // Git for a reader who never asked for a repository.
+    if (!enabled) return
     let active = true
     void client.syncStatus().then(
       next => { if (active) { setStatus(next); setLoaded(true) } },
@@ -187,7 +200,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       () => { if (active) setGithub(null) },
     )
     return () => { active = false }
-  }, [client])
+  }, [client, enabled])
 
   // The saved configuration seeds the form; a repository typed here is not saved until the user saves it.
   const saved = status?.config
@@ -457,7 +470,7 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
 
   // The device flow is polled on the cadence GitHub asked for, and only while the form is open.
   useEffect(() => {
-    if (client === null || !open || flow === undefined) return
+    if (client === null || !enabled || flow === undefined) return
     let active = true
     const timer = setTimeout(() => {
       void (async (): Promise<void> => {
@@ -485,14 +498,14 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
       })()
     }, Math.max(pollMs, 1_000))
     return () => { active = false; clearTimeout(timer) }
-  }, [client, open, flow?.userCode, pollMs, pollTick, t])
+  }, [client, enabled, flow?.userCode, pollMs, pollTick, t])
 
   // A signed-in account offers its repositories as soon as the form opens, once per sign-in.
   useEffect(() => {
-    if (!open || !signedIn || repositories !== null || askedRepositories.current) return
+    if (!enabled || !signedIn || repositories !== null || askedRepositories.current) return
     askedRepositories.current = true
     void loadRepositories()
-  }, [open, signedIn, repositories, loadRepositories])
+  }, [enabled, signedIn, repositories, loadRepositories])
 
   // One line of state: the repository, then whatever the Host says about it.
   const states: string[] = []
@@ -531,277 +544,278 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const onlyHere = difference === null ? 0 : difference.localOnly.filter(entry => !conflicted.has(entry.target + '\u0000' + entry.content)).length
 
   return <div className={css.syncRow} role="group" aria-labelledby="mnemon-sync-heading">
-    <SettingRow title={t('config.syncTitle')} titleId="mnemon-sync-heading" hint={t('config.syncSimpleDescription')}>
+    <ToggleRow id="mnemon-sync-enabled" titleId="mnemon-sync-heading" label={t('config.syncTitle')} hint={t('config.syncSimpleDescription')}
+      checked={enabled} disabled={disabled} onChange={onEnabled} />
+    {enabled && <>
       <div className={css.rowActions}>
-        <Button variant="outline" size="sm" disabled={!editable || busy !== null} onClick={() => setOpen(current => !current)}>{open ? t('config.syncHide') : t('config.syncConfigure')}</Button>
         <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void preview()}>{busy === 'preview' ? t('config.syncPreviewing') : t('config.syncPreview')}</Button>
         <Button variant="outline" size="sm" disabled={!ready || busy !== null} onClick={() => void loadHistory()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('config.syncBackups')}</Button>
         <Button variant="primary" size="sm" disabled={!ready || disabled || busy !== null} onClick={() => void push()}>{busy === 'push' ? t('config.syncPushing') : t('config.syncPush')}</Button>
       </div>
-    </SettingRow>
-    <div className={css.syncState} aria-live="polite">{states.map(state => <span key={state}>{state}</span>)}</div>
-    {open && <div className={css.syncForm}>
-      <div className={css.syncBlock}>
-        <header>
-          <strong>{t('config.syncGitHub')}</strong>
-          {signedIn && <div className={css.syncAccount}>
-            <span>{github?.login === undefined ? t('config.syncTokenGitHub') : t('config.syncGitHubSignedIn', { login: github.login })}</span>
-            <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void signOut()}>{t('config.syncGitHubSignOut')}</Button>
-          </div>}
-        </header>
-        {github === null && <small>{t('config.syncLoading')}</small>}
-        {github !== null && !github.available && <small>{t('config.syncGitHubUnavailable')}</small>}
-        {github !== null && github.available && !signedIn && flow === undefined && <>
-          <small>{t('config.syncGitHubHint')}</small>
-          {github.writable
-            ? <div className={css.syncFormActions}>
-              <Button variant="outline" size="sm" disabled={!editable || busy !== null} onClick={() => void signIn()}>{busy === 'github' ? t('config.syncGitHubStarting') : t('config.syncGitHubSignIn')}</Button>
+      <div className={css.syncState} aria-live="polite">{states.map(state => <span key={state}>{state}</span>)}</div>
+      <div className={css.syncForm}>
+        <div className={css.syncBlock}>
+          <header>
+            <strong>{t('config.syncGitHub')}</strong>
+            {signedIn && <div className={css.syncAccount}>
+              <span>{github?.login === undefined ? t('config.syncTokenGitHub') : t('config.syncGitHubSignedIn', { login: github.login })}</span>
+              <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void signOut()}>{t('config.syncGitHubSignOut')}</Button>
+            </div>}
+          </header>
+          {github === null && <small>{t('config.syncLoading')}</small>}
+          {github !== null && !github.available && <small>{t('config.syncGitHubUnavailable')}</small>}
+          {github !== null && github.available && !signedIn && flow === undefined && <>
+            <small>{t('config.syncGitHubHint')}</small>
+            {github.writable
+              ? <div className={css.syncFormActions}>
+                <Button variant="outline" size="sm" disabled={!editable || busy !== null} onClick={() => void signIn()}>{busy === 'github' ? t('config.syncGitHubStarting') : t('config.syncGitHubSignIn')}</Button>
+              </div>
+              : <small>{t('config.syncGitHubReadOnly')}</small>}
+          </>}
+          {flow !== undefined && !signedIn && <>
+            <small>{t('config.syncGitHubCode')}</small>
+            <div className={css.syncCode}>
+              <code>{flow.userCode}</code>
+              <Button variant="outline" size="sm" onClick={() => void copyCode(flow.userCode)}>{copied ? t('config.syncGitHubCopied') : t('config.syncGitHubCopy')}</Button>
+              <a href={flow.verificationUri} target="_blank" rel="noreferrer noopener">{t('config.syncGitHubOpen')}</a>
             </div>
-            : <small>{t('config.syncGitHubReadOnly')}</small>}
-        </>}
-        {flow !== undefined && !signedIn && <>
-          <small>{t('config.syncGitHubCode')}</small>
-          <div className={css.syncCode}>
-            <code>{flow.userCode}</code>
-            <Button variant="outline" size="sm" onClick={() => void copyCode(flow.userCode)}>{copied ? t('config.syncGitHubCopied') : t('config.syncGitHubCopy')}</Button>
-            <a href={flow.verificationUri} target="_blank" rel="noreferrer noopener">{t('config.syncGitHubOpen')}</a>
-          </div>
-          <small>{t('config.syncGitHubWaiting')}</small>
-          <div className={css.syncFormActions}>
-            <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void cancelSignIn()}>{t('common.cancel')}</Button>
-          </div>
-        </>}
-        {githubFailed !== null && <p className={css.error}>{t('config.syncGitHubFailed', { error: githubFailed })}</p>}
-      </div>
-      <div className={css.syncBlock}>
-        <header>
-          <strong>{t('config.syncAutoBackup')}</strong>
-        </header>
-        <small>{t('config.syncAutoBackupHint')}</small>
-        <div className={css.syncField}>
-          <label htmlFor="mnemon-sync-auto-backup">{t('config.syncAutoBackup')}</label>
-          <select id="mnemon-sync-auto-backup" value={String(draft.autoBackupMinutes)} disabled={!editable || autoBackupSaving}
-            onChange={event => void setAutoBackup(Number(event.target.value))}>
-            {AUTO_BACKUP_CHOICES.map(minutes => <option key={minutes} value={String(minutes)}>{intervalLabel(t, minutes)}</option>)}
-          </select>
+            <small>{t('config.syncGitHubWaiting')}</small>
+            <div className={css.syncFormActions}>
+              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void cancelSignIn()}>{t('common.cancel')}</Button>
+            </div>
+          </>}
+          {githubFailed !== null && <p className={css.error}>{t('config.syncGitHubFailed', { error: githubFailed })}</p>}
         </div>
-        {autoBackup !== undefined && <small>{autoBackup.available
-          ? (autoBackup.nextAt === undefined ? '' : t('config.syncAutoBackupNext', { at: stamp(autoBackup.nextAt) }))
-          : t('config.syncAutoBackupNever')}</small>}
-        {autoBackup?.lastAt !== undefined && <small>{t('config.syncAutoBackupLast', { at: stamp(autoBackup.lastAt) })}</small>}
-        {autoBackup?.lastError !== undefined && <small className={css.error}>{t('config.syncAutoBackupFailed', { error: autoBackup.lastError })}</small>}
-      </div>
-      {github !== null && github.available && <div className={css.syncBlock}>
-        <header>
-          <strong>{t('config.syncRepositories')}</strong>
-          {repositories !== null && <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void loadRepositories()}>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesLoad')}</Button>}
-        </header>
-        {!signedIn && <small>{t('config.syncRepositoriesSignIn')}</small>}
-        {signedIn && <>
-          {repositories === null && <small>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesHint')}</small>}
-          {repositories !== null && repositories.length === 0 && <small>{t('config.syncRepositoriesEmpty')}</small>}
-          {repositories !== null && repositories.length > 0 && <div className={css.syncField}>
-            <label htmlFor="mnemon-sync-repository">{t('config.syncRepositories')}</label>
-            <select id="mnemon-sync-repository" value={selected} disabled={!editable || busy !== null}
-              onChange={event => {
-                const repository = repositories.find(candidate => candidate.url === event.target.value)
-                if (repository !== undefined) void choose(repository)
-              }}>
-              <option value="">{t('config.syncRepositoriesChoose')}</option>
-              {repositories.map(repository => <option key={repository.fullName} value={repository.url} disabled={!repository.push}>
-                {repository.fullName + (repository.private ? ' · ' + t('config.syncRepositoriesPrivate') : '') + (repository.push ? '' : ' · ' + t('config.syncRepositoriesNoPush'))}
-              </option>)}
-            </select>
-            <small>{t('config.syncRepoUrlHint')}</small>
-          </div>}
+        <div className={css.syncBlock}>
+          <header>
+            <strong>{t('config.syncAutoBackup')}</strong>
+          </header>
+          <small>{t('config.syncAutoBackupHint')}</small>
           <div className={css.syncField}>
-            <label htmlFor="mnemon-sync-repository-name">{t('config.syncRepositoryName')}</label>
-            <input id="mnemon-sync-repository-name" type="text" value={repositoryName} placeholder="mnemon-memory"
-              disabled={!editable || busy !== null} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
-              onChange={event => setRepositoryName(event.target.value)} />
-            <label className={css.syncCheck}>
-              <input type="checkbox" checked={repositoryPrivate} disabled={!editable || busy !== null}
-                onChange={event => setRepositoryPrivate(event.target.checked)} />
-              <span>{t('config.syncRepositoryPrivate')}</span>
-            </label>
+            <label htmlFor="mnemon-sync-auto-backup">{t('config.syncAutoBackup')}</label>
+            <select id="mnemon-sync-auto-backup" value={String(draft.autoBackupMinutes)} disabled={!editable || autoBackupSaving}
+              onChange={event => void setAutoBackup(Number(event.target.value))}>
+              {AUTO_BACKUP_CHOICES.map(minutes => <option key={minutes} value={String(minutes)}>{intervalLabel(t, minutes)}</option>)}
+            </select>
           </div>
-          <div className={css.syncFormActions}>
-            <Button variant="outline" size="sm" disabled={!editable || busy !== null || repositoryName.trim() === ''} onClick={() => void createRepository()}>{busy === 'create' ? t('config.syncRepositoryCreating') : t('config.syncRepositoryCreate')}</Button>
-          </div>
-        </>}
+          {autoBackup !== undefined && <small>{autoBackup.available
+            ? (autoBackup.nextAt === undefined ? '' : t('config.syncAutoBackupNext', { at: stamp(autoBackup.nextAt) }))
+            : t('config.syncAutoBackupNever')}</small>}
+          {autoBackup?.lastAt !== undefined && <small>{t('config.syncAutoBackupLast', { at: stamp(autoBackup.lastAt) })}</small>}
+          {autoBackup?.lastError !== undefined && <small className={css.error}>{t('config.syncAutoBackupFailed', { error: autoBackup.lastError })}</small>}
+        </div>
+        {github !== null && github.available && <div className={css.syncBlock}>
+          <header>
+            <strong>{t('config.syncRepositories')}</strong>
+            {repositories !== null && <Button variant="ghost" size="sm" disabled={!editable || busy !== null} onClick={() => void loadRepositories()}>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesLoad')}</Button>}
+          </header>
+          {!signedIn && <small>{t('config.syncRepositoriesSignIn')}</small>}
+          {signedIn && <>
+            {repositories === null && <small>{busy === 'repos' ? t('config.syncRepositoriesLoading') : t('config.syncRepositoriesHint')}</small>}
+            {repositories !== null && repositories.length === 0 && <small>{t('config.syncRepositoriesEmpty')}</small>}
+            {repositories !== null && repositories.length > 0 && <div className={css.syncField}>
+              <label htmlFor="mnemon-sync-repository">{t('config.syncRepositories')}</label>
+              <select id="mnemon-sync-repository" value={selected} disabled={!editable || busy !== null}
+                onChange={event => {
+                  const repository = repositories.find(candidate => candidate.url === event.target.value)
+                  if (repository !== undefined) void choose(repository)
+                }}>
+                <option value="">{t('config.syncRepositoriesChoose')}</option>
+                {repositories.map(repository => <option key={repository.fullName} value={repository.url} disabled={!repository.push}>
+                  {repository.fullName + (repository.private ? ' · ' + t('config.syncRepositoriesPrivate') : '') + (repository.push ? '' : ' · ' + t('config.syncRepositoriesNoPush'))}
+                </option>)}
+              </select>
+              <small>{t('config.syncRepoUrlHint')}</small>
+            </div>}
+            <div className={css.syncField}>
+              <label htmlFor="mnemon-sync-repository-name">{t('config.syncRepositoryName')}</label>
+              <input id="mnemon-sync-repository-name" type="text" value={repositoryName} placeholder="mnemon-memory"
+                disabled={!editable || busy !== null} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+                onChange={event => setRepositoryName(event.target.value)} />
+              <label className={css.syncCheck}>
+                <input type="checkbox" checked={repositoryPrivate} disabled={!editable || busy !== null}
+                  onChange={event => setRepositoryPrivate(event.target.checked)} />
+                <span>{t('config.syncRepositoryPrivate')}</span>
+              </label>
+            </div>
+            <div className={css.syncFormActions}>
+              <Button variant="outline" size="sm" disabled={!editable || busy !== null || repositoryName.trim() === ''} onClick={() => void createRepository()}>{busy === 'create' ? t('config.syncRepositoryCreating') : t('config.syncRepositoryCreate')}</Button>
+            </div>
+          </>}
+        </div>}
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-repo">{t('config.syncRepoUrl')}</label>
+          <input id="mnemon-sync-repo" type="text" value={draft.repoUrl} placeholder="https://github.com/owner/repository.git"
+            disabled={!editable} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+            onChange={event => setDraft(current => ({ ...current, repoUrl: event.target.value }))} />
+          <small>{t('config.syncRepoUrlHint')}</small>
+        </div>
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-branch">{t('config.syncBranch')}</label>
+          <input id="mnemon-sync-branch" type="text" value={draft.branch} placeholder={saved?.branch ?? 'mnemon-sync'}
+            disabled={!editable} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+            onChange={event => setDraft(current => ({ ...current, branch: event.target.value }))} />
+          <small>{t('config.syncBranchHint', { branch: saved?.branch ?? 'mnemon-sync' })}</small>
+        </div>
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-subdir">{t('config.syncSubdir')}</label>
+          <input id="mnemon-sync-subdir" type="text" value={draft.subdir} placeholder={saved?.subdir ?? 'mnemon/'}
+            disabled={!editable} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
+            onChange={event => setDraft(current => ({ ...current, subdir: event.target.value }))} />
+          <small>{t('config.syncSubdirHint', { subdir: saved?.subdir ?? 'mnemon/' })}</small>
+        </div>
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-token">{t('config.syncToken')}</label>
+          <input id="mnemon-sync-token" type="password" value={draft.token} disabled={!editable || draft.clearToken}
+            placeholder={saved?.hasToken ? t('config.syncTokenSaved') : t('config.syncTokenNone')}
+            autoComplete="new-password" spellCheck={false}
+            onChange={event => setDraft(current => ({ ...current, token: event.target.value }))} />
+          <small>{t('config.syncTokenOptional')}</small>
+          <small>{t('config.syncTokenHint', { path: status?.configPath ?? '', env: MNEMON_SYNC_TOKEN_ENV })}</small>
+          <small>{t('config.syncTokenKeep')}</small>
+          <label className={css.syncCheck}>
+            <input type="checkbox" checked={draft.clearToken} disabled={!editable}
+              onChange={event => setDraft(current => ({ ...current, clearToken: event.target.checked, token: '' }))} />
+            <span>{t('config.syncTokenClear')}</span>
+          </label>
+        </div>
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-author-name">{t('config.syncAuthorName')}</label>
+          <input id="mnemon-sync-author-name" type="text" value={draft.authorName} placeholder={t('config.syncAuthorOptional')} disabled={!editable}
+            autoComplete="off" spellCheck={false}
+            onChange={event => setDraft(current => ({ ...current, authorName: event.target.value }))} />
+          <small>{t('config.syncAuthorHint')}</small>
+        </div>
+        <div className={css.syncField}>
+          <label htmlFor="mnemon-sync-author-email">{t('config.syncAuthorEmail')}</label>
+          <input id="mnemon-sync-author-email" type="text" value={draft.authorEmail} placeholder={t('config.syncAuthorOptional')} disabled={!editable}
+            autoComplete="off" spellCheck={false}
+            onChange={event => setDraft(d => ({ ...d, authorEmail: event.target.value }))} />
+        </div>
+        <div className={css.syncFormActions}>
+          <Button variant="primary" size="sm" disabled={!editable || busy !== null || !configured(draft)} onClick={() => void save()}>{busy === 'save' ? t('config.syncSave') + '…' : t('config.syncSave')}</Button>
+        </div>
+      </div>
+      {pending !== null && <div className={css.syncBar} role="status">
+        <div>
+          <strong>{t('config.syncPreviewReady', { commit: pending.commit.slice(0, 8), components: pending.manifest.components.length, size: humanBytes(pending.archiveBytes) })}</strong>
+          <small>{t('config.syncPreviewComponents', { changed, total: pending.components.length })}</small>
+          <small>{t('config.syncPreviewFiles', { added: pending.files.added, removed: pending.files.removed, changed: pending.files.changed })}</small>
+        </div>
+        <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setPending(null)}>{t('common.cancel')}</Button>
+        <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void pull()}>{busy === 'pull' ? t('config.syncPulling') : t('config.syncPull')}</Button>
       </div>}
-      <div className={css.syncField}>
-        <label htmlFor="mnemon-sync-repo">{t('config.syncRepoUrl')}</label>
-        <input id="mnemon-sync-repo" type="text" value={draft.repoUrl} placeholder="https://github.com/owner/repository.git"
-          disabled={!editable} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
-          onChange={event => setDraft(current => ({ ...current, repoUrl: event.target.value }))} />
-        <small>{t('config.syncRepoUrlHint')}</small>
-      </div>
-      <div className={css.syncField}>
-        <label htmlFor="mnemon-sync-branch">{t('config.syncBranch')}</label>
-        <input id="mnemon-sync-branch" type="text" value={draft.branch} placeholder={saved?.branch ?? 'mnemon-sync'}
-          disabled={!editable} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
-          onChange={event => setDraft(current => ({ ...current, branch: event.target.value }))} />
-        <small>{t('config.syncBranchHint', { branch: saved?.branch ?? 'mnemon-sync' })}</small>
-      </div>
-      <div className={css.syncField}>
-        <label htmlFor="mnemon-sync-subdir">{t('config.syncSubdir')}</label>
-        <input id="mnemon-sync-subdir" type="text" value={draft.subdir} placeholder={saved?.subdir ?? 'mnemon/'}
-          disabled={!editable} autoComplete="off" spellCheck={false} autoCapitalize="none" autoCorrect="off"
-          onChange={event => setDraft(current => ({ ...current, subdir: event.target.value }))} />
-        <small>{t('config.syncSubdirHint', { subdir: saved?.subdir ?? 'mnemon/' })}</small>
-      </div>
-      <div className={css.syncField}>
-        <label htmlFor="mnemon-sync-token">{t('config.syncToken')}</label>
-        <input id="mnemon-sync-token" type="password" value={draft.token} disabled={!editable || draft.clearToken}
-          placeholder={saved?.hasToken ? t('config.syncTokenSaved') : t('config.syncTokenNone')}
-          autoComplete="new-password" spellCheck={false}
-          onChange={event => setDraft(current => ({ ...current, token: event.target.value }))} />
-        <small>{t('config.syncTokenOptional')}</small>
-        <small>{t('config.syncTokenHint', { path: status?.configPath ?? '', env: MNEMON_SYNC_TOKEN_ENV })}</small>
-        <small>{t('config.syncTokenKeep')}</small>
-        <label className={css.syncCheck}>
-          <input type="checkbox" checked={draft.clearToken} disabled={!editable}
-            onChange={event => setDraft(current => ({ ...current, clearToken: event.target.checked, token: '' }))} />
-          <span>{t('config.syncTokenClear')}</span>
-        </label>
-      </div>
-      <div className={css.syncField}>
-        <label htmlFor="mnemon-sync-author-name">{t('config.syncAuthorName')}</label>
-        <input id="mnemon-sync-author-name" type="text" value={draft.authorName} placeholder={t('config.syncAuthorOptional')} disabled={!editable}
-          autoComplete="off" spellCheck={false}
-          onChange={event => setDraft(current => ({ ...current, authorName: event.target.value }))} />
-        <small>{t('config.syncAuthorHint')}</small>
-      </div>
-      <div className={css.syncField}>
-        <label htmlFor="mnemon-sync-author-email">{t('config.syncAuthorEmail')}</label>
-        <input id="mnemon-sync-author-email" type="text" value={draft.authorEmail} placeholder={t('config.syncAuthorOptional')} disabled={!editable}
-          autoComplete="off" spellCheck={false}
-          onChange={event => setDraft(d => ({ ...d, authorEmail: event.target.value }))} />
-      </div>
-      <div className={css.syncFormActions}>
-        <Button variant="primary" size="sm" disabled={!editable || busy !== null || !configured(draft)} onClick={() => void save()}>{busy === 'save' ? t('config.syncSave') + '…' : t('config.syncSave')}</Button>
-      </div>
-    </div>}
-    {pending !== null && <div className={css.syncBar} role="status">
-      <div>
-        <strong>{t('config.syncPreviewReady', { commit: pending.commit.slice(0, 8), components: pending.manifest.components.length, size: humanBytes(pending.archiveBytes) })}</strong>
-        <small>{t('config.syncPreviewComponents', { changed, total: pending.components.length })}</small>
-        <small>{t('config.syncPreviewFiles', { added: pending.files.added, removed: pending.files.removed, changed: pending.files.changed })}</small>
-      </div>
-      <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => setPending(null)}>{t('common.cancel')}</Button>
-      <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void pull()}>{busy === 'pull' ? t('config.syncPulling') : t('config.syncPull')}</Button>
-    </div>}
-    {dialog && <MnemonDialog title={t('config.syncBackups')} closeLabel={t('common.close')} wide
-      busy={busy !== null} onClose={() => setDialog(false)}>
-      <div className={css.syncDialogBody}>
-        <div className={css.syncBackups}>
-          <header>
-            <strong>{t('config.syncBackupsTitle', { branch: backups?.branch ?? status?.config.branch ?? '' })}</strong>
-            <div className={css.rowActions}>
-              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadHistory()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('review.refresh')}</Button>
-            </div>
-          </header>
-          {backups === null
-            ? <small>{t('config.syncBackupsLoading')}</small>
-            : <>
-              <small>{t('config.syncBackupsHint', { subdir: backups.subdir })}</small>
-              {backups.commits.length === 0
-                ? <small>{t('config.syncBackupsEmpty')}</small>
-                : <div className={css.syncBackupList}>
-                  {backups.commits.map(commit => <div key={commit.commit} className={css.syncBackupEntry}>
-                    <header>
-                      <div className={css.reviewTitle}>
-                        <strong>{commit.message}</strong>
-                        <Tag tone="quiet">{commit.commit.slice(0, 8)}</Tag>
-                      </div>
-                      <div className={css.rowActions}>
-                        <Button variant="ghost" size="sm" disabled={busy !== null}
-                          onClick={() => setOpenCommit(openCommit === commit.commit ? null : commit.commit)}>
-                          {openCommit === commit.commit ? t('review.collapse') : t('review.expand')}</Button>
-                      </div>
-                    </header>
-                    <small>{t('config.syncBackupMeta', { machine: ownerName(t, commit.machine), time: stamp(commit.committedAt) })}</small>
-                    {commit.pushedAt !== undefined && <small>{t('config.syncBackupPushedAt', { time: stamp(commit.pushedAt) })}</small>}
-                    {openCommit === commit.commit && <div className={css.syncBackupComponents}>
-                      {commit.components.length === 0
-                        ? <small>{t('config.syncBackupNoComponents')}</small>
-                        : commit.components.map(component => <small key={component.component}>
-                            {t('config.syncBackupComponent', { component: component.component, items: component.items, files: component.files, size: humanBytes(component.bytes) })}
-                          </small>)}
+      {dialog && <MnemonDialog title={t('config.syncBackups')} closeLabel={t('common.close')} wide
+        busy={busy !== null} onClose={() => setDialog(false)}>
+        <div className={css.syncDialogBody}>
+          <div className={css.syncBackups}>
+            <header>
+              <strong>{t('config.syncBackupsTitle', { branch: backups?.branch ?? status?.config.branch ?? '' })}</strong>
+              <div className={css.rowActions}>
+                <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadHistory()}>{busy === 'backups' ? t('config.syncBackupsLoading') : t('review.refresh')}</Button>
+              </div>
+            </header>
+            {backups === null
+              ? <small>{t('config.syncBackupsLoading')}</small>
+              : <>
+                <small>{t('config.syncBackupsHint', { subdir: backups.subdir })}</small>
+                {backups.commits.length === 0
+                  ? <small>{t('config.syncBackupsEmpty')}</small>
+                  : <div className={css.syncBackupList}>
+                    {backups.commits.map(commit => <div key={commit.commit} className={css.syncBackupEntry}>
+                      <header>
+                        <div className={css.reviewTitle}>
+                          <strong>{commit.message}</strong>
+                          <Tag tone="quiet">{commit.commit.slice(0, 8)}</Tag>
+                        </div>
+                        <div className={css.rowActions}>
+                          <Button variant="ghost" size="sm" disabled={busy !== null}
+                            onClick={() => setOpenCommit(openCommit === commit.commit ? null : commit.commit)}>
+                            {openCommit === commit.commit ? t('review.collapse') : t('review.expand')}</Button>
+                        </div>
+                      </header>
+                      <small>{t('config.syncBackupMeta', { machine: ownerName(t, commit.machine), time: stamp(commit.committedAt) })}</small>
+                      {commit.pushedAt !== undefined && <small>{t('config.syncBackupPushedAt', { time: stamp(commit.pushedAt) })}</small>}
+                      {openCommit === commit.commit && <div className={css.syncBackupComponents}>
+                        {commit.components.length === 0
+                          ? <small>{t('config.syncBackupNoComponents')}</small>
+                          : commit.components.map(component => <small key={component.component}>
+                              {t('config.syncBackupComponent', { component: component.component, items: component.items, files: component.files, size: humanBytes(component.bytes) })}
+                            </small>)}
+                      </div>}
+                    </div>)}
+                    {/* The history is read one page at a time; asking for more appends what the
+                        branch holds beyond the page already read, and stops offering once it is done. */}
+                    {backups.truncated && <div className={css.rowActions}>
+                      <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void loadMore()}>
+                        {busy === 'more' ? t('config.syncBackupsLoading') : t('config.syncBackupsMore')}</Button>
                     </div>}
-                  </div>)}
-                  {/* The history is read one page at a time; asking for more appends what the
-                      branch holds beyond the page already read, and stops offering once it is done. */}
-                  {backups.truncated && <div className={css.rowActions}>
-                    <Button variant="outline" size="sm" disabled={busy !== null} onClick={() => void loadMore()}>
-                      {busy === 'more' ? t('config.syncBackupsLoading') : t('config.syncBackupsMore')}</Button>
                   </div>}
+              </>}
+          </div>
+          <div className={css.syncDiff}>
+            <header>
+              <strong>{t('config.syncDiffTitle', { commit: difference?.commit.slice(0, 8) ?? '', shared: difference?.shared ?? 0 })}</strong>
+              <div className={css.rowActions}>
+                <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadDifference()}>{busy === 'diff' ? t('config.syncPreviewing') : t('review.refresh')}</Button>
+              </div>
+            </header>
+            {difference === null
+              ? <small>{t('config.syncBackupsLoading')}</small>
+              : <>
+                <small>{t('config.syncDiffSides', { local: difference.local.entries, remote: difference.remote.entries, machine: ownerName(t, difference.remote.machine) })}</small>
+                {difference.truncated && <small>{t('config.syncDiffTruncated')}</small>}
+                {difference.remoteTombstones.length > 0 && <small>{t('config.syncDiffTombstones', { count: difference.remoteTombstones.length })}</small>}
+                {conflicts.length === 0
+                  ? <p className={css.syncDialogNote}>{additions === 0 ? t('config.syncDiffNothing') : t('config.syncDiffClear')}</p>
+                  : <p className={css.syncDialogNote}>{t('config.syncDiffConflicts', { count: conflicts.length })}</p>}
+                {conflicts.length === 0 && addable > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffAdditions', { count: addable })}</p>}
+                {/* Entries this machine deleted itself: a merge leaves them out, and only an
+                    explicit revival puts them back, so the page says so before it offers it. */}
+                {conflicts.length === 0 && heldBack > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffHeldBack', { count: heldBack })}</p>}
+                {conflicts.length === 0 && onlyHere > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffLocalOnlyNote', { count: onlyHere })}</p>}
+                {conflicts.length > 0 && <div className={css.syncConflictList}>
+                  {conflicts.map(conflict => <div key={conflict.target + '\u0000' + conflict.local.content} className={css.syncConflict} data-target={conflict.target}>
+                    <header>
+                      <strong>{t(conflict.target === 'user' ? 'review.targetUser' : 'review.targetMemory')}</strong>
+                      <small>{conflict.local.importance + ' · ' + Math.round(conflict.similarity * 100) + '%'}</small>
+                    </header>
+                    <div className={css.syncConflictSides}>
+                      <div>
+                        <small>{t('config.syncDiffHere')}</small>
+                        <span>{clip(conflict.local.content, 400)}</span>
+                      </div>
+                      <div>
+                        <small>{t('config.syncDiffThere')}</small>
+                        <span>{clip(conflict.remote.content, 400)}</span>
+                      </div>
+                    </div>
+                  </div>)}
                 </div>}
-            </>}
-        </div>
-        <div className={css.syncDiff}>
-          <header>
-            <strong>{t('config.syncDiffTitle', { commit: difference?.commit.slice(0, 8) ?? '', shared: difference?.shared ?? 0 })}</strong>
-            <div className={css.rowActions}>
-              <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void loadDifference()}>{busy === 'diff' ? t('config.syncPreviewing') : t('review.refresh')}</Button>
-            </div>
-          </header>
-          {difference === null
-            ? <small>{t('config.syncBackupsLoading')}</small>
-            : <>
-              <small>{t('config.syncDiffSides', { local: difference.local.entries, remote: difference.remote.entries, machine: ownerName(t, difference.remote.machine) })}</small>
-              {difference.truncated && <small>{t('config.syncDiffTruncated')}</small>}
-              {difference.remoteTombstones.length > 0 && <small>{t('config.syncDiffTombstones', { count: difference.remoteTombstones.length })}</small>}
-              {conflicts.length === 0
-                ? <p className={css.syncDialogNote}>{additions === 0 ? t('config.syncDiffNothing') : t('config.syncDiffClear')}</p>
-                : <p className={css.syncDialogNote}>{t('config.syncDiffConflicts', { count: conflicts.length })}</p>}
-              {conflicts.length === 0 && addable > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffAdditions', { count: addable })}</p>}
-              {/* Entries this machine deleted itself: a merge leaves them out, and only an
-                  explicit revival puts them back, so the page says so before it offers it. */}
-              {conflicts.length === 0 && heldBack > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffHeldBack', { count: heldBack })}</p>}
-              {conflicts.length === 0 && onlyHere > 0 && <p className={css.syncDialogNote}>{t('config.syncDiffLocalOnlyNote', { count: onlyHere })}</p>}
-              {conflicts.length > 0 && <div className={css.syncConflictList}>
-                {conflicts.map(conflict => <div key={conflict.target + '\u0000' + conflict.local.content} className={css.syncConflict} data-target={conflict.target}>
-                  <header>
-                    <strong>{t(conflict.target === 'user' ? 'review.targetUser' : 'review.targetMemory')}</strong>
-                    <small>{conflict.local.importance + ' · ' + Math.round(conflict.similarity * 100) + '%'}</small>
-                  </header>
-                  <div className={css.syncConflictSides}>
-                    <div>
-                      <small>{t('config.syncDiffHere')}</small>
-                      <span>{clip(conflict.local.content, 400)}</span>
-                    </div>
-                    <div>
-                      <small>{t('config.syncDiffThere')}</small>
-                      <span>{clip(conflict.remote.content, 400)}</span>
-                    </div>
+                {conflicts.length === 0 && (addable > 0 || heldBack > 0) && <div className={css.rowActions}>
+                  {addable > 0 && <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote()}>
+                    {busy === 'add' ? t('config.syncDiffAdding') : t('config.syncDiffAdd')}</Button>}
+                  {heldBack > 0 && <Button variant="outline" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote(true)}>
+                    {busy === 'revive' ? t('config.syncDiffReviving') : t('config.syncDiffRevive')}</Button>}
+                </div>}
+                {/* The plan is the review ledger's, and the review list below this row is the one
+                    place it is read, decided and applied: a second copy here would be a second place
+                    to keep in step, which is what this dialog used to be. */}
+                {conflicts.length > 0 && <div className={css.syncPlan}>
+                  <p className={css.syncDialogNote}>{t('config.syncPlanWhere')}</p>
+                  <div className={css.rowActions}>
+                    <Button variant="outline" size="sm" onClick={goToReview}>{t('config.syncPlanGo')}</Button>
                   </div>
-                </div>)}
-              </div>}
-              {conflicts.length === 0 && (addable > 0 || heldBack > 0) && <div className={css.rowActions}>
-                {addable > 0 && <Button variant="primary" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote()}>
-                  {busy === 'add' ? t('config.syncDiffAdding') : t('config.syncDiffAdd')}</Button>}
-                {heldBack > 0 && <Button variant="outline" size="sm" disabled={busy !== null || disabled} onClick={() => void addRemote(true)}>
-                  {busy === 'revive' ? t('config.syncDiffReviving') : t('config.syncDiffRevive')}</Button>}
-              </div>}
-              {/* The plan is the review ledger's, and the review list below this row is the one
-                  place it is read, decided and applied: a second copy here would be a second place
-                  to keep in step, which is what this dialog used to be. */}
-              {conflicts.length > 0 && <div className={css.syncPlan}>
-                <p className={css.syncDialogNote}>{t('config.syncPlanWhere')}</p>
-                <div className={css.rowActions}>
-                  <Button variant="outline" size="sm" onClick={goToReview}>{t('config.syncPlanGo')}</Button>
-                </div>
-              </div>}
-            </>}
+                </div>}
+              </>}
+          </div>
         </div>
+      </MnemonDialog>}
+      <div className={css.syncFeedback} aria-live="polite">
+        {failed !== null && <p className={css.error} role="alert">{t('config.syncFailed', { error: failed })}</p>}
+        {notice !== null && <p className={css.syncSuccess}>{notice}</p>}
+        {client === null && <p className={css.readOnly}>{t('config.syncUnavailable')}</p>}
       </div>
-    </MnemonDialog>}
-    <div className={css.syncFeedback} aria-live="polite">
-      {failed !== null && <p className={css.error} role="alert">{t('config.syncFailed', { error: failed })}</p>}
-      {notice !== null && <p className={css.syncSuccess}>{notice}</p>}
-      {client === null && <p className={css.readOnly}>{t('config.syncUnavailable')}</p>}
-    </div>
+    </>}
   </div>
 }
