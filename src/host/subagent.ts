@@ -17,6 +17,7 @@ import type { ComposableMemoryTurn } from '../core/turns.ts'
 import { idleReviewBlockReason, reviewLayerPolicy, startGuardedReview, type ReviewToolHost } from './review-tools.ts'
 import { reviewCheckpoint } from './review-checkpoint.ts'
 import { startWithContinuationTurns } from './continuation-turn.ts'
+import { startSubagent, type SubagentStartAgents } from './subagent-start.ts'
 import type { IdleReviewFailure } from './protocol.ts'
 
 export type { SubagentCounters } from "./protocol.ts"
@@ -117,6 +118,7 @@ interface HostToolRegistry {
 
 interface HostResultToolRuntime extends ReviewToolHost {
   tools: HostToolRegistry
+  agents?: SubagentStartAgents
   on(name: string, listener: (...args: never[]) => unknown): unknown
 }
 
@@ -1998,7 +2000,7 @@ This is the only completion channel for this run. Do not finish with a plain-tex
       const resolvedAgentOptions = fixed === undefined ? baseAgentOptions : { ...(baseAgentOptions ?? {}), provider: fixed.provider, model: fixed.model }
       const host = this.resultRuntime
       // Every tool continuation ends with a user turn, which strict chat templates require (#327).
-      const start = () => startWithContinuationTurns(host, parent, () => this.subagents.start(provider, {
+      const start = () => startWithContinuationTurns(host, parent, () => startSubagent(this.subagents, host.agents, provider, {
         label,
         prompt: [{ type: 'text', text: prompt }],
         parent,
