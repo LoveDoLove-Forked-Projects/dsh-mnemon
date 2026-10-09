@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join, relative, resolve, sep } from 'node:path'
 import { zipSync, unzipSync, type Unzipped } from 'fflate'
 import type { ResolvedConfig } from './config.ts'
 import { runProcess, type ProcessRunner } from './process.ts'
@@ -43,8 +43,12 @@ const DEFAULT_BACKUP_LIMIT = 20
 /** How many older commits a page says it withheld before it stops paying for the walk. */
 const BACKUP_WALK_LIMIT = 200
 const MAX_DIFF_ENTRIES = 200
-/** Git on Windows would otherwise rewrite line endings and break every checksum. */
-const NO_REWRITE = ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf']
+/**
+ * Git on Windows would otherwise rewrite line endings and break every checksum. A
+ * branch may also hold a symbolic link; checked out as a plain file it can never lead
+ * a later read or write out of the mirror.
+ */
+const NO_REWRITE = ['-c', 'core.autocrlf=false', '-c', 'core.eol=lf', '-c', 'core.symlinks=false']
 /**
  * Git reads where the repository is from the environment, so a launcher that
  * exports `GIT_DIR` for its own reasons hijacks every command below: the shell
@@ -75,7 +79,21 @@ export function gitEnvironment(environment: NodeJS.ProcessEnv = process.env): No
     if (value === undefined || GIT_LOCATION_ENV.has(name.toUpperCase())) continue
     sanitized[name] = value
   }
+  // The Host has no terminal a person watches, so Git and its credential manager must
+  // fail instead of waiting for a password or a sign-in window nobody will answer.
+  sanitized.GIT_TERMINAL_PROMPT = '0'
+  sanitized.GCM_INTERACTIVE = 'never'
   return sanitized
+}
+
+/** Whether a repository address is HTTPS on github.com, the only host a GitHub grant is for. */
+export function isGitHubHttps(repoUrl: string): boolean {
+  try {
+    const url = new URL(repoUrl)
+    return url.protocol === 'https:' && url.hostname.toLowerCase() === 'github.com'
+  } catch {
+    return false
+  }
 }
 
 interface GitOptions {
@@ -527,6 +545,9 @@ export class MnemonGitSync {
     }
     const grant = await this.auth?.grant()
     if (grant === undefined) return { source: 'none' }
+    // The grant opens every repository the account can reach, so it is offered to
+    // github.com and nowhere else; a repository elsewhere authenticates on its own.
+    if (settings.repoUrl !== undefined && !isGitHubHttps(settings.repoUrl)) return { source: 'none' }
     return { source: 'github', token: grant.accessToken, ...(grant.login === undefined ? {} : { login: grant.login }) }
   }
 
@@ -1000,8 +1021,26 @@ export class MnemonGitSync {
     return { tip }
   }
 
+  /**
+   * The payload directory inside the mirror. A link where that directory or one of
+   * its parents should be would lead every read, removal and write out of the mirror,
+   * so a path that crosses one is refused before anything touches it.
+   */
   private payloadRoot(subdir: string): string {
-    return resolve(this.store.mirror(), subdir)
+    const mirror = resolve(this.store.mirror())
+    const root = resolve(mirror, subdir)
+    let current = mirror
+    for (const part of relative(mirror, root).split(sep).filter(part => part !== '')) {
+      current = join(current, part)
+      let linked: boolean
+      try {
+        linked = lstatSync(current).isSymbolicLink()
+      } catch {
+        break
+      }
+      if (linked) throw new Error('the sync directory crosses a symbolic link in the mirror: ' + relative(mirror, current))
+    }
+    return root
   }
 
   /** Replace the payload directory with exactly these entries. */

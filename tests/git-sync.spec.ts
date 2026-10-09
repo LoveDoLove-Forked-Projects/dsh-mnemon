@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -7,8 +7,9 @@ import { resolveConfig } from '../src/host/config.ts'
 import { MnemonPackManager } from '../src/host/pack.ts'
 import { createStorageRoot } from '../src/host/storage-root.ts'
 import { MnemonGitSync, gitEnvironment } from '../src/host/git-sync.ts'
+import type { MnemonGitHubAuth } from '../src/host/github-auth.ts'
 import { MnemonMachineStore } from '../src/host/machine-identity.ts'
-import { runProcess } from '../src/host/process.ts'
+import { runProcess, type ProcessRunner } from '../src/host/process.ts'
 import { sourceFixture } from './fixtures/sources.ts'
 
 const directories: string[] = []
@@ -497,7 +498,7 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
       GIT_INDEX_FILE: 'C:\\tmp\\index',
       SystemRoot: 'C:\\Windows',
     })
-    expect(sanitized).toEqual({ PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows' })
+    expect(sanitized).toEqual({ PATH: 'C:\\Windows', SystemRoot: 'C:\\Windows', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' })
 
     const origin = await repository('sync-environment-remote')
     const machineA = await machine('sync-environment', origin)
@@ -505,6 +506,70 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     const pushed = await machineA.sync.push({ message: 'Sanitized environment' })
     expect(pushed).toMatchObject({ committed: true, pushed: true })
     expect(await git(['show', 'mnemon-sync:mnemon/payload/runtime/USER.md'], origin)).toContain('Survives a polluted environment')
+  })
+
+  it('never waits on a prompt a person would have to answer', () => {
+    // No terminal is watched on the Host: a missing credential has to fail, not hang a push.
+    expect(gitEnvironment({ PATH: '/bin', GIT_TERMINAL_PROMPT: '1' })).toEqual({ PATH: '/bin', GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' })
+  })
+
+  it('offers the GitHub sign-in to github.com and to no other host', async () => {
+    const calls: string[][] = []
+    const run: ProcessRunner = async (_command, args) => {
+      calls.push([...args])
+      return args.includes('--version') ? { stdout: 'git version 2.50.0\n', stderr: '', exitCode: 0 } : { stdout: '', stderr: '', exitCode: 0 }
+    }
+    const root = temporary('sync-grant')
+    const config = resolveConfig({ storageScope: 'custom', dataDir: root, cliPath: '/fake/mnemon', syncEnabled: true })
+    const runner = createStorageRoot(config)
+    const sync = new MnemonGitSync(runner, config, new MnemonPackManager(runner, config), run)
+    sync.useGitHubAuth({ grant: async () => ({ version: 1, accessToken: 'gho_test', login: 'octocat', savedAt: now().toISOString() }) } as unknown as MnemonGitHubAuth)
+    const handedToken = () => calls.filter(args => args.includes('ls-remote')).map(args => args.some(arg => arg.startsWith('credential.helper=store')))
+
+    await sync.configure({ repoUrl: 'https://git.example.com/team/memory.git' })
+    expect((await sync.status()).config.credentialSource).toBe('none')
+    expect(handedToken()).toEqual([false])
+
+    calls.length = 0
+    await sync.configure({ repoUrl: 'https://github.com/octocat/memory.git' })
+    expect((await sync.status()).config.credentialSource).toBe('github')
+    expect(handedToken()).toEqual([true])
+  })
+
+  it('refuses a payload directory that a symbolic link in the mirror leads out of it', async () => {
+    const origin = await repository('sync-link-remote')
+    const machineA = await machine('sync-link', origin)
+    await machineA.sync.configure({ subdir: 'nested/mnemon/' })
+    const outside = temporary('sync-link-outside')
+    writeFileSync(join(outside, 'canary.txt'), 'outside the mirror\n')
+    // A mirror an older build checked out, with a link where a payload parent should be.
+    const mirror = join(machineA.root, 'state', 'sync', 'git')
+    mkdirSync(mirror, { recursive: true })
+    await git(['init', '--quiet', mirror])
+    symlinkSync(outside, join(mirror, 'nested'))
+
+    await expect(machineA.sync.push({ message: 'Through a link' })).rejects.toThrow('crosses a symbolic link')
+    expect(readFileSync(join(outside, 'canary.txt'), 'utf8')).toBe('outside the mirror\n')
+    expect(readdirSync(outside)).toEqual(['canary.txt'])
+  })
+
+  it('checks a symbolic link a branch holds out as a plain file', async () => {
+    const origin = await repository('sync-branch-link-remote')
+    const outside = temporary('sync-branch-link-outside')
+    writeFileSync(join(outside, 'canary.txt'), 'outside the mirror\n')
+    // Someone with write access to the branch commits a link where the payload's parent goes.
+    const author = temporary('sync-branch-link-author')
+    await git(['init', '--quiet', '--initial-branch=mnemon-sync', author])
+    symlinkSync(outside, join(author, 'nested'))
+    await git(['add', 'nested'], author)
+    await git(['-c', 'user.name=Writer', '-c', 'user.email=writer@example.com', 'commit', '--quiet', '-m', 'Link'], author)
+    await git(['push', '--quiet', origin, 'mnemon-sync'], author)
+
+    const machineA = await machine('sync-branch-link', origin)
+    await machineA.sync.configure({ subdir: 'nested/mnemon/' })
+    await expect(machineA.sync.push({ message: 'Into the branch link' })).rejects.toThrow()
+    expect(lstatSync(join(machineA.root, 'state', 'sync', 'git', 'nested')).isSymbolicLink()).toBe(false)
+    expect(readdirSync(outside)).toEqual(['canary.txt'])
   })
 
   it('collects the loose objects each push writes into one pack', async () => {
