@@ -22,10 +22,7 @@ it collected and how the size changed. The collection runs after the branch has 
 slow repack can never hold a publish back, and a collection that fails is reported as a warning
 rather than failing a push that already succeeded.
 
-**The data directory is remembered, and the reconciliation area states how it runs.** Choosing
-**Default** used to discard the custom directory that had been chosen, which made the choice
-impossible to take back; it now stops memory from *using* that directory and nothing more. The
-reconciliation row states its own rules - the background only repeats the push at the interval set
-under **Automatic backup**, a difference is read only by **Check remote** or by the merge before a
+**The reconciliation area states how it runs.** The row states its own rules - the background only
+repeats the push at the interval set under **Automatic backup**, a difference is read only by **Check remote** or by the merge before a
 push and is never written on its own, and a plan to answer appears only when **Reconcile** runs - so
 a timer is never mistaken for a proposal.

@@ -111,7 +111,7 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
 
 ### Git 仓库同步
 
-**存储 → Git 同步**把与 ZIP 备份完全相同的载荷发布到 Git 仓库，供另一台机器拉取。远端存放可读文件；存储根永远不会被变成 Git 工作树。
+**存储 → Git 同步**把与 ZIP 备份完全相同的载荷发布到 Git 仓库，供另一台机器拉取。该开关默认关闭；关闭时这一行只显示标题与开关，不读取状态，也不执行 Git 命令。远端存放可读文件；存储根永远不会被变成 Git 工作树。
 
 远端位于所配置的分支与目录下（默认分支 `mnemon-sync`、目录 `mnemon/`）：
 
@@ -123,7 +123,6 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
     +-- runtime/{memories.json,USER.md,MEMORY.md}
     +-- documents/{index.json,active/<id>.md,archived/<id>.md}
     +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
-    +-- settings/mnemon.json      # 该 profile 的记忆设置，已剔除机器本地键
 ```
 
 - **Push**：把完整包导出到 `<storageRoot>/state/sync/git`，在其中提交并推送分支。手动推送必须显式确认。
@@ -131,7 +130,7 @@ DSH 以写权限打开旧会话时，会迁移为不可变的 v3 generation。Mn
 - **备份体积**：Git 为每次 push 写入全新的 blob，而载荷是整包，因此镜像会随每次推送再存一份完整副本，而 clone 下载的是 pack。因此每次推送成功后会把镜像的零散对象收进一个 pack（`git repack -adf`），并在推送结果里回报收进了多少个对象、占用从多少变成多少。合并镜像本身不参与同步，删除它只多一次 fetch；这一收拢失败只会以警告回报，不会让已经成功的推送失败。
 - **Pull**：先读取远端 manifest 与 SHA-256 清单，预览将要发生的变更，确认后走与“导入 ZIP”相同的路径合并。manifest 或校验和不匹配属于硬失败，不会导入任何内容。
 - 载荷就是既有的 Mnemon Pack 载荷：同一个收集器、同一个校验器、同一个导入器。包内包含 `manifest.json`、SHA-256 清单与组件摘要，同步扩展字段记录通道、分支、目录与推送时间；不认识同步的读取方仍能读到合法的 Mnemon Pack manifest。
-- 载荷始终是完整包：runtime、documents、memory-spaces 与 settings，用户画像包含在 runtime 中。settings 组件承载 `mnemon` 命名空间的 `user` 层，让第二台机器继承同一份配置；机器本地键（`storageScope`、`dataDir`、`cliPath`、`customPackId`、`customPacks`）会被剔除，因为一台机器上的目录不一定是另一台机器上的目录。Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择；组件筛选只作为 pull 的一次性可选参数 `components` 存在。
+- 载荷只承载记忆内容：runtime、documents 与 memory-spaces，用户画像包含在 runtime 中。配置属于 profile 层，不会随载荷传递，因此第二台机器保留自己的设置，不会继承本机的设置。Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择；组件筛选只作为 pull 的一次性可选参数 `components` 存在。
 - `state/sync/git` 下的镜像是可丢弃的，且不属于任何数据组件，因此镜像不会同步自己；删除它只多一次 fetch。
 - 双向操作都要求 `writeEnabled`；只读部署会以与“导入 ZIP”相同的提示拒绝 push 与 pull。
 

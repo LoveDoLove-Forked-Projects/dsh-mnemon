@@ -116,12 +116,13 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // copy that replaced the dialog's plan block. Keep less than 1 KB of headroom; no
 // endpoint, credential or payload shape enters lib/client.js.
 // The automatic Git backup interval and the rules the reconciliation row states, in
-// both languages, bring the measured package to 1,851,923 bytes (+21,483 over the
-// 1,830,440 measured before this work). The growth is the settings copy and the small
-// rules list; the timer, the repack and the interval's validation stay in the Host
-// bundle. Keep less than 1 KB of headroom; lib/client.js still carries no endpoint,
-// credential or payload shape.
-const maximumUnpackedBytes = 1_852_500
+// both languages, brought the measured package to 1,851,923 bytes (+21,483 over the
+// 1,830,440 measured before this work). Keeping the Pack at the shape 0.5.24 reads and
+// moving the data-directory move and the task Agent's model out of this work take the
+// client copy and the directory picker back out, which measures 1,820,895 bytes
+// (-31,028 over the 1,851,923 measured before this work). Keep less than 1 KB of
+// headroom; lib/client.js still carries no endpoint, credential or payload shape.
+const maximumUnpackedBytes = 1_821_500
 
 if (missing.length > 0 || unexpected.length > 0 || hostLeaks.length > 0 || relativeReadmeImages.length > 0 || pack.unpackedSize > maximumUnpackedBytes) {
   if (missing.length > 0) console.error(`Missing package files:\n${missing.map(path => `- ${path}`).join('\n')}`)

@@ -53,8 +53,6 @@ follow an exact cold reference when full text is required
 |   +-- .dsh-memory-bodies.json
 |   +-- <memory-space-id>/
 |       +-- mnemon.db
-+-- settings/
-|   +-- mnemon.json               # 导出期间暂存的设置快照
 +-- state/
     +-- machine.json              # 本机标识，0600，不进入 Mnemon Pack
     +-- tombstones.json           # 本机已导出过的删除记录，不进入 Mnemon Pack

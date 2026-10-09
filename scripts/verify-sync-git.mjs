@@ -6,6 +6,8 @@
 // and /dsh-mnemon-pack over real loopback HTTP with the same envelopes the browser
 // sends, and publishes to a real bare repository. The only stand-in is the model
 // endpoint, which never answers a memory request.
+// The payload carries memory content only: the profile and the keys that
+// describe one machine stay on the machine that wrote them.
 //
 // Run after 'pnpm run build && pnpm --workspace-concurrency=4 -r build'.
 // Set MNEMON_SYNC_E2E_KEEP=1 to keep the fixture for inspection.
@@ -287,8 +289,8 @@ try {
   const pushed = expectOk(await sync(a, 'push', { message: 'Sync from the acceptance run', confirmed: true }), 'push')
   check('push committed and published one pack', pushed.committed === true && pushed.pushed === true
     && /^[0-9a-f]{40}$/u.test(pushed.commit) && pushed.branch === 'mnemon-sync' && pushed.subdir === 'mnemon/', JSON.stringify(pushed))
-  check('the pack holds every component, settings included',
-    JSON.stringify(pushed.summary.map(entry => entry.component)) === '["runtime","documents","memory-spaces","settings"]', JSON.stringify(pushed.summary))
+  check('the pack holds the three memory components',
+    JSON.stringify(pushed.summary.map(entry => entry.component)) === '["runtime","documents","memory-spaces"]', JSON.stringify(pushed.summary))
   const authored = await git(['log', '-1', '--format=%an <%ae>|%cn <%ce>', 'mnemon-sync'], origin)
   check('the commit carries the identity Git was left with',
     authored === 'Mnemon Local <local@localhost>|Mnemon Local <local@localhost>', authored)
@@ -297,14 +299,9 @@ try {
     tree.includes('mnemon/manifest.json') && tree.includes('mnemon/checksums.json')
     && tree.includes('mnemon/payload/runtime/memories.json') && tree.includes('mnemon/payload/runtime/USER.md')
     && tree.includes('mnemon/payload/runtime/MEMORY.md')
-    && tree.includes('mnemon/payload/settings/mnemon.json'), tree.split('\n').slice(0, 10).join(', '))
-  const settingsEntry = pushed.summary.find(entry => entry.component === 'settings')
-  check('the settings component carries its own payload file',
-    settingsEntry !== undefined && settingsEntry.files >= 1 && settingsEntry.bytes > 0, JSON.stringify(settingsEntry))
-  const publishedSettings = JSON.parse(await git(['show', 'mnemon-sync:mnemon/payload/settings/mnemon.json'], origin))
-  check('the published settings payload is a readable namespace snapshot',
-    publishedSettings.version === 1 && typeof publishedSettings.exportedAt === 'string'
-    && Array.isArray(publishedSettings.namespaces), JSON.stringify(publishedSettings))
+    && tree.includes('mnemon/payload/runtime/MEMORY.md'), tree.split('\n').slice(0, 10).join(', '))
+  check('no settings directory is published with the payload',
+    tree.includes('mnemon/payload/settings/mnemon.json') === false, tree.split('\n').filter(path => path.includes('settings')).join(', '))
   const publishedMemory = await git(['show', 'mnemon-sync:mnemon/payload/runtime/MEMORY.md'], origin)
   check('the published working memory carries the entry', publishedMemory.includes(MARKER))
   const manifest = JSON.parse(await git(['show', 'mnemon-sync:mnemon/manifest.json'], origin))
@@ -333,7 +330,7 @@ try {
   // only the component that really carries the entry has to report a change.
   const runtimeDelta = preview.components.find(entry => entry.component === 'runtime')
   check('preview reports the working memory as changed against an empty root',
-    preview.components.length === 4 && runtimeDelta?.changed === true
+    preview.components.length === 3 && runtimeDelta?.changed === true
     && preview.files.changed > 0 && preview.expandedBytes > 0, JSON.stringify(preview.components))
   const unconfirmedPull = await sync(b, 'pull', {})
   expectFailure(unconfirmedPull, /requires confirmation/u, 'an unconfirmed pull')
@@ -343,13 +340,13 @@ try {
   const pulled = expectOk(await sync(b, 'pull', { confirmed: true }), 'pull')
   check('pull imported the published commit through the pack importer',
     pulled.imported === true && pulled.mode === 'merge' && pulled.commit === pushed.commit
-    && JSON.stringify(pulled.components) === '["runtime","documents","memory-spaces","settings"]', JSON.stringify({ mode: pulled.mode, components: pulled.components }))
+    && JSON.stringify(pulled.components) === '["runtime","documents","memory-spaces"]', JSON.stringify({ mode: pulled.mode, components: pulled.components }))
   const secondMemory = await readFile(join(data.b, 'runtime', 'MEMORY.md'), 'utf8')
   const secondProfile = await readFile(join(data.b, 'runtime', 'USER.md'), 'utf8')
   check('the second machine now holds the working memory and the profile',
     secondMemory.includes(MARKER) && secondProfile.includes(PROFILE))
 
-  console.log('\n3. Settings travel in the pack without the keys that belong to one machine')
+  console.log('\n3. A settings edit stays on the machine that made it')
   const settingsA = expectOk(await call(a, '/dsh-mnemon-settings', 'get', {}), 'settings get')
   check('the settings channel reports the profile value, revision and writer',
     settingsA.mode === 'host' && settingsA.writable === true && typeof settingsA.revision === 'number'
@@ -364,20 +361,18 @@ try {
   check('the edit is committed and answered from the committed profile',
     edited.value.defaultRecallLimit === 7 && edited.value.cliPath === join(data.a, 'bin', 'mnemon')
     && edited.revision > settingsA.revision, JSON.stringify({ revision: edited.revision, limit: edited.value.defaultRecallLimit }))
+  // The payload carries memory content only, so a settings edit changes no
+  // file: the branch stays exactly where the last push left it.
   const settingsPush = expectOk(await sync(a, 'push', { message: 'Carry the settings edit', confirmed: true }), 'push')
-  check('the settings edit publishes a second commit',
-    settingsPush.committed === true && settingsPush.pushed === true && settingsPush.commit !== pushed.commit, JSON.stringify(settingsPush.commit))
-  const carriedSettings = JSON.parse(await git(['show', 'mnemon-sync:mnemon/payload/settings/mnemon.json'], origin))
-  const carriedMnemon = carriedSettings.namespaces.find(snapshot => snapshot.ns === 'mnemon')
-  check('the payload carries the edited namespace and drops the machine-local key',
-    carriedMnemon !== undefined && carriedMnemon.user.defaultRecallLimit === 7
-    && JSON.stringify(carriedSettings).includes('cliPath') === false, JSON.stringify(carriedSettings))
+  check('a settings edit changes no payload, so the branch stays where the push left it',
+    settingsPush.committed === false && settingsPush.pushed === false && settingsPush.commit === pushed.commit
+    && settingsPush.reason === 'the branch already holds this payload', JSON.stringify(settingsPush))
   const settingsPull = expectOk(await sync(b, 'pull', { confirmed: true }), 'pull')
-  check('the second machine imports the settings commit',
-    settingsPull.imported === true && settingsPull.commit === settingsPush.commit, JSON.stringify(settingsPull.commit))
+  check('the second machine still imports the published commit',
+    settingsPull.imported === true && settingsPull.commit === pushed.commit, JSON.stringify(settingsPull.commit))
   const settingsB = expectOk(await call(b, '/dsh-mnemon-settings', 'get', {}), 'settings get')
-  check('the second machine applies the imported settings to its own profile',
-    settingsB.value.defaultRecallLimit === 7, JSON.stringify(settingsB.value.defaultRecallLimit))
+  check('the second machine keeps its own profile: the edit did not travel',
+    settingsB.value.defaultRecallLimit === 10, JSON.stringify(settingsB.value.defaultRecallLimit))
   check('the key that only describes machine A never crossed to machine B',
     settingsB.value.cliPath !== join(data.a, 'bin', 'mnemon'), JSON.stringify(settingsB.value.cliPath))
 
@@ -417,63 +412,12 @@ try {
   check('the token never reaches the mirror',
     (await readFile(join(data.a, 'state', 'sync', 'git', '.git', 'config'), 'utf8')).includes(TOKEN) === false)
 
-  console.log('\n6. Moving the data directory is planned, confirmed and completed')
-  const moveTarget = join(fixture, 'data-a-moved')
-  const emptyPlan = await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: '' })
-  expectFailure(emptyPlan, /dataDir must be a non-empty directory/u, 'a plan without a directory')
-  const samePlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: data.a }), 'storage-plan')
-  check('planning a move onto the current directory is refused by name',
-    samePlan.from === data.a && samePlan.to === data.a
-    && samePlan.blocked === 'the data directory is already this directory', JSON.stringify(samePlan.blocked))
-  const nestedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: join(data.a, 'nested') }), 'storage-plan')
-  check('planning a move into the data directory is refused as nested',
-    nestedPlan.blocked === 'one directory is inside the other', JSON.stringify(nestedPlan.blocked))
-  // A genuinely separate, already occupied directory is the one case the plan
-  // refuses before touching anything: the current directory cannot be used for
-  // this, because after a completed move the Host itself follows the new root.
-  const occupiedTarget = join(fixture, 'data-a-occupied')
-  await mkdir(occupiedTarget)
-  await writeFile(join(occupiedTarget, 'keep.txt'), 'not a Mnemon root\n')
-  const occupiedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: occupiedTarget }), 'storage-plan')
-  check('a directory that already holds data is refused as a target',
-    occupiedPlan.targetOccupied === true && occupiedPlan.blocked === 'the target directory already holds data', JSON.stringify(occupiedPlan.blocked))
-  const occupiedMove = await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: occupiedTarget, confirmed: true })
-  expectFailure(occupiedMove, /cannot move the Mnemon data directory: the target directory already holds data/u, 'a move onto occupied data')
-  const movePlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
-  check('a usable target is planned with its size and no blocker',
-    movePlan.from === data.a && movePlan.to === moveTarget && movePlan.blocked === undefined
-    && movePlan.targetOccupied === false && movePlan.sameDevice === true
-    && movePlan.source.files > 0 && movePlan.source.bytes > 0, JSON.stringify(movePlan))
-  const unconfirmedMove = await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: moveTarget })
-  expectFailure(unconfirmedMove, /Moving the Mnemon data directory requires confirmation/u, 'an unconfirmed move')
-  check('an unconfirmed move leaves the data directory in place',
-    existsSync(join(data.a, 'runtime', 'MEMORY.md')) === true && existsSync(moveTarget) === false)
-  const migrated = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-migrate', { dataDir: moveTarget, confirmed: true }), 'storage-migrate')
-  check('the move reports what it carried and that it removed the old root',
-    migrated.from === data.a && migrated.to === moveTarget && migrated.files >= movePlan.source.files
-    && migrated.bytes > 0 && migrated.removed === true, JSON.stringify(migrated))
-  check('the memory and the sync state arrived at the new directory',
-    existsSync(join(moveTarget, 'runtime', 'MEMORY.md')) === true && existsSync(join(moveTarget, 'state', 'sync-git.json')) === true)
-  // The Host records the new location itself, so the profile already follows
-  // the move; planning the move again must report the directory it now uses.
-  const followedPlan = expectOk(await call(a, '/dsh-mnemon-pack', 'storage-plan', { dataDir: moveTarget }), 'storage-plan')
-  check('the moved directory is now the current one, so it is refused by name',
-    followedPlan.from === moveTarget && followedPlan.to === moveTarget && followedPlan.targetOccupied === false
-    && followedPlan.blocked === 'the data directory is already this directory', JSON.stringify(followedPlan.blocked))
-  const repointed = expectOk(await call(a, '/dsh-mnemon-settings', 'get', {}), 'settings get')
-  check('the profile now points at the directory the data moved to',
-    repointed.value.storageScope === 'custom' && repointed.value.dataDir === moveTarget, JSON.stringify(repointed.value.dataDir))
-  const movedTarget = expectOk(await call(a, '/dsh-mnemon-pack', 'target', {}), 'pack target')
-  check('the running Host reads and writes the moved directory',
-    movedTarget.root === moveTarget && movedTarget.scope === 'custom', JSON.stringify(movedTarget))
-  check('the memory survived the move and the recorded location',
-    (await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')).includes(MARKER))
 
-  console.log('\n7. A reconciliation is proposed, reviewed with opinions, and only then applied')
+  console.log('\n6. A reconciliation is proposed, reviewed with opinions, and only then applied')
   const idleReview = expectOk(await call(a, '/dsh-mnemon-review', 'view', {}), 'review view')
   check('an installation that never reconciled has an empty ledger',
     idleReview.pending === 0 && idleReview.entries.length === 0
-    && idleReview.path === join(moveTarget, 'state', 'review-ledger.json'), JSON.stringify(idleReview.path))
+    && idleReview.path === join(data.a, 'state', 'review-ledger.json'), JSON.stringify(idleReview.path))
   const emptyOpinion = await call(a, '/dsh-mnemon-review', 'opinion', { id: 'missing-entry', text: '   ' })
   expectFailure(emptyOpinion, /a review opinion must not be empty/u, 'an empty opinion')
   const unknownReview = await call(a, '/dsh-mnemon-review', 'nope', {})
@@ -491,7 +435,7 @@ try {
   check('the staged review waits in the ledger with its proposal',
     staged.pending === 1 && staged.entries.length === 1 && staged.entries[0]?.id === reconciled.entry.id
     && staged.entries[0]?.operations.length === 1, JSON.stringify({ pending: staged.pending, entries: staged.entries.length }))
-  const untouched = await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')
+  const untouched = await readFile(join(data.a, 'runtime', 'MEMORY.md'), 'utf8')
   check('a pending review changes no memory', untouched.includes(RECONCILE_MARKER) === false)
   const opinion = expectOk(await call(a, '/dsh-mnemon-review', 'opinion', { id: reconciled.entry.id, text: 'Keep it, the entry is still useful.' }), 'review opinion')
   check('an opinion is recorded against the review',
@@ -507,7 +451,7 @@ try {
     applied.applied === 1 && applied.failures.length === 0 && applied.entry.status === 'accepted'
     && typeof applied.entry.appliedAt === 'string' && JSON.stringify(applied.entry.appliedOperations) === '[0]',
     JSON.stringify({ applied: applied.applied, failures: applied.failures, appliedOperations: applied.entry.appliedOperations }))
-  const written = await readFile(join(moveTarget, 'runtime', 'MEMORY.md'), 'utf8')
+  const written = await readFile(join(data.a, 'runtime', 'MEMORY.md'), 'utf8')
   check('the applied operation reached the working memory', written.includes(RECONCILE_MARKER))
   // The ledger records the positions that ran, so the plan is never replayed against text
   // the first run replaced.
@@ -520,7 +464,7 @@ try {
     reopened.status === 'pending' && reopened.decidedAt === undefined && reopened.appliedAt === undefined
     && reopened.appliedOperations === undefined, JSON.stringify({ status: reopened.status, appliedOperations: reopened.appliedOperations }))
 
-  console.log('\n8. GitHub sign-in answers over the channel without a browser')
+  console.log('\n7. GitHub sign-in answers over the channel without a browser')
   const signIn = expectOk(await sync(a, 'github-status'), 'github-status')
   check('the sign-in surface reports what this Host can do',
     typeof signIn.available === 'boolean' && typeof signIn.signedIn === 'boolean' && typeof signIn.writable === 'boolean'

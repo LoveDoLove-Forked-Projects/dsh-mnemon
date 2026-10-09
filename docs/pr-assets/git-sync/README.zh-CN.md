@@ -10,7 +10,7 @@ dsh-mnemon 可以把记忆发布到 Git 仓库，并在另一台机器上恢复�
 - `push` 导出完整包，在本地镜像中提交并推送分支；必须传 `confirmed: true`，不会有任何定时推送。
 - `pull` 先读取远端 manifest 与 SHA-256 清单，预览差异，确认后走与“导入 ZIP”相同的导入器合并。manifest 或校验和不匹配属于硬失败，不会导入任何内容。
 - 载荷就是既有的 Mnemon Pack 载荷：同一个收集器、同一个校验器、同一个导入器。`manifest.json` 上的同步扩展字段记录通道、分支、目录与推送时间；不认识同步的读取方仍能读到合法的 Mnemon Pack manifest。
-- 载荷始终是完整的 Mnemon Pack：runtime、documents、memory-spaces 与 settings，用户画像包含在 runtime 中。settings 组件承载 `mnemon` 命名空间的 `user` 层并剔除机器本地键（`storageScope`、`dataDir`、`cliPath`、`customPackId`、`customPacks`），因此第二台机器继承的是配置，而不是只存在于第一台机器上的路径。Pack manifest 的 `scope` 为 `full` 或恰好一个组件，因此无法表示持久化的组件选择，也不会保存这样的配置；组件筛选只是 pull 上一次性的可选参数 `components`。
+- 载荷始终是完整的 Mnemon Pack：runtime、documents 与 memory-spaces，用户画像包含在 runtime 中。它只承载记忆内容——配置属于 profile 层，留在设置它的那台机器上，因此第二台机器保留自己的设置，而不是继承只存在于第一台机器上的路径。Pack manifest 的 `scope` 为 `full` 或恰好一个组件，因此无法表示持久化的组件选择，也不会保存这样的配置；组件筛选只是 pull 上一次性的可选参数 `components`。
 - `push` 先合并远端包再导出：导入远端已有的内容，导出合并后的结果，响应里回报这次合并（`merged.commit`、`merged.machine`、`merged.components`、`merged.summary`、`merged.tombstones`）。本机删除的 Runtime 条目在导出时被记为墓碑，因此导入较旧的包不会把它带回来。
 - 双向操作都要求 `writeEnabled`；只读部署会以与“导入 ZIP”相同的提示拒绝 push 与 pull。
 - **使用 GitHub 登录**是首选凭据。表单走 GitHub 的 OAuth 设备码流程：显示一次性设备码、链接到 `https://github.com/login/device`，并按 GitHub 返回的间隔轮询。凭据经 DSH 凭据服务以记录键 `dsh-mnemon/github` 保存，永不到达浏览器。服务用 `ctx.get('credentials')` 读取而非 `inject`，因此未挂载 provider 的 profile 仍能加载插件，只是把登录报告为不可用。

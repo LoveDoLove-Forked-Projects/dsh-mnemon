@@ -111,7 +111,7 @@ Import is governed by `writeEnabled` and is rejected in read-only deployments. A
 
 ### Git repository sync
 
-**Storage → Git sync** publishes the same payload as ZIP backup to a Git repository, so another machine can pull it. The remote holds readable files; the storage root is never made a Git work tree.
+**Storage → Git sync** publishes the same payload as ZIP backup to a Git repository, so another machine can pull it. The switch is off by default, and while it is off the row shows only its title and the switch: no status is read and no Git command runs. The remote holds readable files; the storage root is never made a Git work tree.
 
 On the configured branch and remote directory (defaults `mnemon-sync` and `mnemon/`):
 
@@ -123,7 +123,6 @@ On the configured branch and remote directory (defaults `mnemon-sync` and `mnemo
     +-- runtime/{memories.json,USER.md,MEMORY.md}
     +-- documents/{index.json,active/<id>.md,archived/<id>.md}
     +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
-    +-- settings/mnemon.json      # the profile's memory settings, machine-local keys removed
 ```
 
 - **Push** exports the complete pack into `<storageRoot>/state/sync/git`, commits it there and pushes the branch. A manual push requires explicit confirmation.
@@ -131,7 +130,7 @@ On the configured branch and remote directory (defaults `mnemon-sync` and `mnemo
 - **Backup size**: Git stores a brand-new blob for every push, and the payload is the whole pack, so the mirror accumulates a complete copy of each generation while a clone downloads the pack. Every successful push therefore folds the mirror's loose objects into one pack (`git repack -adf`) and reports how many objects it collected and how the size changed. The mirror is never part of what syncs, and deleting it costs one fetch; a collection that fails is reported as a warning and never fails a push that already succeeded.
 - **Pull** reads the remote manifest and its SHA-256 inventory, previews what would change and, after confirmation, merges through the same path as Import ZIP. A manifest or checksum mismatch is a hard failure that imports nothing.
 - The payload is the existing Mnemon Pack payload: one collector, one validator, one importer. Packs carry `manifest.json`, the SHA-256 inventory and component summaries, and the sync extension records the channel, branch, directory and push time. A reader that does not know sync still reads a valid Mnemon Pack manifest.
-- The payload is always a complete pack: runtime, documents, memory-spaces and settings, with the user profile inside runtime. The settings component carries the `user` layer of the `mnemon` namespace, so a second machine inherits the same configuration; machine-local keys (`storageScope`, `dataDir`, `cliPath`, `customPackId`, `customPacks`) are stripped, because a directory that exists on one machine is not a directory on another. A pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional one-off `components` parameter on pull.
+- The payload carries memory content only: runtime, documents and memory-spaces, with the user profile inside runtime. Configuration belongs to the profile layer and never travels in a payload, so a second machine keeps its own settings instead of inheriting this machine's. A pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional one-off `components` parameter on pull.
 - The mirror under `state/sync/git` is disposable and never a pack component, so it cannot sync itself; deleting it costs one fetch.
 - Both directions require `writeEnabled`; a read-only deployment refuses push and pull with the same message Import ZIP uses.
 

@@ -53,8 +53,6 @@ Use `global` for a common local root, `custom` for an explicitly agreed root, or
 |   +-- .dsh-memory-bodies.json
 |   +-- <memory-space-id>/
 |       +-- mnemon.db
-+-- settings/
-|   +-- mnemon.json               # staged settings snapshot; written only for the duration of an export
 +-- state/
     +-- machine.json              # this machine's identity; 0600; excluded from Mnemon Packs
     +-- tombstones.json           # deletions this machine has already exported; excluded from Mnemon Packs

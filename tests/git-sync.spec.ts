@@ -536,6 +536,30 @@ describe.skipIf(!available)('Mnemon Git sync', { timeout: 90_000 }, () => {
     expect(readFileSync(join(clone, 'mnemon', 'payload', 'runtime', 'USER.md'), 'utf8')).toContain('Second memory')
   })
 
+  it('answers a profile that never switched sync on without touching Git', async () => {
+    const origin = await repository('sync-off-remote')
+    const switchedOn = await machine('sync-off', origin)
+    // Nothing was ever configured on this profile, so even the repository above is
+    // absent: what the status reports must be about the switch alone.
+    const off = resolveConfig({ storageScope: 'custom', dataDir: switchedOn.root, cliPath: '/fake/mnemon', syncEnabled: false })
+    const sync = new MnemonGitSync(switchedOn.runner, off, switchedOn.packs, undefined, now)
+    sync.configure({ repoUrl: origin })
+
+    const status = await sync.status()
+    // Off is not a failure and not a probe: the saved configuration is answered,
+    // and the fields that would only exist because Git ran say so.
+    expect(status).toMatchObject({ enabled: false, configured: true, git: { available: false }, remote: { reachable: false, branchExists: false } })
+    expect(status.machine).toBeUndefined()
+    expect(status.lastCommit).toBeUndefined()
+    expect(status.autoBackup).toBeUndefined()
+    // A disabled channel leaves no trace on disk: the mirror is what a Git run creates.
+    expect(existsSync(join(switchedOn.root, 'state', 'sync', 'git'))).toBe(false)
+    // Switching it on is the whole difference: the same root now reports Git and the remote.
+    const on = resolveConfig({ storageScope: 'custom', dataDir: switchedOn.root, cliPath: '/fake/mnemon', syncEnabled: true })
+    const enabled = await new MnemonGitSync(switchedOn.runner, on, switchedOn.packs, undefined, now).status()
+    expect(enabled).toMatchObject({ enabled: true, git: { available: true }, remote: { reachable: true, branchExists: false } })
+  })
+
   it('creates the branch on the first push and honours a nested directory', async () => {
     const origin = await repository('sync-branch-remote')
     const machineA = await machine('sync-branch', origin)

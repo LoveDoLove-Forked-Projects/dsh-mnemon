@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MnemonSettingsCard } from '../src/client/MnemonSettingsCard.tsx'
 import { translateEn } from '../src/client/locales.ts'
-import { settingsScope } from './helpers/settings-scope.ts'
+import { liveSettingsScope, settingsScope } from './helpers/settings-scope.ts'
 import type { ClientConnectionHandle, Config, MemoryPluginEntryView, MemoryViewConfigurationRequest, MemoryViewDashboard, MnemonSyncGitHubStatus } from '../src/host/protocol.ts'
 
 afterEach(cleanup)
@@ -211,6 +211,31 @@ describe('Memory enhancement settings', () => {
     // The same entry turns into a real picker and a create form once signed in.
     expect((await screen.findByLabelText('新建仓库') as HTMLInputElement).placeholder).toBe('mnemon-memory')
     expect(screen.getByText('账号下还没有仓库，可以在下面新建')).toBeTruthy()
+  })
+
+  it('keeps the Git sync row silent until the switch turns it on', async () => {
+    const mutate = vi.fn(async () => {})
+    const scope = liveSettingsScope<Config>({ status: 'ready', value: { storageScope: 'global' }, base: {}, user: {}, revision: 0, writable: true, mode: 'host' }, mutate)
+    const { connection, call } = fixture({ github: { available: true, signedIn: false, writable: true } })
+    render(<MnemonSettingsCard scope={scope} connection={connection} />)
+
+    // Off is the default, and off is silent: the row is the title, the hint and the switch.
+    const off = await screen.findByRole('switch', { name: 'Git 同步' })
+    expect(off.getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByText('把上述组件的数据同步到 Git 仓库；不含第三方 Provider 与密钥')).toBeTruthy()
+    expect(screen.queryByLabelText('分支')).toBeNull()
+    expect(screen.queryByLabelText('提交者姓名')).toBeNull()
+    expect(screen.queryByText('尚未配置仓库')).toBeNull()
+    // Reading the channel is what would run Git, so a switched-off row asks it nothing.
+    expect(call.mock.calls.filter(([channel]) => channel === '/dsh-mnemon-sync')).toEqual([])
+
+    fireEvent.click(off)
+    // The choice saves as it is made, and it is what the next read of the profile shows.
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith([{ op: 'set', path: ['syncEnabled'], value: true }]))
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Git 同步' }).getAttribute('aria-checked')).toBe('true'))
+    // Switched on, the same row unfolds the repository form and reads the channel.
+    expect(await screen.findByLabelText('分支')).toBeTruthy()
+    await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-sync', 'status', {}))
   })
 
   it('hides the enhancements and keeps the other settings when the View dashboard fails', async () => {
