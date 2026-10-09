@@ -109,7 +109,9 @@ export async function startGuardedReview(
   try {
     run = await startingReview.run(pending, start)
     if (attachmentError !== undefined) throw attachmentError
-    const child = run.localAgent
+    const runId = run.id
+    // A DSH 0.2.1 activation names its child only by id; the guard attached at publication still holds it.
+    const child = run.localAgent ?? [...guards.keys()].find(agent => agent.id === runId)
     if (child === undefined || !guards.has(child)) {
       throw new Error('Mnemon review provider did not publish a local child with its scoped tool guard')
     }

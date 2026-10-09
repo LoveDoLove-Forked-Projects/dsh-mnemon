@@ -158,6 +158,25 @@ describe('review publication and execution boundary', () => {
     expect(f.listeners.size).toBe(0)
   })
 
+  it('finds the guarded child by id when the run names it only by id (#356)', async () => {
+    const f = fixture(), child = f.child('child'), other = f.child('other')
+    const byId = { id: 'child', result: child.run.result, dispose: () => child.run.dispose() }
+    const run = await startGuardedReview(f.host, f.parent, ['mnemon_subagent_result'], async () => {
+      f.publish(child.agent)
+      return byId
+    })
+    expect(run.localAgent).toBe(child.agent)
+    expect(child.denial('mcp__aoci__aoci_overview')).toContain('Mnemon review cannot execute')
+    await run.dispose()
+    expect(child.guards.size).toBe(0)
+    // A published child with another id is not the run's child.
+    await expect(startGuardedReview(f.host, f.parent, [], async () => {
+      f.publish(other.agent)
+      return byId
+    })).rejects.toThrow('scoped tool guard')
+    expect(other.guards.size).toBe(0)
+  })
+
   it('fails before starting when ownership is unavailable and rejects an unguarded published child', async () => {
     const f = fixture(), child = f.child('child'), start = vi.fn(async () => child.run)
     await expect(startGuardedReview({ on: f.host.on }, f.parent, [], start)).rejects.toThrow('ownership')

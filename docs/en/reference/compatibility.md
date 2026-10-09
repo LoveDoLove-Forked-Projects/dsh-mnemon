@@ -6,7 +6,7 @@ The Starter pins a tested combination of official plugins. The table records ver
 
 | Component | Baseline | What is verified |
 |---|---|---|
-| DSH | `0.2.0-rc.2` (npm `latest` and `next`), `0.1.7-rc.2` | The two supported hosts; `0.2.0-rc.1` also installs. 0.1.7-rc.2 is the pinned development baseline: published contracts, WebUI and isolated Headless activation, profile settings and retained-settings recovery, producer-owned Session V4 messages, plugin manager activation and the Agent Teams review matrix. For DSH 0.2 see [below](#dsh-02) |
+| DSH | `0.2.0-rc.2` (npm `latest` and `next`), `0.1.7-rc.2` | The two supported hosts; `0.2.0-rc.1` also installs, and `0.2.1-alpha.2` (npm `alpha`) runs memory subagents as tested [below](#dsh-02). 0.1.7-rc.2 is the pinned development baseline: published contracts, WebUI and isolated Headless activation, profile settings and retained-settings recovery, producer-owned Session V4 messages, plugin manager activation and the Agent Teams review matrix. For DSH 0.2 see [below](#dsh-02) |
 | Node.js | `22.19` and `24` | Source CI and packed-artifact CI respectively; development requires `^22.19.0 || >=24.0.0` |
 | Node.js 20 | Public package imports only | Does not establish that the DSH Host runs on Node 20 |
 | Mnemon Native CLI | `0.2.9` | Opt-in tests against a real CLI and disposable data; install the CLI separately |
@@ -22,13 +22,21 @@ The [v0.5.19 Light gallery](../../assets/webui-v0.5.19/README.md) covers the bil
 
 ## DSH 0.2
 
-Before DSH installs a plugin, and each time a profile starts, it checks every `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` peer range against its own version, prereleases included. `^0.1.7-rc.2` excludes 0.2.0, so DSH 0.2 refuses to install dsh-mnemon 0.5.18 and earlier as incompatible and turns an installed one off at startup. From 0.5.19 these peers also accept `^0.2.0-rc.1`; `tests/dsh-host-compatibility.spec.ts` runs DSH's own check over all 18 package manifests for 0.1.7-rc.2, 0.2.0-rc.1 and 0.2.0-rc.2.
+Before DSH installs a plugin, and each time a profile starts, it checks every `@deepseek-ai/dsh` and `@deepseek-ai/dsh-*` peer range against its own version, prereleases included. `^0.1.7-rc.2` excludes 0.2.0, so DSH 0.2 refuses to install dsh-mnemon 0.5.18 and earlier as incompatible and turns an installed one off at startup. From 0.5.19 these peers also accept `^0.2.0-rc.1`; `tests/dsh-host-compatibility.spec.ts` runs DSH's own check over all 18 package manifests for 0.1.7-rc.2, 0.2.0-rc.1, 0.2.0-rc.2 and 0.2.1-alpha.2.
 
 **Upgrade order.** Update dsh-mnemon to 0.5.19 or later on your current DSH first, then upgrade DSH. If DSH was upgraded first, the older release is turned off and memory data is untouched; updating the plugin brings it back. Do not use `allow-version` to let an older release through.
 
 **Verified on 0.2.0-rc.2.** The [v0.5.22 release acceptance](../../pr-assets/release-v0.5.22/README.md) installs the release packages through **Add plugin** on a fresh 0.2.0-rc.2 profile and enables them without a restart. It checks Status, runtime memory, a Native space and CLI-to-WebUI recall. The [sidebar entry record](../../pr-assets/issue-318-sidebar-entry/README.md) shows its panel rows and glyph sizes match 0.1.7-rc.2.
 
 **Verified on 0.2.0-rc.1.** With the published DSH 0.2.0-rc.1 installed globally, starting from an empty profile: installing from the command line and from the Plugins page, Enable now without a restart, Status, runtime memory writes, a first live-model conversation with Save to memory, a Headless job, and the read and write routes of desktop windows and remote pages. With every DSH development dependency moved to 0.2.0-rc.1, type checking, the builds, all plugin tests and the Headless verification pass, and among the root tests only the assertion about the pinned development baseline itself differs. The [installation gallery](../../assets/install-v0.5.19/README.md) has the screenshots.
+
+**Memory subagents on 0.2.1-alpha.2.** DSH 0.2.1-alpha.2 (npm `alpha`) removed the one-shot `subagents.start`: every child now starts through `startActivation`, and the spawn and fork providers run it as a managed activation. dsh-mnemon 0.5.25 and earlier start each memory subagent with `start`, so on 0.2.1-alpha.2 every delegated task fails with `this.subagents.start is not a function` ([#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)). That includes Memory Space writes such as `mnemon_remember`, USER.md compaction, working-memory archiving, idle review, Save to memory and Document archive. Reads, and runtime-memory writes that fit, start no child and are unaffected.
+
+Releases after 0.5.25 start them through `startActivation` with caller delivery, so the result returns to Mnemon and the conversation gets no completion notice. On DSH 0.2.0 and 0.1.7 they still use `start`. On 0.2.1-alpha.2 every local child is continuable, which brings two differences:
+- a child started under the conversation, such as a delegated write or an idle review, is listed among its subagents, and a later message from the model or the WebUI resumes it outside Mnemon's delegation;
+- while it runs, it takes one of the conversation's subagent slots (`maxActiveSubagents`, 8 by default). With all of them taken, a memory task fails with `subagent limit reached`.
+
+The [issue #356 record](../../pr-assets/issue-356-subagent-activation/README.md) has WebUI runs of USER.md compaction on 0.2.1-alpha.2 and 0.2.0-rc.2, and real-host tests of compaction, idle review and the Team review on both.
 
 **Host behavior on a first install.**
 

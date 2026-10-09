@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { HostAgent, HostContextShape, HostSubagentsService, ToolDefinition, ToolExecution } from "../src/host/dsh.ts"
+import type { HostAgent, HostContextShape, HostSubagentStartRequest, HostSubagentsService, ToolDefinition, ToolExecution } from "../src/host/dsh.ts"
 import type { RememberRequest, MemoryBodyCatalog as MemorySpaceCatalog, SearchRequest, Insight, MemoryPlacementCandidate, PreparedMemoryPlacement } from 'dsh-mnemon-source-memory-spaces/contracts'
 import type { DocumentMutationResult, DocumentView, DocumentMutation } from 'dsh-mnemon-source-documents/contracts'
 import type { RuntimeMemoryMaintenancePlan, RuntimeMemoryMutation, RuntimeMemoryMutationResult, RuntimeMemorySnapshot } from 'dsh-mnemon-source-runtime/contracts'
@@ -121,7 +121,7 @@ function addSecondWritableBody(memoryService: SpaceData): void {
 
 function subagents(structured: unknown, stopReason = 'completed', providers = ['spawn'], localAgent?: HostAgent, diagnostic?: string) {
   const dispose = vi.fn(async () => {})
-  const start = vi.fn(async (_provider?: string, _request?: Parameters<HostSubagentsService['start']>[1]) => ({
+  const start = vi.fn(async (_provider?: string, _request?: HostSubagentStartRequest) => ({
     id: 'child-run-1',
     result: Promise.resolve({ output: [], structured, stopReason, ...(diagnostic === undefined ? {} : { diagnostic }) }),
     dispose,
@@ -133,6 +133,31 @@ function subagents(structured: unknown, stopReason = 'completed', providers = ['
     start,
   } as unknown as HostSubagentsService
   return { value, start, dispose }
+}
+
+type HostActivationSpec = Parameters<NonNullable<HostSubagentsService['startActivation']>>[0]
+
+/**
+ * DSH 0.2.1-alpha.2 removed `start`: every child is a managed activation (#356).
+ * As there, the result settles only after the child has left the Agent registry
+ * (`release`), at least one turn after startActivation resolves.
+ */
+function activations(structured: unknown, stopReason = 'completed', providers = ['spawn'], publish?: (spec: HostActivationSpec) => void, release?: () => void) {
+  const dispose = vi.fn(async () => {})
+  const startActivation = vi.fn(async (spec: HostActivationSpec) => {
+    publish?.(spec)
+    const result = new Promise<{ output: []; structured: unknown; stopReason: string }>(settle => setTimeout(() => {
+      release?.()
+      settle({ output: [], structured, stopReason })
+    }, 0))
+    return { childId: 'child-run-1', messageId: 'message-1', result, dispose }
+  })
+  const value = {
+    list: vi.fn(() => providers),
+    getProvider: vi.fn((name: string) => providers.includes(name) ? { capabilities, inheritsParentContext: name === 'fork' } : undefined),
+    startActivation,
+  } as unknown as HostSubagentsService
+  return { value, startActivation, dispose }
 }
 
 function resultArguments(request: { persona?: string }, result: unknown) {
@@ -169,19 +194,29 @@ function toolRegistry() {
     for (const listener of listeners.get(name) ?? []) listener(...args)
   }
   const owners = new Map<string, HostAgent>()
-  const agents = { isOwnedBy: (id: string, owner: HostAgent) => owners.get(id) === owner }
-  const publish = (child: HostAgent, owner: HostAgent) => { owners.set(child.id, owner); emit('agent/created', { agent: child }) }
+  const live = new Map<string, HostAgent>()
+  const agents = { get: (id: string) => live.get(id), isOwnedBy: (id: string, owner: HostAgent) => owners.get(id) === owner }
+  const publish = (child: HostAgent, owner: HostAgent) => { owners.set(child.id, owner); live.set(child.id, child); emit('agent/created', { agent: child }) }
+  const unpublish = (id: string) => { owners.delete(id); live.delete(id) }
+  const reviewChild = (id: string, owner: HostAgent) => {
+    const child = { ...parent('subagent'), id, ctx: { tools: { guard: () => () => {} } } } as unknown as HostAgent
+    publish(child, owner)
+    return child
+  }
+  // DSH publishes a review child while the start call is still pending, as these wrappers do.
   const withReviewPublication = (host: HostSubagentsService): HostSubagentsService => ({ ...host,
-    async start(provider, request) {
-      const run = await host.start(provider, request)
+    ...(host.start === undefined ? {} : { async start(provider: string, request: HostSubagentStartRequest) {
+      const run = await host.start!(provider, request)
       if (request.label !== 'Mnemon idle checkpoint review') return run
-      const child = { ...parent('subagent'), id: run.id, ctx: { tools: { guard: () => () => {} } } } as unknown as HostAgent
-      owners.set(child.id, request.parent)
-      emit('agent/created', { agent: child })
-      return { ...run, localAgent: child }
-    },
+      return { ...run, localAgent: reviewChild(run.id, request.parent) }
+    } }),
+    ...(host.startActivation === undefined ? {} : { async startActivation(spec: HostActivationSpec) {
+      const activation = await host.startActivation!(spec)
+      if (spec.label === 'Mnemon idle checkpoint review') reviewChild(activation.childId, spec.request.parent)
+      return activation
+    } }),
   })
-  return { value: { tools: { register }, on, agents }, register, on, emit, publish, definitions, disposers, withReviewPublication }
+  return { value: { tools: { register }, on, agents }, register, on, emit, publish, unpublish, reviewChild, definitions, disposers, withReviewPublication }
 }
 
 interface SpaceData {
@@ -1165,10 +1200,10 @@ describe('Mnemon memory subagent coordinator', () => {
 
   it('isolates concurrent result capabilities and rejects stale or foreign submissions', async () => {
     const resultTools = toolRegistry()
-    const starts: Array<{ request: Parameters<HostSubagentsService['start']>[1]; child: HostAgent; done: ReturnType<typeof Promise.withResolvers<{ output: []; stopReason: string }>> }> = []
+    const starts: Array<{ request: HostSubagentStartRequest; child: HostAgent; done: ReturnType<typeof Promise.withResolvers<{ output: []; stopReason: string }>> }> = []
     const host = {
       list: () => ['spawn'], getProvider: () => ({ capabilities }),
-      start: vi.fn(async (_provider: string, request: Parameters<HostSubagentsService['start']>[1]) => {
+      start: vi.fn(async (_provider: string, request: HostSubagentStartRequest) => {
         const child = { ...parent('subagent'), id: 'child-' + starts.length }
         const done = Promise.withResolvers<{ output: []; stopReason: string }>()
         starts.push({ request, child, done })
@@ -1219,7 +1254,7 @@ describe('Mnemon memory subagent coordinator', () => {
     const child = { ...parent('subagent'), id: 'result-owner' }
     const host = {
       list: () => ['spawn'], getProvider: () => ({ capabilities }),
-      start: vi.fn(async (_provider: string, request: Parameters<HostSubagentsService['start']>[1]) => {
+      start: vi.fn(async (_provider: string, request: HostSubagentStartRequest) => {
         const definition = resultTools.definitions[0]!
         const outer = Symbol('outer')
         const execution = { name: definition.name, agent: child, signal: new AbortController().signal, concludeTurn: vi.fn(), token: Symbol('first'), ...(failure === 'outer' ? { parent: outer } : {}) }
@@ -1568,7 +1603,7 @@ describe('Mnemon memory subagent coordinator', () => {
     // DSH publishes the child while the provider starts it.
     const publishing: HostSubagentsService = { ...host.value, async start(provider, request) {
       registry.publish(child, request.parent)
-      return host.value.start(provider, request)
+      return host.value.start!(provider, request)
     } }
     const coordinator = new MnemonSubagentCoordinator(publishing, runtimeSource(), registry.value)
     await coordinator.remember(parent(), { content: 'Durable choice' }, new AbortController().signal)
@@ -1832,7 +1867,7 @@ describe('Mnemon memory subagent coordinator', () => {
     const registry = toolRegistry()
     let guard: ((execution: ToolExecution) => string | undefined) | undefined
     const published: HostSubagentsService = { ...host.value, async start(provider, request) {
-      const run = await host.value.start(provider, request)
+      const run = await host.value.start!(provider, request)
       const child = { ...parent('subagent'), id: run.id, ctx: { tools: { guard: (callback: typeof guard) => { guard = callback; return () => {} } } } } as unknown as HostAgent
       registry.publish(child, request.parent)
       return { ...run, localAgent: child }
@@ -2694,6 +2729,73 @@ describe('Mnemon memory subagent coordinator', () => {
     await expect(coordinator.remember(parent(), { content: 'x' }, new AbortController().signal))
       .rejects.toThrow('stopped with error: REMOTE_GATEWAY: rejected [redacted]')
     expect(host.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('compacts USER.md through a DSH 0.2.1-alpha.2 activation that reports only to Mnemon (#356)', async () => {
+    const host = activations({
+      summary: 'Merged two compatible profile preferences locally.',
+      action: 'compacted',
+      compactedEntries: [{ content: 'User prefers concise Chinese release notes with blockers first.', importance: 'critical', sourceIndexes: [1, 2] }],
+    })
+    const plan = maintenancePlan('user', [
+      { content: 'User prefers concise Chinese release notes.', importance: 'critical' },
+      { content: 'User wants blockers listed first in release notes.', importance: 'normal' },
+    ])
+    plan.pending = { content: 'User prefers direct answers.', importance: 'normal' }
+    const runtime = {
+      mutate: vi.fn().mockRejectedValueOnce(capacityError('user', plan.used, plan.projected, plan.limit)),
+      planMaintenance: vi.fn(async () => plan),
+      compactAndMutate: vi.fn(async () => ({ success: true, message: 'Entry added.', target: 'user', entryCount: 2, usage: { used: 180, limit: 4_096 }, added: plan.pending!.content })),
+    } as unknown as RuntimeOperations
+    const coordinator = createCoordinator(host.value, runtime)
+
+    await expect(coordinator.runtime(parent(), { action: 'add', target: 'user', content: 'User prefers direct answers.' }, new AbortController().signal)).resolves.toMatchObject({
+      added: 'User prefers direct answers.',
+      maintenance: { kind: 'local-compaction', runId: 'child-run-1', provider: 'spawn' },
+    })
+    expect(host.startActivation).toHaveBeenCalledOnce()
+    const spec = host.startActivation.mock.calls[0]![0]
+    expect(spec).toMatchObject({ provider: 'spawn', label: 'Consolidate local user profile', delivery: 'caller' })
+    expect(spec.request).toMatchObject({
+      maxDepth: 1,
+      toolFilter: { allow: ['mnemon_subagent_result'] },
+      agentOptions: { maxTokens: 8_192 },
+      persona: expect.stringContaining('local USER.md compactor'),
+    })
+    expect(spec.request).not.toHaveProperty('label')
+    expect(spec.request).not.toHaveProperty('signal')
+    expect(host.dispose).toHaveBeenCalledOnce()
+    expect(coordinator.snapshot()).toMatchObject({ compactions: 1, failures: 0 })
+  })
+
+  it('reviews a checkpoint through a fork activation that carries the review guard (#356)', async () => {
+    const registry = toolRegistry()
+    const host = activations({ summary: 'No mutation needed.', action: 'skipped', memoryBodyIds: [] }, 'completed', ['spawn', 'fork'],
+      spec => registry.reviewChild('child-run-1', spec.request.parent), () => registry.unpublish('child-run-1'))
+    const runtime = runtimeSource()
+    runtime.config.idleReview.provider = 'fork'
+    const coordinator = new MnemonSubagentCoordinator(host.value, runtime, registry.value)
+
+    await expect(coordinator.review(parent(), new AbortController().signal)).resolves.toMatchObject({ delegated: true, provider: 'fork', action: 'skipped' })
+    expect(host.startActivation).toHaveBeenCalledWith(expect.objectContaining({ provider: 'fork', label: 'Mnemon idle checkpoint review', delivery: 'caller' }))
+    expect(host.dispose).toHaveBeenCalledOnce()
+    expect(coordinator.snapshot()).toMatchObject({ reviews: 1, failures: 0 })
+  })
+
+  it('reports the bounded error of a failed activation child found in the Agent registry (#356)', async () => {
+    const registry = toolRegistry()
+    const failedChild = {
+      ...parent('subagent'),
+      id: 'child-run-1',
+      session: { header: { origin: 'subagent' as const }, ...sessionLog([{ type: 'turn/end', data: { reason: { kind: 'error', error: { code: 'MODEL_ROUTE', message: 'provider rejected sk-secret123456' } } } }]) },
+    } as unknown as HostAgent
+    const host = activations(undefined, 'error', ['spawn'], spec => registry.publish(failedChild, spec.request.parent), () => registry.unpublish(failedChild.id))
+    const coordinator = new MnemonSubagentCoordinator(host.value, runtimeSource(), registry.value)
+
+    // The child has left the registry by the time its result settles; the detail comes from the child found at start.
+    await expect(coordinator.remember(parent(), { content: 'x' }, new AbortController().signal)).rejects.toThrow('stopped with error: MODEL_ROUTE: provider rejected [redacted]')
+    expect(host.dispose).toHaveBeenCalledOnce()
+    expect(coordinator.snapshot().failures).toBe(1)
   })
 
   it('pins a fixed task Agent model onto the bounded idle review delegation', async () => {

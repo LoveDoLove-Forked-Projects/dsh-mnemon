@@ -238,20 +238,43 @@ export interface HostSubagentProvider {
   capabilities: { outputSchema: boolean; depthLimit: boolean; toolFilter: boolean; persona: boolean }
 }
 
+export interface HostSubagentStartRequest {
+  label?: string
+  prompt: Array<{ type: 'text'; text: string }>
+  parent: HostAgent
+  signal: AbortSignal
+  agentOptions?: { provider?: string; model?: string; maxTokens?: number }
+  outputSchema?: Record<string, unknown>
+  maxDepth?: number
+  toolFilter?: { allow?: string[]; deny?: string[] }
+  persona?: string
+}
+
+/** One managed child; its result settles once the child is idle and released. */
+export interface HostSubagentActivation {
+  childId: string
+  messageId?: string
+  result: Promise<HostSubagentResult>
+  dispose(): Promise<void>
+}
+
 export interface HostSubagentsService {
   list(): string[]
   getProvider(name: string): HostSubagentProvider | undefined
-  start(name: string, request: {
-    label?: string
-    prompt: Array<{ type: 'text'; text: string }>
-    parent: HostAgent
+  /** One-shot runs, up to DSH 0.2.1-alpha.1. */
+  start?(name: string, request: HostSubagentStartRequest): Promise<HostSubagentRun>
+  /**
+   * Managed activations, which replace `start` from DSH 0.2.1-alpha.2. The
+   * signal covers startup only; `dispose` stops a running child. Caller
+   * delivery returns the result without notifying the parent conversation.
+   */
+  startActivation?(spec: {
+    provider: string
+    label: string
+    request: Omit<HostSubagentStartRequest, 'label' | 'signal'>
     signal: AbortSignal
-    agentOptions?: { provider?: string; model?: string; maxTokens?: number }
-    outputSchema?: Record<string, unknown>
-    maxDepth?: number
-    toolFilter?: { allow?: string[]; deny?: string[] }
-    persona?: string
-  }): Promise<HostSubagentRun>
+    delivery: 'parent' | 'caller'
+  }): Promise<HostSubagentActivation>
 }
 
 export interface HostLlmService {

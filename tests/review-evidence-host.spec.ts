@@ -128,8 +128,8 @@ it.each(['native', 'ptc'].flatMap(mode => ['fork', 'spawn'].map(provider => ({ m
     const host = ctx as unknown as HostContextShape
     const service = {
       list: () => host.subagents.list(), getProvider: (name: string) => host.subagents.getProvider(name),
-      async start(...args: Parameters<typeof host.subagents.start>) {
-        const run = await host.subagents.start(...args)
+      async start(...args: Parameters<NonNullable<typeof host.subagents.start>>) {
+        const run = await host.subagents.start!(...args)
         // A fast child can call tools before the caller receives its run handle.
         try {
           await Promise.race([attempted.promise, run.result.then(() => { throw new Error('child completed before its foreign tool attempt') })])
