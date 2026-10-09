@@ -753,6 +753,11 @@ describe('MnemonSettingsCard', () => {
     const directory = screen.getByRole('textbox', { name: '数据目录' }) as HTMLInputElement
     expect(directory.value).toBe('/data/mnemon')
     expect(directoryChoice('自定义').checked).toBe(true)
+    // An emptied field waits for a directory rather than meaning the default, which is a choice of its own.
+    fireEvent.change(directory, { target: { value: '' } })
+    expect(apply().disabled).toBe(true)
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(directory.getAttribute('aria-invalid')).toBe('false')
     fireEvent.click(directoryChoice('默认'))
     expect(screen.queryByRole('textbox', { name: '数据目录' })).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
