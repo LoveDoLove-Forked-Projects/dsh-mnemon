@@ -17,7 +17,7 @@ As DSH 0.1.7 does for every plugin that carries its own configuration, the Web i
 | Where in the UI | Settings | Saved as |
 |---|---|---|
 | Memory composition | Main strategy; one switch per memory source and enhancement; each component's declared options | `memoryView.strategyTypeId` and `memoryView.entries.<entry>.config`; each component's on/off is its Entry's `disabled` row, written by DSH's plugin manager |
-| Storage | Storage scope, data directory, backup and migration | `storageScope`, `dataDir` |
+| Storage | Storage scope, data directory, backup and migration; the Git sync switch | `storageScope`, `dataDir`, `syncEnabled` |
 | Interface | Memory System opens in, turn memory bar, save to memory | `displayMode`, `conversationInteraction.turnBar`, `conversationInteraction.saveAction` |
 | Runtime memory's page | User profile scope | `runtimeUserScope` |
 | Memory Spaces' page | Memory providers; Mnemon Native embedding (auto, Ollama or OpenAI-compatible) | The Provider registry in `state/memory-providers.json`; `embedding` |
@@ -125,6 +125,7 @@ mnemon:
 | `displayMode` | `sidebar` | `sidebar` / `builtin`; legacy `buildin` accepted | Where the Memory System opens: standalone Sidebar or a conversation tab using the same workspace UI; legacy spelling is migrated to `builtin` |
 | `tabEnabled` | `true` | boolean | Whether to mount the selected entry and workbench; Host RPC, commands, and Agent tools remain registered when off |
 | `writeEnabled` | `true` | boolean | Whether to expose semantic write tools, write RPC, and write commands |
+| `syncEnabled` | `false` | boolean | Whether this installation syncs to a Git repository at all. Off by default, and off is silent: the Storage row is a title and a switch, no status is read and no Git command runs. Repository, branch, directory, commit identity, token and automatic backup interval stay in `state/sync-git.json`, never here |
 | `taskAgentModel` | `{ mode: inherit }` | `inherit` / `fixed` | Model route for independent task Agents used by Tidy names and descriptions, Ask Agent, Save to memory, and Document archiving, plus the idle-review worker; `fixed` requires both `provider` and `model` and also pins their bounded workers for write, answer, provider placement, migration, compaction, archive, and metadata maintenance. Conversation Recall and Related are direct Host reads and do not use this route |
 | `remoteAccess` | `read-only` | `read-only` / `trusted-host` | Startup-only grant for non-loopback Mnemon management, enforced by the API Gateway projection |
 | `conversationInteraction.turnBar` | `true` | boolean | The turn memory bar under replies; applies at once |

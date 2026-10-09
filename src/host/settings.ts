@@ -77,6 +77,9 @@ const MUTABLE_FIELDS = [
   'recallQuality',
   'routingGuidance', 'lifecycleEnabled', 'recallMode', 'writebackMode', 'idleReviewMs', 'idleReview',
   'displayMode', 'tabEnabled', 'writeEnabled', 'persistenceStrategy', 'taskAgentModel',
+  // Git sync is a profile choice the settings page makes, so its switch has to be
+  // writable here; everything about a repository stays in the sync state file.
+  'syncEnabled',
 ]
 // remoteAccess is intentionally absent: changing the remote management grant
 // requires a local configuration edit and a Host restart.

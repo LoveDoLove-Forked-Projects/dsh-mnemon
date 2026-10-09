@@ -258,9 +258,19 @@ try {
 
   console.log('\n1. One instance publishes the whole pack to a real repository')
   a = await launch('instance A', homes.a, data.a, workspaces.a, { ...env, ...localIdentity })
+  // The switch is off by default, so the acceptance run turns it on the way the
+  // settings page does and reads what a switched-off installation would answer.
+  const off = expectOk(await sync(a, 'status'), 'status')
+  check('a fresh installation has the switch off, so no Git runs and nothing is probed',
+    off.enabled === false && off.configured === false && off.git.available === false
+    && off.git.required === '2.20' && off.remote.reachable === false && off.remote.branchExists === false
+    && off.machine === undefined && off.lastCommit === undefined, JSON.stringify(off))
+  const switchedOn = expectOk(await call(a, '/dsh-mnemon-settings', 'mutate', { ops: [{ op: 'set', path: ['syncEnabled'], value: true }] }), 'settings mutate')
+  check('switching Git sync on is one committed profile write', switchedOn.value.syncEnabled === true && switchedOn.revision > 0,
+    JSON.stringify({ revision: switchedOn.revision, syncEnabled: switchedOn.value.syncEnabled }))
   const fresh = expectOk(await sync(a, 'status'), 'status')
   check('a fresh storage root reports Git and an unconfigured remote',
-    fresh.configured === false && fresh.git.available === true && fresh.git.required === '2.20'
+    fresh.enabled === true && fresh.configured === false && fresh.git.available === true && fresh.git.required === '2.20'
     && fresh.remote.reachable === false && fresh.remote.branchExists === false, JSON.stringify(fresh))
   check('the configuration path lives inside the storage root', fresh.configPath === join(data.a, 'state', 'sync-git.json'), fresh.configPath)
   const defaults = expectOk(await sync(a, 'configure', { repoUrl: origin }), 'configure')
@@ -319,6 +329,12 @@ try {
 
   console.log('\n2. A second instance previews and imports the same branch')
   b = await launch('instance B', homes.b, data.b, workspaces.b, env)
+  // The second machine is fresh too, so the run turns its own switch on and reads
+  // the channel the way a reader would; its profile stays its own from here on.
+  const offB = expectOk(await sync(b, 'status'), 'status')
+  check('the second machine also starts with the switch off',
+    offB.enabled === false && offB.git.available === false && offB.machine === undefined, JSON.stringify(offB.enabled))
+  expectOk(await call(b, '/dsh-mnemon-settings', 'mutate', { ops: [{ op: 'set', path: ['syncEnabled'], value: true }] }), 'settings mutate')
   const defaultsB = expectOk(await sync(b, 'configure', { repoUrl: origin }), 'configure')
   check('the second instance reaches the same defaults from a repository alone',
     defaultsB.branch === 'mnemon-sync' && defaultsB.subdir === 'mnemon/', JSON.stringify(defaultsB))
@@ -350,7 +366,12 @@ try {
   const settingsA = expectOk(await call(a, '/dsh-mnemon-settings', 'get', {}), 'settings get')
   check('the settings channel reports the profile value, revision and writer',
     settingsA.mode === 'host' && settingsA.writable === true && typeof settingsA.revision === 'number'
-    && settingsA.value.defaultRecallLimit === 10, JSON.stringify({ revision: settingsA.revision, limit: settingsA.value.defaultRecallLimit }))
+    && settingsA.value.defaultRecallLimit === 10 && settingsA.value.syncEnabled === true,
+    JSON.stringify({ revision: settingsA.revision, limit: settingsA.value.defaultRecallLimit, syncEnabled: settingsA.value.syncEnabled }))
+  // A profile write reaches the running Host: the runtime swaps its graph on the
+  // committed value, so the switch is what turns Git on rather than a restart.
+  check('the switch itself travelled to the running Host and not just to the profile file',
+    settingsA.value.syncEnabled === true, JSON.stringify(settingsA.value.syncEnabled))
   const refusedField = await call(a, '/dsh-mnemon-settings', 'mutate', { ops: [{ op: 'set', path: ['remoteAccess'], value: 'trusted-host' }] })
   expectFailure(refusedField, /unsupported mnemon settings field: remoteAccess/u, 'an unsupported settings field')
   check('a refused settings edit reports its own error code', refusedField.error.code === 'settings-rejected', JSON.stringify(refusedField.error))

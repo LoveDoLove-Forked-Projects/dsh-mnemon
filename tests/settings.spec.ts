@@ -120,6 +120,27 @@ describe('Mnemon settings bridge', () => {
     ], undefined)
   })
 
+  it('lets the settings page switch Git sync on, and reads the switch back', async () => {
+    const mutate = vi.fn(async () => {})
+    const settings = {
+      writable: true,
+      register: vi.fn(),
+      mutate,
+      describe: () => [{ ns: 'mnemon', value: { syncEnabled: false }, revision: 0, applies: 'live' as const }],
+    } as unknown as HostSettingsService
+    const handler = createSettingsHandler(settings)
+    const on = { op: 'set', path: ['syncEnabled'], value: true }
+
+    // The switch is the whole gate for the Git channel, so the one profile write it
+    // makes has to be accepted here; a rejected write would leave the block open with
+    // nothing behind it.
+    await expect(handler('mutate', { ops: [on] })).resolves.toMatchObject({ ok: true })
+    expect(mutate).toHaveBeenCalledWith('mnemon', [on], undefined)
+    // Switching it back off is the same write, so a reader can close the block again.
+    const off = { op: 'set', path: ['syncEnabled'], value: false }
+    await expect(handler('mutate', { ops: [off] })).resolves.toMatchObject({ ok: true })
+    expect(mutate).toHaveBeenLastCalledWith('mnemon', [off], undefined)
+  })
   it('keeps the startup-only remote access setting immutable from the Web bridge', async () => {
     const settings = {
       writable: true,
