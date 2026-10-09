@@ -21,7 +21,3 @@ coverage/
 
 # Mnemon workspace-local data
 /.mnemon/
-
-# Local debugging leftovers: session probes, throwaway scripts and screenshots
-/.probe-*
-/.tmp-*
