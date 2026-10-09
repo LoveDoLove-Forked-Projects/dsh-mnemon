@@ -6,6 +6,7 @@ For an existing installation, start with [Compatibility and upgrades](../referen
 
 ## v0.5
 
+- [v0.5.26: Git Sync Across Machines and Memory Subagents on DSH 0.2.1](./v0.5.26.md)
 - [v0.5.25: Memory Without a Memory Space and a Choice of Where to Save](./v0.5.25.md)
 - [v0.5.24: Complete Entity Counts and Related Memories on Demand](./v0.5.24.md)
 - [v0.5.23: Faster Memory Compaction, Queries and Multi-Space Recall](./v0.5.23.md)

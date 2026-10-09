@@ -39,6 +39,6 @@ dsh-mnemon 为 DeepSeek Harness 提供三类记忆：每一轮都会用到的**�
 
 ## 最新变化
 
-[v0.5.25](./releases/v0.5.25.md) 让记忆在没有记忆空间能接收归档时照常工作，并让“保存到记忆”可以选择写入位置。[v0.5.24](./releases/v0.5.24.md) 让实体页统计并列出带有某个实体的全部记忆，选中后立即显示，相关记忆只在需要时查找。[全部版本](./releases/README.md) · [路线图](./roadmap.md) · [历史验收证据](../pr-assets/README.md)
+[v0.5.26](./releases/v0.5.26.md) 新增默认关闭的跨机器 Git 仓库同步，并让记忆子 Agent 在 DSH 0.2.1-alpha.2 上正常启动。[v0.5.25](./releases/v0.5.25.md) 让记忆在没有记忆空间能接收归档时照常工作，并让“保存到记忆”可以选择写入位置。[全部版本](./releases/README.md) · [路线图](./roadmap.md) · [历史验收证据](../pr-assets/README.md)
 
 指南描述当前版本。截图与录屏来自 [v0.5.19 图集](../assets/webui-v0.5.19/README.md)，安装步骤来自[安装图集](../assets/install-v0.5.19/README.md)；带日期的 PR 记录只证明其标注的代码修订与环境。内部 Host RPC 不属于对外插件 SDK。
