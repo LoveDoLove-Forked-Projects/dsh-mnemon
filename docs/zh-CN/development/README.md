@@ -160,6 +160,10 @@ Runtime 写入范围回归使用 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm 
 
 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm e2e:serve --save-action` 用于检查**存入记忆**（[#342](https://github.com/omdsh-dev/dsh-mnemon/issues/342)）。每轮对话都会收到一条值得保存的回复。点击其下的**存入记忆**并提交候选内容，再修改已有回执的候选内容后再次提交。脚本化的任务 Agent 先读取记忆空间目录，没有空间时创建一个 Native 空间，写入收到的候选内容并汇报 Provider 回执；夹具以 `Save action:` 行输出每一步。两次提交都会写入，原样再次提交则返回第一次的回执。只有模型决策是脚本化的；对话框、任务 Agent 的工具与 Native 写入均为真实运行。见[双语复现与证据](../../pr-assets/issue-342-edited-save/README.zh-CN.md)。
 
+`pnpm e2e:serve --profile-compaction` 用于复现 [#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)：USER.md 写满后，再写入会启动压缩用的子 Agent。这个 profile 把 USER.md 上限设为 100 字节，并关闭空闲审查。在 Mnemon E2E 对话中分三条消息发送 `记住：回答尽量简洁，不要冗长的开场白。`、`记住：回答使用简体中文。` 和 `记住：汇报时先列出阻塞项。`。脚本模型用 `mnemon_runtime_memory` 保存每条事实。第三条写入时 USER.md 已满，压缩子 Agent 先合并已保存的两条，再加入新条目。夹具以 `Profile compaction:` 行输出每一步。只有模型决策是脚本化的；工具、子 Agent 及其结果工具和 Runtime 写入都是真实运行。
+
+要在另一个 DSH 版本上启动 WebUI，把 `MNEMON_E2E_DSH` 设为该安装的 `lib/bin.js`，例如先运行 `npm install -g --prefix <目录> @deepseek-ai/dsh@0.2.1-alpha.2`。见[双语复现与证据](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)。
+
 `pnpm e2e:serve --plugin=<包目录>` 会再把一个测试用插件链接进 profile，可重复使用以链接多个。[issue #340 证据](../../pr-assets/issue-340-settings-outside-slots/README.zh-CN.md)用它加入一个设置分区，像某些外壳那样不经过 DSH 的 slot 渲染器绘制 `dsh-mnemon` 配置页。
 
 `pnpm e2e:serve --without-mnemon-cli` 把 `cliPath` 指向不存在的文件，即使 PATH 中有 Mnemon CLI，Host 也按未安装处理。用它确认：状态页不显示 Mnemon Native 卡片，版本对话框把 CLI 列为可选，插件页停用向量测试，新建记忆空间从已就绪的 Provider 开始。先连接一个 Provider，例如在“插件 → 可组合记忆”页面中连接 Provider Lab 的服务。
