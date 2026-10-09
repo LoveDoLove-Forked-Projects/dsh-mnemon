@@ -27,17 +27,24 @@ export async function startSubagent(
     const activation = await subagents.startActivation({ provider, label, request: task, signal, delivery: 'caller' })
     // A second dispose from the caller reports any failure of this one.
     const stop = () => { activation.dispose().catch(() => {}) }
-    const release = () => signal.removeEventListener('abort', stop)
-    signal.addEventListener('abort', stop, { once: true })
-    void activation.result.then(release, release)
-    if (signal.aborted) stop()
-    const child = agents?.get?.(activation.childId)
-    const localAgent = child !== undefined && (typeof agents?.isOwnedBy !== 'function' || agents.isOwnedBy(child.id, request.parent)) ? child : undefined
-    return {
-      id: activation.childId,
-      ...(localAgent === undefined ? {} : { localAgent }),
-      result: activation.result,
-      dispose: () => activation.dispose(),
+    try {
+      const release = () => signal.removeEventListener('abort', stop)
+      signal.addEventListener('abort', stop, { once: true })
+      void activation.result.then(release, release)
+      if (signal.aborted) stop()
+      // The child is resident until the activation settles, which takes at least one model turn.
+      const child = agents?.get?.(activation.childId)
+      const localAgent = child !== undefined && (typeof agents?.isOwnedBy !== 'function' || agents.isOwnedBy(child.id, request.parent)) ? child : undefined
+      return {
+        id: activation.childId,
+        ...(localAgent === undefined ? {} : { localAgent }),
+        result: activation.result,
+        dispose: () => activation.dispose(),
+      }
+    } catch (error) {
+      // The caller never received this run, so nothing else would release the child.
+      stop()
+      throw error
     }
   }
   if (typeof subagents.start === 'function') return subagents.start(provider, request)

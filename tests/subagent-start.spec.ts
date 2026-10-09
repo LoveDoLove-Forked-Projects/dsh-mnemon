@@ -58,6 +58,42 @@ describe('Starting a delegated child on the running DSH (#356)', () => {
     expect(host.dispose).toHaveBeenCalledOnce()
   })
 
+  it('keeps the child it found once the activation releases it before settling', async () => {
+    // As on DSH 0.2.1-alpha.2: the child is resident when startActivation resolves and leaves the
+    // registry before the result settles, at least one model turn later.
+    const host = activations()
+    const input = request()
+    const live = new Map([['child-1', agent('child-1')]])
+    const agents = { get: (id: string) => live.get(id), isOwnedBy: () => true }
+    const run = await startSubagent(host.subagents, agents, 'spawn', input)
+    const child = run.localAgent
+    setTimeout(() => { live.delete('child-1'); host.result.resolve({ output: [], stopReason: 'error' }) }, 0)
+
+    await expect(run.result).resolves.toMatchObject({ stopReason: 'error' })
+    expect(live.has('child-1')).toBe(false)
+    expect(child?.id).toBe('child-1')
+    expect(run.localAgent).toBe(child)
+  })
+
+  it('prefers activations when a DSH offers both APIs', async () => {
+    const host = activations()
+    const start = vi.fn()
+    const subagents = { ...host.subagents, start } as HostSubagentsService
+
+    await startSubagent(subagents, undefined, 'spawn', request())
+
+    expect(host.startActivation).toHaveBeenCalledOnce()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('disposes an activation it cannot hand over', async () => {
+    const host = activations()
+    const agents = { get: () => { throw new Error('registry unavailable') } }
+
+    await expect(startSubagent(host.subagents, agents, 'spawn', request())).rejects.toThrow('registry unavailable')
+    expect(host.dispose).toHaveBeenCalledOnce()
+  })
+
   it('names no local child that the parent does not own', async () => {
     const host = activations()
     const agents = { get: () => agent('child-1'), isOwnedBy: () => false }
