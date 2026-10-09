@@ -238,6 +238,33 @@ describe('Memory enhancement settings', () => {
     await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-sync', 'status', {}))
   })
 
+  it('waits for the Host to take the switch before it reports Git and the remote', async () => {
+    const mutate = vi.fn(async () => {})
+    const scope = liveSettingsScope<Config>({ status: 'ready', value: { storageScope: 'global' }, base: {}, user: {}, revision: 0, writable: true, mode: 'host' }, mutate)
+    const { connection, call } = fixture({ github: { available: true, signedIn: false, writable: true } })
+    const answer = call.getMockImplementation()!
+    let statusReads = 0
+    // The first read lands before the Host's runtime has the saved switch: it answers as switched off.
+    call.mockImplementation(async (channel: string, endpoint: string, payload: unknown) => {
+      if (channel === '/dsh-mnemon-sync' && endpoint === 'status' && statusReads++ === 0) return {
+        ok: true as const,
+        value: {
+          enabled: false, configured: false,
+          config: { branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, credentialSource: 'none' as const, authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost' },
+          configPath: '/root/.mnemon/state/sync-git.json', mirrorPath: '/root/.mnemon/state/sync/git',
+          git: { available: false, required: '2.20' }, remote: { reachable: false, branchExists: false },
+        },
+      }
+      return answer(channel, endpoint, payload)
+    })
+    render(<MnemonSettingsCard scope={scope} connection={connection} />)
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Git 同步' }))
+    expect(await screen.findByText('尚未配置仓库')).toBeTruthy()
+    expect(statusReads).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByText(/缺少 Git/)).toBeNull()
+  })
+
   it('hides the enhancements and keeps the other settings when the View dashboard fails', async () => {
     const { connection, call } = fixture({ unavailable: true })
     render(<MnemonSettingsCard scope={readyScope()} connection={connection} />)

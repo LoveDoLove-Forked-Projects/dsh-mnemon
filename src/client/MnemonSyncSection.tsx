@@ -139,6 +139,10 @@ interface MnemonSyncSectionProps {
  * the Host nothing — no status, no repository, no Git — and switching it on is
  * what unfolds the form, the operations and the branch history.
  */
+/** How long the row waits for the Host to report the switch it just saved. */
+const STATUS_SETTLE_MS = 250
+const STATUS_SETTLE_ATTEMPTS = 20
+
 export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled, enabled, onEnabled, t }: MnemonSyncSectionProps): JSX.Element {
   const client = useMemo(() => connection === undefined ? null : new MnemonClient(connection, sessionId, workspaceId), [connection, sessionId, workspaceId])
   const [status, setStatus] = useState<MnemonSyncStatus | null>(null)
@@ -191,7 +195,18 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
     // Git for a reader who never asked for a repository.
     if (!enabled) return
     let active = true
-    void client.syncStatus().then(
+    // The switch saves the profile first, and until the Host's runtime has the new value
+    // the channel still answers as switched off, with nothing checked. Read again for a
+    // moment instead of showing that answer as the state of Git and the remote.
+    setLoaded(false)
+    void (async () => {
+      let next = await client.syncStatus()
+      for (let attempt = 0; active && next.enabled === false && attempt < STATUS_SETTLE_ATTEMPTS; attempt += 1) {
+        await new Promise(settle => setTimeout(settle, STATUS_SETTLE_MS))
+        next = await client.syncStatus()
+      }
+      return next
+    })().then(
       next => { if (active) { setStatus(next); setLoaded(true) } },
       reason => { if (active) { setFailed(message(reason)); setLoaded(true) } },
     )
@@ -511,6 +526,8 @@ export function MnemonSyncSection({ connection, sessionId, workspaceId, disabled
   const states: string[] = []
   if (!loaded) states.push(t('config.syncLoading'))
   else if (status === null) states.push(t('config.syncUnavailable'))
+  // An answer from before the switch reached the Host checked nothing, so it says nothing about Git.
+  else if (status.enabled === false) states.push(t('config.syncLoading'))
   else {
     if (!status.configured) states.push(t('config.syncNotConfigured'))
     if (!status.git.available) states.push(t('config.syncGitMissing', { required: status.git.required }))
