@@ -109,11 +109,6 @@ const relativeReadmeImages = readmeFiles.flatMap((path) => {
 // measured package to 1,639,792 bytes (+2,911). Keep less than 1 KB of
 // headroom; the optional author is one branch in the Host bundle and adds no
 // credential, payload or endpoint to either half.
-// Syncing settings with the payload, reconciling merged memory through the review
-// ledger, moving the data directory from the storage page and the GitHub transport
-// that falls back to the system proxy bring the measured package to 1,751,495 bytes
-// (+111,703). Keep less than 1 KB of headroom; the ledger, the migration plan and the
-// proxy discovery stay in the Host bundle and add no endpoint to lib/client.js.
 // One reconciliation plan in one place, with the ledger recording the positions that
 // ran, paging the backup history and wrapping the directory row bring it to
 // 1,830,440 bytes (+78,945 over the 1,751,495 measured before this work). The growth is

@@ -19,7 +19,6 @@ import {
   type MemorySourceManagementResult,
   type MnemonPackComponent,
   type MnemonPackExport,
-  type MnemonPackImportMode,
   type MnemonPackImportResult,
   type MnemonPackPreview,
   type MnemonPackTarget,
@@ -27,7 +26,6 @@ import {
   type MnemonReviewApplyResult,
   type MnemonReviewEntry,
   type MnemonReviewLedgerView,
-  type MnemonStorageMigration,
   type MnemonSyncBackupList,
   type MnemonSyncConfigView,
   type MnemonSyncDiff,
@@ -49,7 +47,6 @@ import {
   type VersionStatus,
   type VersionUpdateResult,
 } from "../host/protocol.ts"
-import type { MnemonMigrationPlan } from '../host/storage-migration.ts'
 import { callMnemonRpc } from './remote-rpc.ts'
 
 interface TurnActivityCacheEntry {
@@ -192,18 +189,8 @@ export class MnemonClient {
     return this.call(MNEMON_PACK_CHANNEL, 'inspect', this.scoped({ base64, ...(fileName === undefined ? {} : { fileName }) }))
   }
 
-  importPack(base64: string, mode: MnemonPackImportMode = 'merge', components?: MnemonPackComponent[]): Promise<MnemonPackImportResult> {
-    return this.call(MNEMON_PACK_CHANNEL, 'import', this.scoped({ base64, mode, ...(components === undefined ? {} : { components }) }))
-  }
-
-  /** What moving the data directory would do, before anything moves. */
-  storagePlan(dataDir: string): Promise<MnemonMigrationPlan> {
-    return this.call(MNEMON_PACK_CHANNEL, 'storage-plan', this.scoped({ dataDir }))
-  }
-
-  /** The move itself. The caller confirms it: it deletes the old directory. */
-  migrateStorage(dataDir: string): Promise<MnemonStorageMigration> {
-    return this.call(MNEMON_PACK_CHANNEL, 'storage-migrate', this.scoped({ dataDir, confirmed: true }))
+  importPack(base64: string): Promise<MnemonPackImportResult> {
+    return this.call(MNEMON_PACK_CHANNEL, 'import', this.scoped({ base64 }))
   }
 
   /** Every reconciliation proposal this machine still holds. */

@@ -758,17 +758,6 @@ export interface MnemonReconcileResult {
   runId: string
 }
 
-/** Moving the data directory: what was moved, and how. */
-export interface MnemonStorageMigration {
-  from: string
-  to: string
-  source: 'rename' | 'copy'
-  files: number
-  bytes: number
-  /** Whether the old directory was removed after the copy verified. */
-  removed: boolean
-}
-
 /**
  * Git repository sync: the Mnemon Pack payload published as readable files on one
  * branch, so a second machine can pull it back. Push and pull are confirmed

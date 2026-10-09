@@ -1,12 +1,12 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, parse } from 'node:path'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/host/config.ts'
 import { resolveConfig } from '../src/host/config.ts'
 import type { HostRpcHandler } from '../src/host/dsh.ts'
 import type { MnemonLifecycle } from '../src/host/lifecycle.ts'
-import { createPackHandler, createReviewHandler } from '../src/host/rpc.ts'
+import { createReviewHandler } from '../src/host/rpc.ts'
 import type { LiveMnemonRuntime } from '../src/host/runtime.ts'
 import { MnemonReviewLedger } from '../src/host/review-ledger.ts'
 
@@ -75,82 +75,6 @@ const proposal = {
   foreignMachines: ['desktop'],
   operations: [{ kind: 'runtime-remove' as const, target: 'user' as const, oldText: 'Prefer short answers', reason: 'Superseded by the concise preference.' }],
 }
-
-describe('Mnemon storage relocation endpoints', () => {
-  it('plans a move without asking for a writable Host', async () => {
-    const f = fixture({ writeEnabled: false })
-    const handler = createPackHandler(f.runtime)
-    const to = join(temporary('rpc-review-target'), 'moved')
-
-    const planned = await handler('storage-plan', { dataDir: to })
-    expect(planned).toMatchObject({ ok: true, value: { from: f.root, to, source: { files: 1 }, targetOccupied: false, sameDevice: true } })
-    expect((planned as { value: { blocked?: string } }).value.blocked).toBeUndefined()
-    expect(await handler('storage-plan', { dataDir: '   ' })).toMatchObject({ ok: false, error: { message: 'dataDir must be a non-empty directory' } })
-    expect(await handler('storage-plan', { dataDir: parse(f.root).root })).toMatchObject({ ok: false, error: { message: 'the Mnemon data directory must not be a filesystem root' } })
-  })
-
-  it('reports every reason a target directory cannot be used', async () => {
-    const f = fixture()
-    const handler = createPackHandler(f.runtime)
-
-    expect(await handler('storage-plan', { dataDir: f.root })).toMatchObject({ ok: true, value: { blocked: 'the data directory is already this directory' } })
-    expect(await handler('storage-plan', { dataDir: join(f.root, 'nested') })).toMatchObject({ ok: true, value: { blocked: 'one directory is inside the other' } })
-    const occupied = populated('rpc-review-occupied')
-    expect(await handler('storage-plan', { dataDir: occupied })).toMatchObject({ ok: true, value: { targetOccupied: true, blocked: 'the target directory already holds data' } })
-  })
-
-  it('moves the data directory only when the page confirms the move', async () => {
-    const f = fixture()
-    const handler = createPackHandler(f.runtime)
-    const to = join(temporary('rpc-review-destination'), 'moved')
-
-    expect(await handler('storage-migrate', { dataDir: to })).toMatchObject({ ok: false, error: { message: 'Moving the Mnemon data directory requires confirmation' } })
-    expect(existsSync(to)).toBe(false)
-
-    const moved = await handler('storage-migrate', { dataDir: to, confirmed: true })
-    expect(moved).toMatchObject({ ok: true, value: { from: f.root, to, source: 'rename', files: 1, removed: true } })
-    expect(existsSync(join(f.root, 'runtime', 'memories.json'))).toBe(false)
-    expect(JSON.parse(readFileSync(join(to, 'runtime', 'memories.json'), 'utf8'))).toMatchObject({ entries: [{ content: 'Prefer concise answers' }] })
-  })
-
-  it('records the new location on the Host that moved the data', async () => {
-    const f = fixture()
-    const relocated: string[] = []
-    const handler = createPackHandler(f.runtime, { writable: true, relocate: async directory => { relocated.push(directory) } })
-    const to = join(temporary('rpc-review-relocate'), 'moved')
-
-    expect(await handler('storage-migrate', { dataDir: to })).toMatchObject({ ok: false, error: { message: 'Moving the Mnemon data directory requires confirmation' } })
-    expect(relocated).toEqual([])
-
-    const moved = await handler('storage-migrate', { dataDir: to, confirmed: true })
-    expect(moved).toMatchObject({ ok: true, value: { from: f.root, to, removed: true } })
-    expect(relocated).toEqual([to])
-    expect(JSON.parse(readFileSync(join(to, 'runtime', 'memories.json'), 'utf8'))).toMatchObject({ entries: [{ content: 'Prefer concise answers' }] })
-  })
-
-  it('refuses the move before deleting anything when the Host cannot record a location', async () => {
-    const f = fixture()
-    const relocate = vi.fn(async () => {})
-    const handler = createPackHandler(f.runtime, { writable: false, relocate })
-    const to = join(temporary('rpc-review-unrecorded'), 'moved')
-
-    const blocked = await handler('storage-migrate', { dataDir: to, confirmed: true })
-    expect(blocked).toMatchObject({ ok: false, error: { message: expect.stringContaining('read-only') } })
-    expect(relocate).not.toHaveBeenCalled()
-    expect(existsSync(to)).toBe(false)
-    expect(existsSync(join(f.root, 'runtime', 'memories.json'))).toBe(true)
-  })
-
-  it('refuses to move the data directory on a read-only Host', async () => {
-    const f = fixture({ writeEnabled: false })
-    const to = join(temporary('rpc-review-readonly'), 'moved')
-    const blocked = await createPackHandler(f.runtime)('storage-migrate', { dataDir: to, confirmed: true })
-
-    expect(blocked).toMatchObject({ ok: false, error: { message: expect.stringContaining('read-only') } })
-    expect(existsSync(to)).toBe(false)
-    expect(existsSync(join(f.root, 'runtime', 'memories.json'))).toBe(true)
-  })
-})
 
 describe('Mnemon review endpoints', () => {
   it('reads and records review activity without a writable or scoped Host', async () => {

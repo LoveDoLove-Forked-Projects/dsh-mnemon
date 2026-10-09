@@ -498,18 +498,6 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .syncFeedback p { margin: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
 .syncSuccess { color: var(--dsw-alias-state-success-primary); }
 
-/* The chosen directory: the field and the shell's chooser beside it. */
-.directoryRow { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
-/* The field keeps a readable width and the row wraps before the button's own label
-   does: a chooser whose text breaks across two lines reads as a different control. */
-.directoryRow > .directoryInput { flex: 1 1 200px; min-width: 0; }
-.directoryRow > button { flex: none; white-space: nowrap; }
-
-/* Moving memory to another directory: what leaves, what arrives, and what stops it. */
-.moveSummary { display: grid; gap: 8px; }
-.moveSummary p { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: 6px; margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
-.moveSummary strong { color: var(--dsw-alias-label-secondary); font-weight: 500; }
-
 /* Review proposals: one entry per reconciliation, with the opinions left on it. */
 .reviewList { display: grid; gap: 8px; }
 .reviewEntry { display: flex; min-width: 0; flex-direction: column; gap: 6px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
@@ -609,8 +597,6 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
   .syncBar > button:last-child { grid-column: 1 / -1; }
   .syncFormActions { flex-wrap: wrap; }
   .syncFormActions button { flex: 1; }
-  .directoryRow { flex-wrap: wrap; }
-  .directoryRow > button { flex: 1; }
   .reviewOpinionForm { flex-wrap: wrap; }
   .reviewOpinionForm > input { flex: 1 1 100%; }
   .inlineChoices { width: 100%; }
