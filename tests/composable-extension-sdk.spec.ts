@@ -161,6 +161,26 @@ describe('Composable Memory extension SDK', () => {
     expect(runtime.contributionSnapshot()).toMatchObject({ revision: 2, sources: [], strategies: [] })
   })
 
+  it('keeps a dshmarket client-only shim Entry inert unless the plugin passes its own identity (#359)', async () => {
+    const { ctx, runtime } = await host()
+    const entries = new WeakMap<object, string>()
+    ctx.provide('loader', { locate: (fiber: object) => entries.get(fiber) })
+    const located = (entryId: string, install: (child: Context) => void) => ctx.plugin({ inject: ['mnemonMemory'], apply(child: Context) {
+      entries.set(child.fiber, entryId)
+      install(child)
+    } })
+    const starter = located('include:mnemon-source-example', child => installMemory(child, { sources: [source()] }))
+    const shim = located('include:dsh-market:mkt-client-dsh-mnemon-source-example', child => installMemory(child, { sources: [source()] }))
+    await Promise.all([starter.await(), shim.await()])
+    expect(runtime.contributionSnapshot().sources.map(item => item.instanceKey)).toEqual(['source:include:mnemon-source-example'])
+
+    const explicit = located('include:dsh-market:mkt-client-dsh-mnemon-source-example', child => installMemory(child, { sources: [source()] }, { instanceId: 'example-explicit' }))
+    await explicit.await()
+    expect(runtime.contributionSnapshot().sources.map(item => item.instanceKey)).toEqual(['source:include:mnemon-source-example', 'source:example-explicit'])
+    await Promise.all([starter.dispose(), shim.dispose(), explicit.dispose()])
+    expect(runtime.contributionSnapshot().sources).toEqual([])
+  })
+
   it('notifies generation hosts with complete immutable snapshots', async () => {
     const { ctx, runtime } = await host()
     const listener = vi.fn()

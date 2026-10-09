@@ -6,6 +6,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 
 import { DEFAULT_MEMORY_VIEW_BUDGET, MemoryCompositionRunner } from 'dsh-mnemon/testing'
+import * as spaces from '../src/index.ts'
 import { installMemorySpaces } from '../src/index.ts'
 import { MemorySpaceRegistry } from '../src/memory-spaces.ts'
 import { createRunner } from '../src/runner.ts'
@@ -208,6 +209,16 @@ describe('standalone Memory Spaces Source', () => {
       } }, { instanceId: 'failed' })).rejects.toThrow('fixture child failed')
       expect(released).toBe(true)
       expect(runner.inspect().evaluation.sourceInstanceKeys).toHaveLength(0)
+    } finally { await runner.dispose() }
+  })
+
+  it('stays inert under a dshmarket client-only shim Entry, which carries no Providers (#359)', async () => {
+    const runner = new MemoryCompositionRunner()
+    try {
+      await runner.mount(strategy, { instanceId: 'strategy' })
+      await runner.mount(spaces, { instanceId: 'include:dsh-market:mkt-client-dsh-mnemon-source-memory-spaces' })
+      expect(runner.inspect().evaluation.sourceInstanceKeys).toHaveLength(0)
+      await expect(runner.mount(spaces, { instanceId: 'spaces' })).rejects.toThrow('at least one explicit Provider child')
     } finally { await runner.dispose() }
   })
 })
