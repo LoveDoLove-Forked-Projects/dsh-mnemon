@@ -104,3 +104,23 @@ export const RUNTIME_MEMORY_LIMITS: RuntimeMemoryLimits = {
   memory: DEFAULT_RUNTIME_MEMORY_LIMIT_BYTES,
   user: DEFAULT_RUNTIME_USER_LIMIT_BYTES,
 }
+
+/** The longest git branch name a scope may hold. */
+export const RUNTIME_BRANCH_NAME_MAX = 128
+/** The characters a git branch name in a scope may use. */
+export const RUNTIME_BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/u
+
+/**
+ * Read a stored branch scope. Absent or malformed data reads as no scope, so an entry that
+ * a hand edit or another installation left malformed is projected on every branch instead
+ * of breaking the projection that reads it.
+ */
+export function parseRuntimeBranches(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const branches: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || item === '' || item.length > RUNTIME_BRANCH_NAME_MAX || !RUNTIME_BRANCH_NAME_PATTERN.test(item)) return undefined
+    branches.push(item)
+  }
+  return branches
+}

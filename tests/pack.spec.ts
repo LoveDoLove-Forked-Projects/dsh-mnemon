@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,7 @@ import { MnemonPackManager, MNEMON_PACK_FORMAT, MNEMON_PACK_MIME } from "../src/
 import { createStorageRoot } from '../src/host/storage-root.ts'
 import { sourceFixture } from './fixtures/sources.ts'
 import { withMemoryStorageLock } from 'dsh-mnemon/extension-sdk'
+import { RUNTIME_ENTRY_DELIMITER } from 'dsh-mnemon-source-runtime/contracts'
 
 const directories: string[] = []
 const releases: Array<() => Promise<void>> = []
@@ -215,6 +217,36 @@ describe('Mnemon Pack', () => {
     const unsafe = Buffer.from(zipSync({ '../escape': strToU8('x') })).toString('base64')
     expect(() => source.manager.inspectPack(unsafe)).toThrow('unsafe Pack entry path')
     expect(() => source.manager.inspectPack('not-base64')).toThrow('base64')
+  })
+
+  it('keeps a valid branch scope and origin through an import and drops malformed ones', async () => {
+    const source = await fixture('pack-entry-fields-source', 41)
+    const files = unzipSync(Buffer.from((await source.manager.exportPack('runtime')).base64, 'base64'))
+    const at = now().toISOString()
+    const entry = (content: string, target: 'memory' | 'user', extra: Record<string, unknown> = {}) => ({ content, target, importance: 'normal', created_at: at, updated_at: at, ...extra })
+    // As a damaged archive or another installation could carry them.
+    const entries = [
+      entry('Scoped to main', 'memory', { branches: ['main'], origin: { machine: 'machine-a', label: 'desk', at } }),
+      entry('Scoped by a number', 'memory', { branches: 5 }),
+      entry('Scoped with a bad name', 'memory', { branches: ['main', 3] }),
+      entry('Odd provenance', 'memory', { origin: { machine: 1 }, extra: 'not an entry field' }),
+      entry('Profile with a scope', 'user', { branches: ['main'] }),
+    ]
+    files['payload/runtime/memories.json'] = strToU8(`${JSON.stringify({ version: 1, entries }, null, 2)}\n`)
+    files['payload/runtime/MEMORY.md'] = strToU8(entries.filter(item => item.target === 'memory').map(item => item.content).join(RUNTIME_ENTRY_DELIMITER))
+    files['payload/runtime/USER.md'] = strToU8('Profile with a scope')
+    const checksums = JSON.parse(Buffer.from(files['checksums.json']!).toString('utf8')) as { files: Record<string, string> }
+    for (const path of Object.keys(checksums.files)) checksums.files[path] = createHash('sha256').update(files[path]!).digest('hex')
+    files['checksums.json'] = strToU8(`${JSON.stringify(checksums, null, 2)}\n`)
+
+    const target = runner(temporary('pack-entry-fields-target'))
+    await new MnemonPackManager(target.runner, target.config, undefined, now).importPack(Buffer.from(zipSync(files)).toString('base64'), { mode: 'merge' })
+    const stored = (JSON.parse(readFileSync(join(target.runner.effectiveDataDir(), 'runtime', 'memories.json'), 'utf8')) as { entries: Array<Record<string, unknown>> }).entries
+    const find = (content: string) => stored.find(item => item['content'] === content)
+    expect(find('Scoped to main')).toMatchObject({ branches: ['main'], origin: { machine: 'machine-a', label: 'desk', at } })
+    for (const content of ['Scoped by a number', 'Scoped with a bad name', 'Profile with a scope']) expect(find(content)).not.toHaveProperty('branches')
+    expect(find('Odd provenance')).not.toHaveProperty('origin')
+    expect(find('Odd provenance')).not.toHaveProperty('extra')
   })
 
   it('replaces a complete target atomically and refreshes the Memory Space catalog callback', async () => {

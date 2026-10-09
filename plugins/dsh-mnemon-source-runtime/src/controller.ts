@@ -34,7 +34,9 @@ import type {
   RuntimeMemoryTargetView,
   RuntimeMemoryUsage,
 } from './contracts.ts'
-import { RUNTIME_MEMORY_VERSION, RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, type RuntimeMemoryLimits } from './contracts.ts'
+import { RUNTIME_MEMORY_VERSION, RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_BRANCH_NAME_MAX, RUNTIME_BRANCH_NAME_PATTERN, parseRuntimeBranches, type RuntimeMemoryLimits } from './contracts.ts'
+
+export { RUNTIME_BRANCH_NAME_MAX }
 
 export interface RuntimeMemoryContextProjection {
   revision: string
@@ -108,9 +110,7 @@ function isImportance(value: unknown): value is RuntimeMemoryImportance {
   return value === 'critical' || value === 'normal' || value === 'low'
 }
 
-export const RUNTIME_BRANCH_NAME_MAX = 128
 export const RUNTIME_BRANCHES_PER_ENTRY_MAX = 16
-const RUNTIME_BRANCH_NAME_RE = /^[A-Za-z0-9._/-]+$/u
 
 /** Validate a model-supplied branch scope. Returns the normalized list; an empty list means "no scope". */
 export function normalizeRuntimeBranches(value: unknown, field = 'branches'): string[] {
@@ -122,7 +122,7 @@ export function normalizeRuntimeBranches(value: unknown, field = 'branches'): st
     const branch = item.trim()
     if (branch === ''
       || branch.length > RUNTIME_BRANCH_NAME_MAX
-      || !RUNTIME_BRANCH_NAME_RE.test(branch)
+      || !RUNTIME_BRANCH_NAME_PATTERN.test(branch)
       || branch === '-'
       || branch.startsWith('/') || branch.startsWith('-')
       || branch.endsWith('/') || branch.endsWith('.')
@@ -135,18 +135,6 @@ export function normalizeRuntimeBranches(value: unknown, field = 'branches'): st
   }
   if (branches.length > RUNTIME_BRANCHES_PER_ENTRY_MAX) {
     throw new Error(`${field} supports at most ${RUNTIME_BRANCHES_PER_ENTRY_MAX} branch names`)
-  }
-  return branches
-}
-
-/** Parse a stored branch scope. Returns undefined for absent or invalid data. */
-function parseRuntimeBranches(value: unknown): string[] | undefined {
-  if (value === undefined) return undefined
-  if (!Array.isArray(value)) return undefined
-  const branches: string[] = []
-  for (const item of value) {
-    if (typeof item !== 'string' || item === '' || item.length > RUNTIME_BRANCH_NAME_MAX || !RUNTIME_BRANCH_NAME_RE.test(item)) return undefined
-    branches.push(item)
   }
   return branches
 }
@@ -182,12 +170,10 @@ function parseEntry(value: unknown): RuntimeMemoryEntry | undefined {
   if (content === '' || content.includes('§')) return undefined
   if (value.target === 'user' && value.branches !== undefined) return undefined
   const branches = parseRuntimeBranches(value.branches)
+  // The provenance a Host stamps is kept, read through its own rule like the branch
+  // scope; nothing else from the stored object passes through unchecked.
   const origin = parseOrigin(value.origin)
-  // A Host may stamp fields this Source does not own. Spreading the stored entry
-  // first keeps that provenance across a read/modify/write cycle instead of
-  // silently stripping it from memories.json.
   return {
-    ...(value as unknown as RuntimeMemoryEntry),
     content,
     created_at: value.created_at,
     updated_at: value.updated_at,

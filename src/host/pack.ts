@@ -20,7 +20,7 @@ import { homedir } from 'node:os'
 import { strFromU8, strToU8, unzipSync, zipSync, type Unzipped, type Zippable } from 'fflate'
 import type { ResolvedConfig } from './config.ts'
 import { DOCUMENTS_ACTIVE_LIMIT_BYTES, DOCUMENTS_VERSION, type DocumentRecord } from 'dsh-mnemon-source-documents/contracts'
-import { RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_MEMORY_VERSION, type RuntimeMemoryEntry, type RuntimeMemoryLimits, type RuntimeMemoryTarget } from 'dsh-mnemon-source-runtime/contracts'
+import { RUNTIME_ENTRY_DELIMITER, RUNTIME_MEMORY_LIMITS, RUNTIME_MEMORY_VERSION, parseRuntimeBranches, type RuntimeMemoryEntry, type RuntimeMemoryLimits, type RuntimeMemoryTarget } from 'dsh-mnemon-source-runtime/contracts'
 import { createStorageRoot, type StorageRoot } from './storage-root.ts'
 import { MNEMON_PACK_COMPONENTS, type MnemonEntryOrigin, type MnemonMachineIdentity, type MnemonPackComponent, type MnemonPackComponentSummary, type MnemonPackExport, type MnemonPackImportMode, type MnemonPackImportResult, type MnemonPackManifest, type MnemonPackPreview, type MnemonPackScope, type MnemonPackTarget, type MnemonRuntimeMergeReport, type MnemonTombstone, type MnemonTombstoneFile } from "./protocol.ts"
 import { MnemonMachineStore } from './machine-identity.ts'
@@ -271,12 +271,17 @@ export function parseRuntime(value: unknown, limits: RuntimeMemoryLimits = RUNTI
     if (typeof entry.created_at !== 'string' || typeof entry.updated_at !== 'string') throw new Error('runtime memories.json contains invalid timestamps')
     const content = entry.content.trim().replace(/\s+/gu, ' ')
     if (content === '' || content.includes('§') || Buffer.byteLength(content, 'utf8') > 8 * 1024) throw new Error('runtime memories.json contains invalid content')
-    // A Pack carries provenance, not only text: spreading the raw entry first keeps
-    // fields this Host does not own (the writing machine, branch scoping) intact.
+    // A Pack carries provenance, not only text: the branch scope of a working-memory entry
+    // and the machine that wrote it travel along. Each is read through its own rule, so a
+    // malformed value from a damaged archive or another installation is dropped here instead
+    // of reaching the runtime projection.
+    const branches = entry.target === 'memory' ? parseRuntimeBranches(entry.branches) : undefined
+    const origin = parseEntryOrigin(entry.origin)
     return {
-      ...(raw as RuntimeMemoryEntry),
       content, target: entry.target, importance: entry.importance as RuntimeMemoryEntry['importance'],
       created_at: entry.created_at, updated_at: entry.updated_at,
+      ...(branches === undefined ? {} : { branches }),
+      ...(origin === undefined ? {} : { origin }),
     }
   })
   for (const target of ['user', 'memory'] as const) {

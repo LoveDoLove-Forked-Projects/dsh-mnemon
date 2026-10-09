@@ -147,6 +147,33 @@ describe('RuntimeMemoryController', () => {
     expect(paths.map(path => readFileSync(path, 'utf8'))).toEqual(before)
   })
 
+  it('reads a malformed stored branch scope or origin as absent instead of breaking the projection', async () => {
+    const { directory, controller } = fixture()
+    const at = '2026-08-13T08:00:00.000Z'
+    const entry = (content: string, extra: Record<string, unknown>) => ({ content, target: 'memory', importance: 'normal', created_at: at, updated_at: at, ...extra })
+    mkdirSync(join(directory, 'runtime'), { recursive: true })
+    writeFileSync(join(directory, 'runtime', 'memories.json'), JSON.stringify({ version: 1, entries: [
+      entry('Scoped by a number', { branches: 5 }),
+      entry('Scoped by an object', { branches: { main: true } }),
+      entry('Scoped by a string', { branches: 'release-main' }),
+      entry('Scoped with a bad name', { branches: ['main', 3] }),
+      entry('Scoped to main', { branches: ['main'], origin: { machine: 'machine-a', label: 'desk', at } }),
+      entry('Odd provenance', { origin: { machine: 1 }, extra: 'not an entry field' }),
+    ] }))
+    const visible = (branch: string) => controller.contextProjection(branch).entries.map(item => item.content).sort()
+    const unscoped = ['Odd provenance', 'Scoped by a number', 'Scoped by a string', 'Scoped by an object', 'Scoped with a bad name']
+    expect(visible('main')).toEqual([...unscoped, 'Scoped to main'].sort())
+    expect(visible('dev')).toEqual(unscoped)
+
+    await controller.mutate({ action: 'add', target: 'memory', content: 'Fresh entry', importance: 'low' })
+    const stored = (JSON.parse(readFileSync(join(directory, 'runtime', 'memories.json'), 'utf8')) as { entries: Array<Record<string, unknown>> }).entries
+    const find = (content: string) => stored.find(item => item['content'] === content)
+    expect(find('Scoped to main')).toMatchObject({ branches: ['main'], origin: { machine: 'machine-a', label: 'desk', at } })
+    for (const content of ['Scoped by a number', 'Scoped by an object', 'Scoped by a string', 'Scoped with a bad name']) expect(find(content)).not.toHaveProperty('branches')
+    expect(find('Odd provenance')).not.toHaveProperty('origin')
+    expect(find('Odd provenance')).not.toHaveProperty('extra')
+  })
+
   it('serializes concurrent callers, including independent controller instances', async () => {
     const { directory, controller } = fixture()
     const other = new RuntimeMemoryController({ effectiveDataDir: () => directory })
