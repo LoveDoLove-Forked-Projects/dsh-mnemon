@@ -2,6 +2,7 @@ import { isDefaultSourceInstance, isWorkspaceStorageScope } from './protocol.ts'
 import type { HostConnectionHandle, HostRpcHandler, RpcResult } from './dsh.ts'
 import type { MnemonLifecycle } from './lifecycle.ts'
 import type { LiveMnemonRuntime } from './runtime.ts'
+import type { MnemonGitHubAuth } from './github-auth.ts'
 import { assertParticipation } from './access.ts'
 import { sourceFailure } from './source-session.ts'
 import { isVersionComponentId, VersionUpdateManager } from './version-updates.ts'
@@ -9,8 +10,10 @@ import type { MemoryCapability, MemoryJsonValue, MemoryOperationScope, MemorySou
 import type { CreateMemoryBodyRequest as CreateMemorySpaceRequest, Insight, MemoryBodyCatalog as MemorySpaceCatalog, PreparedMemoryPlacement, RememberRequest } from 'dsh-mnemon-source-memory-spaces/contracts'
 import type { RuntimeMemoryMutation } from 'dsh-mnemon-source-runtime/contracts'
 import type { DocumentMutation } from 'dsh-mnemon-source-documents/contracts'
-import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus } from './protocol.ts'
-export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
+import { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_REVIEW_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL, type MemoryCompositionStatus, type MnemonPackComponent, type MnemonPackImportMode } from './protocol.ts'
+import { MNEMON_PACK_COMPONENTS } from './protocol.ts'
+import { applyReconcileOperations, selectReconcileOperations, sourceApplier, type MnemonReconcileSessions } from './reconcile.ts'
+export { MNEMON_ACTIVATION_CHANNEL, MNEMON_PACK_CHANNEL, MNEMON_READ_CHANNEL, MNEMON_REVIEW_CHANNEL, MNEMON_SYNC_CHANNEL, MNEMON_WRITE_CHANNEL } from './protocol.ts'
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('payload must be an object')
@@ -23,6 +26,13 @@ function requestedScope(payload: Record<string, unknown>): { workspaceId?: strin
     if (typeof value !== 'string') throw new Error(key + ' must be a string')
     return value.trim() === '' ? [] : [[key, value.trim()]]
   }))
+}
+/** Settings writes keep their own fields only: the routing keys are the Host's, not the store's. */
+function withoutScope(payload: Record<string, unknown>): Record<string, unknown> {
+  const patch = { ...payload }
+  delete patch.sessionId
+  delete patch.workspaceId
+  return patch
 }
 function scoped(runtime: LiveMnemonRuntime, payload: Record<string, unknown>, lifecycle?: MnemonLifecycle) {
   const requested = requestedScope(payload)
@@ -55,6 +65,23 @@ function requireLayerOn(runtime: ScopedRuntime, sourceTypeId: string | undefined
 }
 function sourceTypeOf(generation: { sourceInstances(): ReadonlyArray<{ sourceInstanceKey: string; sourceTypeId: string }> } | undefined, sourceInstanceKey: string): string | undefined {
   return generation?.sourceInstances().find(source => source.sourceInstanceKey === sourceInstanceKey)?.sourceTypeId
+}
+/** A one-off pull filter; an absent value means every component. */
+function requestedComponents(value: unknown): MnemonPackComponent[] | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value) || value.length === 0) throw new Error('components must be a non-empty array')
+  const components = value.map(String) as MnemonPackComponent[]
+  if (new Set(components).size !== components.length || components.some(component => !MNEMON_PACK_COMPONENTS.includes(component))) {
+    throw new Error('components must be one or more of ' + MNEMON_PACK_COMPONENTS.join(', '))
+  }
+  return components
+}
+/** A one-off backup page size; an absent value lets the sync channel pick its default. */
+function requestedLimit(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  const limit = typeof value === 'number' ? value : Number(String(value).trim())
+  if (!Number.isInteger(limit) || limit < 1) throw new Error('limit must be a positive integer')
+  return limit
 }
 function success(value: unknown): RpcResult<unknown> { return { ok: true, value } }
 function failure(error: unknown): RpcResult<unknown> {
@@ -402,20 +429,181 @@ export function createPackHandler(input: LiveMnemonRuntime): HostRpcHandler {
   }
 }
 
-export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager): {
+/** The one sign-in every generation of this runtime shares. */
+function githubAuth(input: LiveMnemonRuntime): MnemonGitHubAuth {
+  const auth = input.sync.github()
+  if (auth === undefined) throw new Error('GitHub sign-in is unavailable in this DSH Host')
+  return auth
+}
+
+/**
+ * Git sync reads and writes the same storage root, under the same gates as Pack.
+ *
+ * `onConfigured` is the one thing the handler needs from outside the graph: the
+ * background timer is armed from the interval this endpoint just saved, and it
+ * lives beside the runtime rather than inside it.
+ */
+export function createSyncHandler(input: LiveMnemonRuntime, onConfigured?: () => void): HostRpcHandler {
+  return async (endpoint, rawPayload, signal) => {
+    try {
+      const payload = object(rawPayload)
+      const runtime = scoped(input, payload)
+      const sync = runtime.graph.sync
+      if (endpoint === 'status') return success(await sync.status(signal))
+      if (endpoint === 'configure') {
+        requireWritable(runtime)
+        const view = await sync.configure(withoutScope(payload))
+        // Re-arm from the interval that was just saved: shortening it should
+        // count from this moment, and turning it off should drop the timer.
+        onConfigured?.()
+        return success(view)
+      }
+      if (endpoint === 'push') {
+        requireWritable(runtime)
+        if (payload.confirmed !== true) throw new Error('Publishing the sync branch requires confirmation')
+        return success(await sync.push({ ...(payload.message === undefined ? {} : { message: payload.message }), ...(signal === undefined ? {} : { signal }) }))
+      }
+      if (endpoint === 'preview') return success(await sync.preview(signal))
+      // Reading the branch's history and the entry-level difference changes nothing
+      // here, so neither endpoint is gated on write access or on a confirmation:
+      // gating a read behind writeEnabled would hide exactly the evidence the
+      // operator needs before deciding whether to write.
+      if (endpoint === 'backups') {
+        const limit = requestedLimit(payload.limit)
+        return success(await sync.backups(limit === undefined ? {} : { limit }, signal))
+      }
+      if (endpoint === 'diff') return success(await sync.diff(signal))
+      // GitHub sign-in is a property of the Host, not of one workspace graph,
+      // so these endpoints never touch the mirror or the remote branch.
+      if (endpoint === 'github-status') return success(await githubAuth(input).status())
+      if (endpoint === 'github-start') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).start(signal))
+      }
+      if (endpoint === 'github-poll') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).poll(signal))
+      }
+      if (endpoint === 'github-cancel') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).cancel())
+      }
+      if (endpoint === 'github-signout') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).signOut())
+      }
+      if (endpoint === 'github-repositories') return success(await githubAuth(input).repositories(signal))
+      if (endpoint === 'github-create') {
+        requireWritable(runtime)
+        return success(await githubAuth(input).create(payload.name, payload.private, signal))
+      }
+      if (endpoint === 'pull') {
+        requireWritable(runtime)
+        if (payload.confirmed !== true) throw new Error('Importing the remote Mnemon payload requires confirmation')
+        const components = requestedComponents(payload.components)
+        const result = await sync.pull({
+          mode: 'merge',
+          ...(components === undefined ? {} : { components }),
+          // Adding the branch's memories normally honors this machine's own deletions.
+          // The reader can overrule that once, for the entries the difference counted.
+          ...(payload.revive === true ? { revive: true } : {}),
+          ...(signal === undefined ? {} : { signal }),
+        })
+        if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
+        return success(result)
+      }
+      return badRequest('unknown sync endpoint: ' + endpoint)
+    } catch (error) { return failure(error) }
+  }
+}
+/**
+ * Review is the one channel that changes memory only after a human read the
+ * proposal: a reconciliation run stages an entry, opinions are recorded against
+ * it, and an accepted entry is applied operation by operation.
+ */
+export function createReviewHandler(input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle): HostRpcHandler {
+  return async (endpoint, rawPayload, signal) => {
+    try {
+      const payload = object(rawPayload)
+      const ledger = input.reviews
+      if (endpoint === 'view') return success(ledger.view())
+      if (endpoint === 'opinion') {
+        const author = payload.author === 'agent' ? 'agent' : 'user'
+        return success(ledger.addOpinion(String(payload.id ?? ''), author, String(payload.text ?? '')))
+      }
+      if (endpoint === 'decide') {
+        const status = payload.status === 'rejected' ? 'rejected' : 'accepted'
+        return success(ledger.decide(String(payload.id ?? ''), status))
+      }
+      if (endpoint === 'reopen') return success(ledger.reopen(String(payload.id ?? '')))
+      const runtime = scoped(input, payload, lifecycle)
+      requireWritable(runtime)
+      if (endpoint === 'reconcile') {
+        if (lifecycle === undefined) throw new Error('Mnemon memory reconciliation is unavailable')
+        // The reviewer's words shape the plan and never widen it: what an operation may
+        // contain is still decided by the host, and nothing is applied by running this.
+        const guidance = payload.guidance
+        if (guidance !== undefined && typeof guidance !== 'string') throw new Error('the reconciliation guidance must be a string')
+        return success(await lifecycle.reconcile(runtime.graph, runtime.scope, signal ?? new AbortController().signal, guidance === undefined ? {} : { guidance }))
+      }
+      if (endpoint === 'apply') {
+        if (lifecycle === undefined) throw new Error('Mnemon memory reconciliation is unavailable')
+        const entry = ledger.get(String(payload.id ?? ''))
+        if (entry === undefined) throw new Error('unknown review entry: ' + String(payload.id ?? ''))
+        if (entry.status !== 'accepted') throw new Error('accept the review before applying it: ' + entry.id)
+        requireCapability(runtime, 'runtime', 'write')
+        const sessions: MnemonReconcileSessions = {
+          runtime: runtime.source('runtime'),
+          documents: runtime.source('documents'),
+        }
+        // Omitted means every operation, which is what a caller that predates partial
+        // application sends. An index the plan does not hold is refused rather than
+        // dropped, because a caller that believes it applied the whole review must not
+        // be told a smaller subset succeeded.
+        const selection = payload.operations
+        if (selection !== undefined && (!Array.isArray(selection) || selection.some(index => typeof index !== 'number'))) {
+          throw new Error('the operations to apply must be a list of operation indexes')
+        }
+        const chosen = selection as number[] | undefined
+        // Running an operation twice is how a plan stops meaning what its author read: the
+        // second run addresses text the first one already replaced. So the ledger decides
+        // what is left to do, and a plan with nothing left is refused rather than replayed.
+        const pending = selectReconcileOperations(entry.operations, chosen).filter(index => !(entry.appliedOperations ?? []).includes(index))
+        if (pending.length === 0) {
+          throw new Error('every operation in this review has already run: ' + entry.id)
+        }
+        const outcome = await applyReconcileOperations(entry.operations, sourceApplier(sessions), signal ?? new AbortController().signal, pending)
+        const failure = outcome.failures.length === 0 ? undefined : outcome.failures.join('; ')
+        const applied = ledger.applied(entry.id, failure, pending.slice(0, outcome.applied))
+        if (failure !== undefined) throw new Error(failure)
+        if ((await catalog(runtime)).sources.some(source => source.sourceTypeId === 'memory-spaces')) await runtime.source('memory-spaces').mutate('reload', {})
+        return success({ entry: applied, applied: outcome.applied, failures: outcome.failures })
+      }
+      return badRequest('unknown review endpoint: ' + endpoint)
+    } catch (error) { return failure(error) }
+  }
+}
+
+export function registerRpc(connection: HostConnectionHandle, input: LiveMnemonRuntime, lifecycle?: MnemonLifecycle, versions?: VersionUpdateManager, onSyncConfigured?: () => void): {
   read: HostRpcHandler
   activation: HostRpcHandler
   write: HostRpcHandler
   pack: HostRpcHandler
+  sync: HostRpcHandler
+  review: HostRpcHandler
 } {
   const versionManager = versions ?? new VersionUpdateManager({ mnemonCliPath: () => input.config.cliPath })
   const readHandler = createReadHandler(input, lifecycle, versionManager)
   const activationHandler = createActivationHandler(input)
   const writeHandler = createWriteHandler(input, lifecycle, versionManager)
+  const syncHandler = createSyncHandler(input, onSyncConfigured)
+  const reviewHandler = createReviewHandler(input, lifecycle)
   const packHandler = createPackHandler(input)
   connection.rpc.handle(MNEMON_READ_CHANNEL, readHandler)
   connection.rpc.handle(MNEMON_ACTIVATION_CHANNEL, activationHandler)
   connection.rpc.handle(MNEMON_WRITE_CHANNEL, writeHandler)
   connection.rpc.handle(MNEMON_PACK_CHANNEL, packHandler)
-  return { read: readHandler, activation: activationHandler, write: writeHandler, pack: packHandler }
+  connection.rpc.handle(MNEMON_SYNC_CHANNEL, syncHandler)
+  connection.rpc.handle(MNEMON_REVIEW_CHANNEL, reviewHandler)
+  return { read: readHandler, activation: activationHandler, write: writeHandler, pack: packHandler, sync: syncHandler, review: reviewHandler }
 }

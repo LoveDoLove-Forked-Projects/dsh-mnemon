@@ -206,6 +206,9 @@ export const Config: z<Config> = z.object({
   }).default({ toolviews: false, turnBar: true, saveAction: true }),
   persistenceStrategy: MemoryPersistenceStrategySchema,
   taskAgentModel: TaskAgentModelSchema,
+  // Git sync is off until a user switches it on: the block stays a title and a
+  // switch, and nothing about Git is probed while it is off.
+  syncEnabled: z.boolean().default(false),
 })
 
 export function resolveInteractionConfig(config: InteractionConfig = {}): ResolvedInteractionConfig {
@@ -370,5 +373,6 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     },
     persistenceStrategy: resolvePersistenceStrategy(config.persistenceStrategy),
     taskAgentModel: resolveTaskAgentModel(config.taskAgentModel),
+    syncEnabled: config.syncEnabled ?? false,
   }
 }

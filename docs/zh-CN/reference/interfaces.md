@@ -140,11 +140,15 @@ RPC 是 DSH Host 与插件客户端之间的内部桥，不是稳定外部 HTTP 
 | `/dsh-mnemon-activation` | 开关单个记忆空间 | 允许 |
 | `/dsh-mnemon-write` | 其余所有 mutation | 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-pack` | 备份导出与导入 | 需要 `remoteAccess: trusted-host` |
+| `/dsh-mnemon-sync` | Git 仓库同步：配置、推送、预览与拉取 | 需要 `remoteAccess: trusted-host` |
+| `/dsh-mnemon-review` | 合并记忆的整理建议、审查意见，以及执行已接受的方案 | 读取允许；`reconcile` 与 `apply` 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-settings` | Host 与界面设置 | `get` 允许；`mutate` 需要 `remoteAccess: trusted-host` |
 | `/dsh-mnemon-view` | 记忆组合读取 | 允许 |
 | `/dsh-mnemon-view-settings` | 保存记忆组合、安装组件 | 需要 `remoteAccess: trusted-host` |
 
-回环页面直接调用这些通道，由 DSH 浏览器会话认证。远程页面经 DSH API Gateway 到达同一组处理器：通道 `/api`，endpoint 为 `dshMnemon/read`、`dshMnemon/activation`、`dshMnemon/write`、`dshMnemon/pack`、`dshMnemon/settings`、`dshMnemon/view` 与 `dshMnemon/viewWrite`。Gateway 负责 Host/Origin 校验、浏览器配对与响应封装；Mnemon 只额外施加上表中的 `remoteAccess` 授权，并在启动时确定。见[远程管理](../guides/operations.md#远程管理)。
+回环页面直接调用这些通道，由 DSH 浏览器会话认证。远程页面经 DSH API Gateway 到达同一组处理器：通道 `/api`，endpoint 为 `dshMnemon/read`、`dshMnemon/activation`、`dshMnemon/write`、`dshMnemon/pack`、`dshMnemon/settings`、`dshMnemon/view`、`dshMnemon/viewWrite`、`dshMnemon/sync` 与 `dshMnemon/review`。Gateway 负责 Host/Origin 校验、浏览器配对与响应封装；Mnemon 只额外施加上表中的 `remoteAccess` 授权，并在启动时确定。见[远程管理](../guides/operations.md#远程管理)。
+
+Gateway 通过 Mnemon 在 `dshMnemon` 命名空间下的 `mnemonRemote` Typert 服务到达这些处理器，其命名远程方法为 `read`、`activation`、`write`、`pack`、`settings`、`view`、`viewWrite`、`sync` 与 `review`。缺少该授权时，`write`、`pack`、`sync`、`review`、`viewWrite` 与 `settings` 的 `mutate` 会返回 `remote Mnemon management requires remoteAccess: trusted-host`；`read`、`activation`、`view` 与 `settings` 的 `get` 不需要。
 
 ### 读通道
 
@@ -195,9 +199,47 @@ RPC 是 DSH Host 与插件客户端之间的内部桥，不是稳定外部 HTTP 
 | `target` | 当前有效根、范围，以及“默认位置”对应的默认根 |
 | `export` | 导出完整、带 manifest 与 SHA-256 校验的 ZIP |
 | `inspect` | 解析并校验待导入 ZIP，返回组件与占用预览 |
-| `import` | 把 ZIP 安全合并到当前有效根；只读模式拒绝 |
+| `import` | 把 ZIP 安全合并到当前有效根；只读模式拒绝。结果里的 `runtime` 回报合并新增了几条、又有几条因为本机记录过删除而留在原处，可选 `revive: true` 表示这次导入推翻这些删除 |
 
 备份包含私有记忆；调用方必须把已认证 DSH 浏览器会话视为完整 Host 权限，并单独保护导出的归档。
+
+### 同步通道
+
+| Endpoint | 行为 |
+|---|---|
+| `status` | 镜像路径、已配置的仓库、分支、远端目录、`hasToken`、`credentialSource`、`credentialLogin`、远端可达性与最后一次提交；只读 |
+| `configure` | 保存仓库地址、分支、远端目录、token 与提交身份；响应把 token 换成 `hasToken` 与 `credentialSource`。分支或远端目录传空会恢复该字段的默认值，提交者传空则使用本机 Git 身份 |
+| `push` | 把完整的 Mnemon Pack 载荷导出到镜像，提交并推送分支；需要 `confirmed: true` |
+| `preview` | 读取远端 manifest 与 SHA-256 清单，报告哪些组件与本地不同；只读 |
+| `backups` | 由新到旧遍历分支历史，用该提交携带的 Pack manifest 说明每次备份：提交号、说明、时间、发布它的机器、推送时间与组件摘要。可选 `limit` 限制返回条数，`truncated` 表示分支上还有更多；manifest 读不出来的提交会被跳过；只读 |
+| `diff` | 逐条比较本地载荷与分支载荷：两侧的导出时间、条目数与机器，只在本机的条目、只在远端的条目、共有条数，`heldBack` 表示远端持有、却被本机自己的墓碑挡住的条数，以及分支记录、而本机尚未执行的删除；只读 |
+| `pull` | 通过与“导入 ZIP”相同的校验与导入器合并远端载荷；需要 `confirmed: true`，并接受一次性可选参数 `components` 与 `revive`——后者推翻本机记录过的删除，让被挡住的远端条目这次真的写入 |
+| `github-status` | 当前 Host 是否挂载了凭据存储、是否已登录账号、该存储是否可写、账号名与 scope，以及待完成的设备码；只读 |
+| `github-start` | 向 GitHub 申请设备码，返回设备码、验证地址与轮询间隔；需要 `writeEnabled: true` |
+| `github-poll` | 按 GitHub 要求的节奏询问一次浏览器步骤是否完成，成功时保存凭据；需要 `writeEnabled: true` |
+| `github-cancel` | 放弃待完成的设备码流程，不动已保存的凭据；需要 `writeEnabled: true` |
+| `github-signout` | 删除已保存的凭据；需要 `writeEnabled: true` |
+| `github-repositories` | 列出已登录账号可推送的仓库，最近更新的在前；只读 |
+| `github-create` | 在已登录账号下新建公开或私有仓库并回读；需要 `writeEnabled: true` |
+
+同步载荷始终是完整的 Mnemon Pack：Pack manifest 的 `scope` 只能是 `full` 或恰好一个组件，因此无法表示持久化的组件选择，组件筛选只作为 `pull` 的一次性参数存在。仓库地址是唯一没有默认值的配置项：分支、远端目录、提交者姓名或邮箱留空时，分别回落到默认分支、默认目录，或本机 Git 已有的提交身份。`configure`、`push`、`pull` 以及每个会改动状态的 `github-` endpoint 都要求 `writeEnabled: true`，否则返回与 pack 导入相同的只读拒绝。
+
+token 不会出现在任何响应或错误信息中。通道在每次网络操作时解析一个凭据，顺序为：环境变量 `MNEMON_SYNC_GIT_TOKEN`、`state/sync-git.json`（权限 `0600`）中保存的 token，最后是 GitHub 登录写入 DSH 凭据存储（键 `dsh-mnemon/github`）的凭据。`credentialSource` 指出生效的那一个——`environment`、`token`、`github` 或 `none`——前三者都让 `hasToken` 为 `true`，因此已登录的账号完全不需要填 token。GitHub 请求先走环境自带的 `fetch`（与版本检查相同的接缝），启动器配置的代理策略对它同样生效。当这次请求完全连不上时，通道会用从 `HTTPS_PROXY`、`http_proxy`、`all_proxy` 发现的代理——Windows 上还会读系统代理设置——以 Node 自带模块搭建的 CONNECT 隧道重试一次；应答成功的代理会被记住，失效的代理会被丢弃，因此换网络后无需重启即可恢复。失败只报告 GitHub 的错误码与 HTTP 状态，绝不回显响应体；完全没到达 GitHub 的请求会报告传输层原因，且在没找到代理时直接指出应设置 `HTTPS_PROXY`。
+
+配置、凭据与失败语义见[备份与恢复](../guides/operations.md#git-仓库同步)。
+
+### 审查通道
+
+| Endpoint | 行为 |
+|---|---|
+| `view` | 审查账本：文件路径、全部建议与待审查数量；只读 |
+| `opinion` | 为某条建议追加一条意见；除非调用方指定 `agent`，作者记为 `user` |
+| `decide` | 接受或拒绝一条待审查建议 |
+| `reopen` | 把已决定的建议退回 `pending`，并清掉已执行位置的记录，让整份方案重新成为一次待审查的决定 |
+| `reconcile` | 对合并后的本机记忆执行一次整理，把计划暂存为新的待审查条目。可选 `guidance` 字符串说明计划要达成什么，证据中还会带上同步分支持有、本机没有的条目，以及待审查建议上已记录的意见；需要 `writeEnabled` |
+| `apply` | 执行已接受建议的操作，遇到第一个失败即停止。可选 `operations` 数组给出计划中的位置，只执行这些操作，因此审查者可以只采纳计划的一部分。已经执行过的位置会被跳过，没有剩余可执行操作的建议会被拒绝而不是重放；需要 `writeEnabled` |
+
+整理本身从不写记忆：模型返回计划，计划被记录为一条建议，只有对已接受的建议执行 `apply` 才会触碰 Source。每条建议用 `appliedOperations` 记录已经执行过的位置，因此只执行一部分可以重复进行，剩下的位置也正是调用方还能看到的部分。`view`、`opinion`、`decide` 与 `reopen` 在只读 Host 上同样可用，因为它们只编辑 `state/` 下的账本。账本不是 Pack 组件，因此任何建议都不会同步到其他机器。
 
 ### 设置通道
 

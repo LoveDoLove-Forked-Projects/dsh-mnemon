@@ -3,8 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MnemonSettingsCard } from '../src/client/MnemonSettingsCard.tsx'
 import { translateEn } from '../src/client/locales.ts'
-import { settingsScope } from './helpers/settings-scope.ts'
-import type { ClientConnectionHandle, Config, MemoryPluginEntryView, MemoryViewConfigurationRequest, MemoryViewDashboard } from '../src/host/protocol.ts'
+import { liveSettingsScope, settingsScope } from './helpers/settings-scope.ts'
+import type { ClientConnectionHandle, Config, MemoryPluginEntryView, MemoryViewConfigurationRequest, MemoryViewDashboard, MnemonSyncGitHubStatus } from '../src/host/protocol.ts'
 
 afterEach(cleanup)
 
@@ -15,10 +15,13 @@ const FEATURES = [
   ['scoped', 'dsh-mnemon-strategy-scoped', 'Scoped composition', '范围组合'],
 ] as const
 
-function readyScope() {
+/** A profile that has switched Git sync on, which is what unfolds the repository block. */
+const SYNCING: Config = { storageScope: 'global', syncEnabled: true }
+
+function readyScope(value: Config = { storageScope: 'global' }) {
   return settingsScope<Config>({
     status: 'ready',
-    value: { storageScope: 'global' },
+    value,
     base: {}, user: {}, revision: 0, writable: true, mode: 'host',
   })
 }
@@ -42,7 +45,7 @@ const THREE_TIER: MemoryPluginEntryView = {
   enabled: true, active: true, writable: true, config: {},
 }
 
-function fixture(options: { writable?: boolean; failApply?: boolean; failRefreshAfterApply?: boolean; unavailable?: boolean } = {}) {
+function fixture(options: { writable?: boolean; failApply?: boolean; failRefreshAfterApply?: boolean; unavailable?: boolean; github?: MnemonSyncGitHubStatus } = {}) {
   let applied = false
   let dashboard: MemoryViewDashboard = {
     revision: 'view-1', writable: options.writable !== false, strategyTypeId: 'default-three-tier',
@@ -71,6 +74,34 @@ function fixture(options: { writable?: boolean; failApply?: boolean; failRefresh
     if (channel === '/dsh-mnemon-read' && endpoint === 'task-agent-models') return { ok: true as const, value: { groups: [], failures: [] } }
     if (channel === '/dsh-mnemon-read' && endpoint === 'provider-services') return { ok: true as const, value: { providers: [], items: [], generatedAt: '' } }
     if (channel === '/dsh-mnemon-pack' && endpoint === 'target') return { ok: true as const, value: { root: '/root/.mnemon', scope: 'global' as const } }
+    // The storage page reads the sync channel on mount; an unconfigured Host answers it.
+    if (channel === '/dsh-mnemon-sync' && endpoint === 'status') return {
+      ok: true as const,
+      value: {
+        configured: false,
+        config: {
+          branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, credentialSource: 'none' as const,
+          authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost',
+        },
+        configPath: '/root/.mnemon/state/sync-git.json', mirrorPath: '/root/.mnemon/state/sync/git',
+        git: { available: true, required: '2.20' }, remote: { reachable: false, branchExists: false },
+      },
+    }
+    // The sign-in block reads its own endpoint; a Host with no store reports it as unavailable.
+    if (channel === '/dsh-mnemon-sync' && endpoint === 'github-status') return {
+      ok: true as const,
+      value: options.github ?? { available: false, signedIn: false, writable: false },
+    }
+    // A signed-in account offers its repositories; the picker stays empty here.
+    if (channel === '/dsh-mnemon-sync' && endpoint === 'github-repositories') return {
+      ok: true as const,
+      value: { login: 'octocat', repositories: [] },
+    }
+    // The review card lives on the storage page and reads the ledger on mount.
+    if (channel === '/dsh-mnemon-review' && endpoint === 'view') return {
+      ok: true as const,
+      value: { path: '/root/.mnemon/state/review-ledger.json', entries: [], pending: 0 },
+    }
     return { ok: false as const, error: { code: 'internal' as const, message: `unsupported ${channel} ${endpoint}`, details: {} } }
   })
   return { call, connection: { rpc: { call }, isLoopback: true } as ClientConnectionHandle }
@@ -141,6 +172,97 @@ describe('Memory enhancement settings', () => {
       expect((screen.getByRole('switch', { name: label }) as HTMLButtonElement).disabled).toBe(true)
     }
     expect(screen.queryByText(/dsh-mnemon-strategy-/u)).toBeNull()
+  })
+
+  it('stops showing a leftover device code once the account is signed in', async () => {
+    const { connection, call } = fixture({
+      github: {
+        available: true, signedIn: true, writable: true, login: 'octocat',
+        // A flow this page started earlier is still live on the Host; signing in ends its purpose.
+        flow: { userCode: '2654-9D74', verificationUri: 'https://github.com/login/device', expiresAt: new Date(Date.now() + 600_000).toISOString(), intervalMs: 5_000 },
+      },
+    })
+    render(<MnemonSettingsCard scope={readyScope(SYNCING)} connection={connection} />)
+
+    expect(await screen.findByText('已登录 @octocat')).toBeTruthy()
+    expect(screen.queryByText('2654-9D74')).toBeNull()
+    expect(screen.queryByText('在 GitHub 输入此设备码：')).toBeNull()
+    await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-sync', 'github-repositories', {}))
+  })
+
+  it('offers the repository entry before a sign-in and marks the author as optional', async () => {
+    const { connection } = fixture({ github: { available: true, signedIn: false, writable: true } })
+    render(<MnemonSettingsCard scope={readyScope(SYNCING)} connection={connection} />)
+
+    // Signed out, the block still explains what a sign-in adds instead of hiding itself.
+    expect(await screen.findByText('登录后这里会列出你的仓库，可直接选用或新建；不登录也可以在手填表单里填写地址')).toBeTruthy()
+    expect(screen.queryByLabelText('新建仓库')).toBeNull()
+    // Branch and directory arrive filled in, and the author is optional.
+    expect((screen.getByLabelText('分支') as HTMLInputElement).value).toBe('mnemon-sync')
+    expect((screen.getByLabelText('远端目录') as HTMLInputElement).value).toBe('mnemon/')
+    expect((screen.getByLabelText('提交者姓名') as HTMLInputElement).placeholder).toBe('可选')
+    expect((screen.getByLabelText('提交者邮箱') as HTMLInputElement).placeholder).toBe('可选')
+    expect(screen.getByText('留空则使用本机 Git 身份')).toBeTruthy()
+    cleanup()
+
+    const signedIn = fixture({ github: { available: true, signedIn: true, writable: true, login: 'octocat' } })
+    render(<MnemonSettingsCard scope={readyScope(SYNCING)} connection={signedIn.connection} />)
+
+    // The same entry turns into a real picker and a create form once signed in.
+    expect((await screen.findByLabelText('新建仓库') as HTMLInputElement).placeholder).toBe('mnemon-memory')
+    expect(screen.getByText('账号下还没有仓库，可以在下面新建')).toBeTruthy()
+  })
+
+  it('keeps the Git sync row silent until the switch turns it on', async () => {
+    const mutate = vi.fn(async () => {})
+    const scope = liveSettingsScope<Config>({ status: 'ready', value: { storageScope: 'global' }, base: {}, user: {}, revision: 0, writable: true, mode: 'host' }, mutate)
+    const { connection, call } = fixture({ github: { available: true, signedIn: false, writable: true } })
+    render(<MnemonSettingsCard scope={scope} connection={connection} />)
+
+    // Off is the default, and off is silent: the row is the title, the hint and the switch.
+    const off = await screen.findByRole('switch', { name: 'Git 同步' })
+    expect(off.getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByText('把上述组件的数据同步到 Git 仓库；不含第三方 Provider 与密钥')).toBeTruthy()
+    expect(screen.queryByLabelText('分支')).toBeNull()
+    expect(screen.queryByLabelText('提交者姓名')).toBeNull()
+    expect(screen.queryByText('尚未配置仓库')).toBeNull()
+    // Reading the channel is what would run Git, so a switched-off row asks it nothing.
+    expect(call.mock.calls.filter(([channel]) => channel === '/dsh-mnemon-sync')).toEqual([])
+
+    fireEvent.click(off)
+    // The choice saves as it is made, and it is what the next read of the profile shows.
+    await waitFor(() => expect(mutate).toHaveBeenCalledWith([{ op: 'set', path: ['syncEnabled'], value: true }]))
+    await waitFor(() => expect(screen.getByRole('switch', { name: 'Git 同步' }).getAttribute('aria-checked')).toBe('true'))
+    // Switched on, the same row unfolds the repository form and reads the channel.
+    expect(await screen.findByLabelText('分支')).toBeTruthy()
+    await waitFor(() => expect(call).toHaveBeenCalledWith('/dsh-mnemon-sync', 'status', {}))
+  })
+
+  it('waits for the Host to take the switch before it reports Git and the remote', async () => {
+    const mutate = vi.fn(async () => {})
+    const scope = liveSettingsScope<Config>({ status: 'ready', value: { storageScope: 'global' }, base: {}, user: {}, revision: 0, writable: true, mode: 'host' }, mutate)
+    const { connection, call } = fixture({ github: { available: true, signedIn: false, writable: true } })
+    const answer = call.getMockImplementation()!
+    let statusReads = 0
+    // The first read lands before the Host's runtime has the saved switch: it answers as switched off.
+    call.mockImplementation(async (channel: string, endpoint: string, payload: unknown) => {
+      if (channel === '/dsh-mnemon-sync' && endpoint === 'status' && statusReads++ === 0) return {
+        ok: true as const,
+        value: {
+          enabled: false, configured: false,
+          config: { branch: 'mnemon-sync', subdir: 'mnemon/', hasToken: false, credentialSource: 'none' as const, authorName: 'dsh-mnemon sync', authorEmail: 'mnemon@localhost' },
+          configPath: '/root/.mnemon/state/sync-git.json', mirrorPath: '/root/.mnemon/state/sync/git',
+          git: { available: false, required: '2.20' }, remote: { reachable: false, branchExists: false },
+        },
+      }
+      return answer(channel, endpoint, payload)
+    })
+    render(<MnemonSettingsCard scope={scope} connection={connection} />)
+
+    fireEvent.click(await screen.findByRole('switch', { name: 'Git 同步' }))
+    expect(await screen.findByText('尚未配置仓库')).toBeTruthy()
+    expect(statusReads).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByText(/缺少 Git/)).toBeNull()
   })
 
   it('hides the enhancements and keeps the other settings when the View dashboard fails', async () => {

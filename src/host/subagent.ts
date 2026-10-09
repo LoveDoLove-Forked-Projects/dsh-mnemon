@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { HostAgent, HostSubagentResult, HostSubagentRun, HostSubagentsService, ToolDefinition, ToolExecution } from "./dsh.ts"
 import type { DocumentCapacityPlan, DocumentMutation, DocumentMutationResult, DocumentRecord, DocumentSearchResult, DocumentSnapshot, DocumentView } from 'dsh-mnemon-source-documents/contracts'
-import { RUNTIME_ENTRY_DELIMITER, type RuntimeMemoryCompactedEntry, type RuntimeMemoryMaintenancePlan, type RuntimeMemoryMutation, type RuntimeMemoryMutationResult } from 'dsh-mnemon-source-runtime/contracts'
+import { RUNTIME_ENTRY_DELIMITER, type RuntimeMemoryCompactedEntry, type RuntimeMemoryMaintenancePlan, type RuntimeMemoryMutation, type RuntimeMemoryMutationResult, type RuntimeMemorySnapshot } from 'dsh-mnemon-source-runtime/contracts'
 import type { EdgeType, Insight, MemoryBodyCatalog as MemorySpaceCatalog, MemoryBodyMetadataSample as MemorySpaceMetadataSample, MemorySpaceWriteScopeRequest, PreparedMemoryPlacement, RememberRequest, SearchRequest } from 'dsh-mnemon-source-memory-spaces/contracts'
 import { mutationResultCommitted } from './receipts.ts'
 import { SourceSession, sourceFailure } from './source-session.ts'
 import { threeTierActionWorkflow } from 'dsh-mnemon-strategy-default-three-tier/extension-sdk'
 import { receipt as mutationReceipt } from '../sdk/input.ts'
 import { allowsParticipation, assertParticipation } from './access.ts'
-import type { MemorySpaceMetadataMaintenanceResult, MemorySpaceMetadataUpdate, MemoryPlacementDecision, SubagentCounters } from './protocol.ts'
+import type { MemorySpaceMetadataMaintenanceResult, MemorySpaceMetadataUpdate, MemoryPlacementDecision, MnemonReconcileOptions, MnemonReconcileResult, SubagentCounters } from './protocol.ts'
+import { emptyDocumentSnapshot, foreignMachines, parseReconcileResult, pendingOpinions, RECONCILE_PERSONA, RECONCILE_SCHEMA, reconcilePrompt, type MnemonReconcileEvidence } from './reconcile.ts'
 import { DEFAULT_MEMORY_VIEW_BUDGET, type ComposableMemoryView, type MemoryEvidence, type MemoryJsonValue, type MemoryMigrationLineage, type MemoryMutationReceipt, type MemoryOperationScope, type MemorySourceManagementRequest, type MemorySourceManagementResult } from '../core/contracts/index.ts'
 import type { MemoryCompositionGeneration } from '../core/composition.ts'
 import { agentScope, type MnemonAgentRuntimeSource, type MnemonRuntimeGraph } from './runtime.ts'
@@ -39,7 +40,7 @@ interface RuntimeWriteContext {
   commit(): Promise<RuntimeMemoryMutationResult>
   /** The Memory Spaces Source an archive writes to, or undefined when none in this View takes writes. */
   memorySpaces(): Promise<RuntimeArchiveScope | undefined>
-  model(operation: 'migration' | 'compaction', label: string, prompt: string, schema: Record<string, unknown>, persona: string): Promise<RuntimeModelResult>
+  model(operation: 'migration' | 'compaction' | 'reconcile', label: string, prompt: string, schema: Record<string, unknown>, persona: string): Promise<RuntimeModelResult>
 }
 
 type RecallInsight = Insight & { revision?: string }
@@ -831,7 +832,7 @@ export function isSubagent(agent: HostAgent | undefined): boolean {
 
 /** Delegates memory judgment and execution to a fresh, tool-scoped DSH child. */
 export class MnemonSubagentCoordinator {
-  private readonly counters: SubagentCounters = { recalls: 0, writes: 0, answers: 0, reviews: 0, placements: 0, migrations: 0, compactions: 0, documentArchives: 0, metadataMaintenances: 0, failures: 0 }
+  private readonly counters: SubagentCounters = { recalls: 0, writes: 0, answers: 0, reviews: 0, placements: 0, migrations: 0, compactions: 0, documentArchives: 0, metadataMaintenances: 0, reconciliations: 0, failures: 0 }
   private runtimeQueue: Promise<unknown> = Promise.resolve()
   private documentQueue: Promise<unknown> = Promise.resolve()
   private readonly observedReads = new WeakMap<ComposableMemoryTurn, Set<string>>()
@@ -1219,7 +1220,62 @@ export class MnemonSubagentCoordinator {
     }
   }
 
-  private runtimeModel(scope: MemoryOperationScope, parent: HostAgent | undefined, signal: AbortSignal, operation: 'migration' | 'compaction', label: string, prompt: string, schema: Record<string, unknown>, persona: string): Promise<RuntimeModelResult> {
+  /**
+   * Memory reconciliation. One bounded model run reads the merged local memory and
+   * proposes operations; those become a pending review and nothing else. The
+   * proposal is never applied here, because the point of the feature is that a
+   * human reads it first.
+   */
+  async reconcile(graph: MnemonRuntimeGraph, scope: MemoryOperationScope, signal: AbortSignal, options: MnemonReconcileOptions = {}): Promise<MnemonReconcileResult> {
+    const machine = graph.packs.identity()
+    const lease = graph.memoryComposition.acquire()
+    let runtime: RuntimeMemorySnapshot
+    let documents: DocumentSnapshot
+    try {
+      runtime = await graph.source('runtime', scope).forGeneration(lease.generation).read<RuntimeMemorySnapshot>('snapshot', null, signal)
+      documents = await graph.source('documents', scope).forGeneration(lease.generation).read<DocumentSnapshot>('snapshot', null, signal)
+        // A reconciliation that cannot read Documents still has the runtime memory to plan against.
+        .catch(() => emptyDocumentSnapshot(graph.directory, new Date().toISOString()))
+    } finally { lease.release() }
+    const others = foreignMachines(runtime.entries, machine)
+    // The branch's side is evidence, not an answer. When it cannot be read - no
+    // repository, no git, an unpublished branch, an unreadable payload - the plan is
+    // the local plan it has always been, and nothing fails because of it.
+    const difference = await graph.sync.readRemoteForEvidence(signal)
+    const guidance = options.guidance?.trim() ?? ''
+    const opinions = pendingOpinions(graph.reviews.list())
+    const evidence: MnemonReconcileEvidence = {
+      machine, runtime, documents, foreignMachines: others,
+      ...(difference === undefined ? {} : {
+        remote: {
+          entries: difference.remoteOnly,
+          conflicts: difference.conflicts,
+          truncated: difference.truncated,
+          tombstones: difference.remoteTombstones,
+          branch: difference.branch,
+          ...(difference.remote.machine === undefined ? {} : { machine: difference.remote.machine }),
+        },
+      }),
+      ...(guidance === '' ? {} : { guidance }),
+      ...(opinions.length === 0 ? {} : { opinions }),
+    }
+    const read = {
+      ...(difference === undefined ? {} : { remoteEntries: difference.remoteOnly.length }),
+      ...(guidance === '' ? {} : { guided: true }),
+    }
+    if (runtime.entries.length === 0) {
+      return { title: '', summary: '', action: 'none', operations: 0, foreignMachines: others, ...read, provider: 'host', runId: '' }
+    }
+    const delegated = await this.runtimeModel(scope, undefined, signal, 'reconcile', 'Reconcile merged local memory', reconcilePrompt(evidence), RECONCILE_SCHEMA as unknown as Record<string, unknown>, RECONCILE_PERSONA)
+    const proposal = parseReconcileResult(delegated.result.structured, evidence)
+    const result = { title: proposal.title, summary: proposal.summary, action: proposal.action, foreignMachines: others, ...read, provider: delegated.provider, runId: delegated.runId }
+    if (proposal.action === 'failed') throw new Error('memory reconciliation could not plan against the merged evidence: ' + proposal.summary)
+    if (proposal.operations.length === 0) return { ...result, action: 'none', operations: 0 }
+    const entry = graph.reviews.create({ title: proposal.title, summary: proposal.summary, machine: { id: machine.id, label: machine.label }, foreignMachines: others, operations: proposal.operations })
+    return { ...result, action: 'planned', operations: proposal.operations.length, entry }
+  }
+
+  private runtimeModel(scope: MemoryOperationScope, parent: HostAgent | undefined, signal: AbortSignal, operation: 'migration' | 'compaction' | 'reconcile', label: string, prompt: string, schema: Record<string, unknown>, persona: string): Promise<RuntimeModelResult> {
     const run = (agent: HostAgent) => this.delegate(agent, operation, label, prompt, [], schema, signal, 'spawn', persona)
     if (this.runtimeMaintenanceTaskRunner !== undefined) return this.runtimeMaintenanceTaskRunner(scope, signal, run)
     if (parent !== undefined) return run(parent)
@@ -1827,7 +1883,7 @@ ${runtimeSnapshotContext('user', plan.entries)}`
 
   private async delegate(
     parent: HostAgent,
-    operation: 'write' | 'answer' | 'review' | 'placement' | 'migration' | 'compaction' | 'document-archive' | 'metadata-maintenance',
+    operation: 'write' | 'answer' | 'review' | 'placement' | 'migration' | 'compaction' | 'document-archive' | 'metadata-maintenance' | 'reconcile',
     label: string,
     prompt: string,
     tools: string[],
@@ -1931,7 +1987,7 @@ ${runtimeSnapshotContext('user', plan.entries)}`
 Completion protocol: call \`${resultToolName}\` exactly once with requestId \`${requestId}\` and result matching this JSON schema:
 ${JSON.stringify(outputSchema)}
 This is the only completion channel for this run. Do not finish with a plain-text answer. The requestId expires when this run finishes or is cancelled.`
-      const perOpMaxTokens = operation === 'migration' || operation === 'compaction'
+      const perOpMaxTokens = operation === 'migration' || operation === 'compaction' || operation === 'reconcile'
         ? this.runtimeMaintenanceMaxTokensResolver?.() ?? 8_192
         : operation === 'document-archive' ? 8_192
         : operation === 'metadata-maintenance' ? 4_096
@@ -2015,7 +2071,7 @@ This is the only completion channel for this run. Do not finish with a plain-tex
       }
     }
     if (completed === undefined) throw new Error('memory subagent did not complete')
-    this.counters[operation === 'write' ? 'writes' : operation === 'review' ? 'reviews' : operation === 'placement' ? 'placements' : operation === 'migration' ? 'migrations' : operation === 'compaction' ? 'compactions' : operation === 'document-archive' ? 'documentArchives' : operation === 'metadata-maintenance' ? 'metadataMaintenances' : 'answers'] += 1
+    this.counters[operation === 'write' ? 'writes' : operation === 'review' ? 'reviews' : operation === 'placement' ? 'placements' : operation === 'migration' ? 'migrations' : operation === 'compaction' ? 'compactions' : operation === 'document-archive' ? 'documentArchives' : operation === 'metadata-maintenance' ? 'metadataMaintenances' : operation === 'reconcile' ? 'reconciliations' : 'answers'] += 1
     this.counters.lastRunId = completed.runId
     if (operation !== 'answer') this.counters.lastOperation = operation
     this.counters.lastAt = new Date().toISOString()

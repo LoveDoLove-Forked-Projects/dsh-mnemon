@@ -455,6 +455,133 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
 .readOnlyNotice { margin: 0 0 -20px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
 .packSuccess { color: var(--dsw-alias-state-success-primary); }
 
+/* Git repository sync: the same shape as the ZIP row, with a configuration
+   form under it that only opens when the user asks for it. */
+.syncRow { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding-bottom: 14px; }
+.syncRow > .settingRow,
+.syncRow > .toggleRow { padding-bottom: 6px; border-bottom: 0; }
+.syncRow:has(> .syncFeedback:empty):not(:has(> .syncForm)):not(:has(> .syncBar)) > .settingRow { padding-bottom: 0; }
+.rows > .syncRow:not(:last-child) { border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.syncState { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.syncState > span { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncForm { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; border-radius: var(--dsw-radius-md); padding: 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncField { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.syncField > label { color: var(--dsw-alias-label-primary); font-size: 13px; font-weight: 500; line-height: 20px; }
+.syncField > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncField > input { width: 100%; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.syncField > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
+.syncField > input[aria-invalid='true'] { border-color: var(--dsw-alias-state-error-primary); }
+.syncField > input:disabled { cursor: default; opacity: .5; }
+/* The account and the repository list span the field grid, above the addresses they fill in. */
+.syncBlock { display: flex; grid-column: 1 / -1; min-width: 0; flex-direction: column; gap: 8px; border-radius: var(--dsw-radius-md); padding: 12px; background: var(--dsw-alias-bg-layer-3); }
+.syncBlock > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncBlock > header strong { font-size: 13px; font-weight: 500; line-height: 20px; }
+.syncBlock > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncBlock p { margin: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncBlock .syncFormActions { grid-column: auto; }
+.syncBlock .syncField > select { width: 100%; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.syncBlock .syncField > select:disabled { cursor: default; opacity: .5; }
+.syncAccount { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.syncAccount > span { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncCode { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px; }
+.syncCode > code { border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); padding: 6px 10px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font-family: var(--dsw-font-mono, ui-monospace, monospace); font-size: 14px; font-weight: 500; letter-spacing: .08em; }
+.syncCode > a { color: var(--dsw-alias-state-business-primary); font-size: 12px; line-height: 18px; }
+.syncCheck { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
+.syncCheck input { width: 16px; height: 16px; margin: 0; accent-color: var(--dsw-alias-brand-primary); }
+.syncFormActions { display: flex; grid-column: 1 / -1; align-items: center; gap: 8px; }
+.syncBar { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 10px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncBar > div { display: grid; min-width: 0; }
+.syncBar strong { overflow: hidden; font-size: 13px; font-weight: 500; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.syncBar small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncFeedback { display: grid; gap: 4px; }
+.syncFeedback:empty { display: none; }
+.syncFeedback p { margin: 0; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncSuccess { color: var(--dsw-alias-state-success-primary); }
+
+/* Review proposals: one entry per reconciliation, with the opinions left on it. */
+.reviewList { display: grid; gap: 8px; }
+.reviewEntry { display: flex; min-width: 0; flex-direction: column; gap: 6px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.reviewEntry > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.reviewEntry > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewEntry > p { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.reviewTitle { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.reviewTitle strong { font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.reviewOperations { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+.reviewOperations li { font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewOperations small { display: block; color: var(--dsw-alias-label-tertiary); }
+.reviewOpinions { display: grid; gap: 4px; }
+.reviewOpinions > strong { font-size: 12px; font-weight: 500; line-height: 18px; }
+.reviewOpinions > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.reviewOpinions > div { display: flex; min-width: 0; gap: 6px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewOpinions > div strong { flex: none; color: var(--dsw-alias-label-secondary); font-weight: 500; }
+.reviewOpinionForm { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.reviewOpinionForm > input { flex: 1 1 auto; min-width: 0; box-sizing: border-box; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.reviewOpinionForm > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
+.reviewOpinionForm > input:disabled { cursor: default; opacity: .5; }
+/* How the reconciliation area runs: a short list, not another control. */
+.reviewRules { display: grid; gap: 4px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.reviewRules > strong { color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 500; line-height: 18px; }
+.reviewRules > ul { display: grid; gap: 2px; margin: 0; padding-left: 18px; }
+.reviewRules li { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewGuidance { display: grid; gap: 4px; }
+.reviewGuidance > label { color: var(--dsw-alias-label-secondary); font-size: 12px; font-weight: 500; line-height: 18px; }
+.reviewGuidance > input { box-sizing: border-box; width: 100%; height: 34px; border: .5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md); outline: none; padding: 0 12px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-3); font: inherit; font-size: 13px; line-height: 20px; }
+.reviewGuidance > input:focus-visible { border-color: var(--dsw-alias-state-business-primary); }
+.reviewGuidance > input:disabled { cursor: default; opacity: .5; }
+.reviewGuidance > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.reviewSelection { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.reviewSelection > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.reviewSelected { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.reviewOperations > li { display: grid; gap: 2px; }
+.reviewOperations > li > label { display: flex; min-width: 0; align-items: flex-start; gap: 6px; cursor: pointer; }
+.reviewOperations > li > label > input { flex: none; margin: 3px 0 0; }
+.reviewOperations > li > label > input:disabled { cursor: default; opacity: .5; }
+/* A position that already ran is shown for reading, not as a choice. */
+.reviewOperations > li[data-applied='true'] { opacity: .55; }
+
+/* The branch's history and the entry-level difference: read-only answers, not state. */
+.syncBackups { display: grid; gap: 8px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncBackups > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncBackups > header > strong { font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.syncBackups > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncBackupList { display: grid; gap: 6px; }
+.syncBackupEntry { display: flex; min-width: 0; flex-direction: column; gap: 4px; border-radius: var(--dsw-radius-sm, var(--dsw-radius-md)); padding: 8px 10px; background: var(--dsw-alias-bg-layer-3); }
+.syncBackupEntry > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncBackupEntry > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncBackupComponents { display: grid; gap: 2px; }
+.syncBackupComponents > small { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncDiff { display: grid; gap: 8px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncDiff > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncDiff > header > strong { font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.syncDiff > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncDiffColumns { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 10px; }
+.syncDiffColumns > div { display: grid; min-width: 0; align-content: start; gap: 4px; }
+.syncDiffColumns > div > strong { font-size: 12px; font-weight: 500; line-height: 18px; }
+.syncDiffColumns > div > small { color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; }
+.syncDiffColumns ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.syncDiffColumns li { display: grid; gap: 2px; font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncDiffMeta { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+
+/* Inside the dialog the panels are the content, so they lose their own chrome and
+   the diff states its conflicts one subject at a time, side by side. */
+.syncDialogBody { display: grid; gap: 16px; }
+.syncDialogBody .syncBackups, .syncDialogBody .syncDiff { padding: 0; background: transparent; }
+.syncDialogBody .syncBackups > header > strong, .syncDialogBody .syncDiff > header > strong { font-size: 14px; line-height: 22px; }
+.syncConflictList { display: grid; gap: 8px; }
+.syncConflict { display: grid; min-width: 0; gap: 6px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncConflict > header { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.syncConflict > header > strong { font-size: 13px; font-weight: 500; line-height: 20px; }
+.syncConflict > header > small { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+.syncConflictSides { display: grid; min-width: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+.syncConflictSides > div { display: grid; min-width: 0; align-content: start; gap: 2px; }
+.syncConflictSides > div > small { color: var(--dsw-alias-label-tertiary); font-size: 11px; line-height: 16px; }
+.syncConflictSides > div > span { font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.syncDialogNote { margin: 0; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+/* Where a conflict is answered: the review row below this dialog, named rather than copied. */
+.syncPlan { display: grid; gap: 8px; border-radius: var(--dsw-radius-md); padding: 10px 12px; background: var(--dsw-alias-bg-module-platform); }
+.syncPlan > p { margin: 0; font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
+.syncPlan > .rowActions { justify-content: flex-start; }
+
 .selector:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
@@ -466,6 +593,12 @@ details[open] > summary .providerChevron { transform: rotate(180deg); }
   .rowActions button { flex: 1; }
   .importBar { grid-template-columns: minmax(0, 1fr) auto; }
   .importBar > button:last-child { grid-column: 1 / -1; }
+  .syncBar { grid-template-columns: minmax(0, 1fr) auto; }
+  .syncBar > button:last-child { grid-column: 1 / -1; }
+  .syncFormActions { flex-wrap: wrap; }
+  .syncFormActions button { flex: 1; }
+  .reviewOpinionForm { flex-wrap: wrap; }
+  .reviewOpinionForm > input { flex: 1 1 100%; }
   .inlineChoices { width: 100%; }
   .inlineChoices label { flex: 1; }
   .inlineChoices span { width: 100%; justify-content: center; }

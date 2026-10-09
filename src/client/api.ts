@@ -2,6 +2,8 @@ import {
   MNEMON_ACTIVATION_CHANNEL,
   MNEMON_PACK_CHANNEL,
   MNEMON_READ_CHANNEL,
+  MNEMON_REVIEW_CHANNEL,
+  MNEMON_SYNC_CHANNEL,
   MNEMON_WRITE_CHANNEL,
   MNEMON_VIEW_CHANNEL,
   MNEMON_VIEW_WRITE_CHANNEL,
@@ -15,10 +17,26 @@ import {
   type MemoryCompositionStatus,
   type MemorySourceManagementCatalog,
   type MemorySourceManagementResult,
+  type MnemonPackComponent,
   type MnemonPackExport,
   type MnemonPackImportResult,
   type MnemonPackPreview,
   type MnemonPackTarget,
+  type MnemonReconcileResult,
+  type MnemonReviewApplyResult,
+  type MnemonReviewEntry,
+  type MnemonReviewLedgerView,
+  type MnemonSyncBackupList,
+  type MnemonSyncConfigView,
+  type MnemonSyncDiff,
+  type MnemonSyncGitHubPoll,
+  type MnemonSyncGitHubRepository,
+  type MnemonSyncGitHubRepositoryList,
+  type MnemonSyncGitHubStatus,
+  type MnemonSyncPreview,
+  type MnemonSyncPullResult,
+  type MnemonSyncPushResult,
+  type MnemonSyncStatus,
   type MnemonEmbeddingStatus,
   type StatusView,
   type TaskAgentModelCatalog,
@@ -173,5 +191,105 @@ export class MnemonClient {
 
   importPack(base64: string): Promise<MnemonPackImportResult> {
     return this.call(MNEMON_PACK_CHANNEL, 'import', this.scoped({ base64 }))
+  }
+
+  /** Every reconciliation proposal this machine still holds. */
+  reviewLedger(): Promise<MnemonReviewLedgerView> {
+    return this.call(MNEMON_REVIEW_CHANNEL, 'view', {})
+  }
+
+  /**
+   * One reconciliation run: it stages a proposal and writes no memory. Guidance is what
+   * the reviewer wants the plan to accomplish, in their own words; blank means the plan
+   * reads the memory and the branch with no instruction beyond its own rules.
+   */
+  reconcile(guidance?: string): Promise<MnemonReconcileResult> {
+    const text = guidance?.trim() ?? ''
+    return this.call(MNEMON_REVIEW_CHANNEL, 'reconcile', this.scoped(text === '' ? {} : { guidance: text }))
+  }
+
+  reviewOpinion(id: string, text: string, author: 'user' | 'agent' = 'user'): Promise<MnemonReviewEntry> {
+    return this.call(MNEMON_REVIEW_CHANNEL, 'opinion', { id, text, author })
+  }
+
+  decideReview(id: string, status: 'accepted' | 'rejected'): Promise<MnemonReviewEntry> {
+    return this.call(MNEMON_REVIEW_CHANNEL, 'decide', { id, status })
+  }
+
+  reopenReview(id: string): Promise<MnemonReviewEntry> {
+    return this.call(MNEMON_REVIEW_CHANNEL, 'reopen', { id })
+  }
+
+  /** Applying a subset leaves the rest in the entry, which stays accepted. */
+  applyReview(id: string, operations?: number[]): Promise<MnemonReviewApplyResult> {
+    return this.call(MNEMON_REVIEW_CHANNEL, 'apply', this.scoped({ id, ...(operations === undefined ? {} : { operations }) }))
+  }
+
+  syncStatus(): Promise<MnemonSyncStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'status', this.scoped())
+  }
+
+  /** Saves a patch; the answer never carries the token back. */
+  configureSync(patch: { repoUrl?: string | null; branch?: string; subdir?: string; token?: string | null; authorName?: string; authorEmail?: string; autoBackupMinutes?: number }): Promise<MnemonSyncConfigView> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'configure', this.scoped(patch))
+  }
+
+  pushSync(message?: string): Promise<MnemonSyncPushResult> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'push', this.scoped({ ...(message === undefined ? {} : { message }), confirmed: true }))
+  }
+
+  previewSync(): Promise<MnemonSyncPreview> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'preview', this.scoped())
+  }
+
+  /** The commits on the branch that carry a payload, newest first. */
+  syncBackups(limit?: number): Promise<MnemonSyncBackupList> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'backups', this.scoped(limit === undefined ? {} : { limit }))
+  }
+
+  /** Which memories are only here and which are only on the branch. */
+  syncDiff(): Promise<MnemonSyncDiff> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'diff', this.scoped())
+  }
+
+  pullSync(components?: MnemonPackComponent[], revive?: boolean): Promise<MnemonSyncPullResult> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'pull', this.scoped({
+      ...(components === undefined ? {} : { components }),
+      ...(revive === true ? { revive: true } : {}),
+      confirmed: true,
+    }))
+  }
+
+  /** Whether GitHub sign-in is possible here, and how far it has come. */
+  githubStatus(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-status', this.scoped())
+  }
+
+  /** Ask GitHub for the code the user types into the browser. */
+  githubStart(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-start', this.scoped())
+  }
+
+  /** Ask once whether the browser step happened; the Host keeps the cadence. */
+  githubPoll(): Promise<MnemonSyncGitHubPoll> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-poll', this.scoped())
+  }
+
+  githubCancel(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-cancel', this.scoped())
+  }
+
+  /** Forgets the stored grant; the next push asks for a sign-in again. */
+  githubSignOut(): Promise<MnemonSyncGitHubStatus> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-signout', this.scoped())
+  }
+
+  githubRepositories(): Promise<MnemonSyncGitHubRepositoryList> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-repositories', this.scoped())
+  }
+
+  /** Creates a repository under the signed-in account and answers with it. */
+  githubCreateRepository(name: string, isPrivate: boolean): Promise<MnemonSyncGitHubRepository> {
+    return this.call(MNEMON_SYNC_CHANNEL, 'github-create', this.scoped({ name, private: isPrivate }))
   }
 }

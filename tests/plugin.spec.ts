@@ -159,8 +159,9 @@ describe('dsh-mnemon plugin composition', () => {
       .find(fiber => fiber.parent === host.ctx && Object.hasOwn(fiber.inject, 'connection'))
     expect(connectionFiber).toBeDefined()
     await connectionFiber!.await()
-    expect(routes.size).toBe(7)
+    expect(routes.size).toBe(9)
     expect(routes.has('/dsh-mnemon-read')).toBe(true)
+    expect(routes.has('/dsh-mnemon-sync')).toBe(true)
     await host.dispose()
     expect(routes.size).toBe(0)
   })
@@ -323,8 +324,8 @@ describe('dsh-mnemon plugin composition', () => {
     expect(guidance.length).toBeLessThan(360)
     expect(guidance).not.toContain('RECALL RESULT')
     expect(fixture.commands).toEqual([expect.objectContaining({ name: 'mnemon' })])
-    expect(fixture.channels.map(([channel]) => channel)).toEqual(expect.arrayContaining(['/dsh-mnemon-activation', '/dsh-mnemon-pack']))
-    expect(fixture.channels).toHaveLength(7)
+    expect(fixture.channels.map(([channel]) => channel)).toEqual(expect.arrayContaining(['/dsh-mnemon-activation', '/dsh-mnemon-pack', '/dsh-mnemon-sync']))
+    expect(fixture.channels).toHaveLength(9)
     // The settings bridge serves each Mnemon namespace from the owning profile Entry.
     fixture.forms.describe.mockReturnValue([{ ns: 'mnemon', value: { conversationInteraction: { turnBar: true, saveAction: false } }, base: {}, user: {}, revision: 3, applies: 'live' }])
     const settingsChannel = fixture.channels.find(([channel]) => channel === '/dsh-mnemon-settings')![1] as (endpoint: string, payload: unknown) => Promise<unknown>
@@ -341,8 +342,8 @@ describe('dsh-mnemon plugin composition', () => {
       execute: (args: unknown, execution: unknown) => Promise<unknown>
     }
     expect(() => runtimeTool.execute({ action: 'add', target: 'memory', content: 'blocked' }, { signal: new AbortController().signal })).toThrow('read-only')
-    expect(fixture.channels).toHaveLength(7)
-    expect(fixture.channels.map(([channel]) => channel)).toEqual(expect.arrayContaining(['/dsh-mnemon-activation', '/dsh-mnemon-pack']))
+    expect(fixture.channels).toHaveLength(9)
+    expect(fixture.channels.map(([channel]) => channel)).toEqual(expect.arrayContaining(['/dsh-mnemon-activation', '/dsh-mnemon-pack', '/dsh-mnemon-sync']))
     expect(fixture.contexts).toEqual([])
   })
 
@@ -416,7 +417,7 @@ describe('dsh-mnemon plugin composition', () => {
     ])
     expect(fixture.contexts).toEqual([])
     expect((fixture.sections[0] as { text: () => string }).text()).toBe('')
-    expect(fixture.channels).toHaveLength(7)
+    expect(fixture.channels).toHaveLength(9)
   })
 
   it('atomically switches the same live RPC faces after a committed profile edit', async () => {

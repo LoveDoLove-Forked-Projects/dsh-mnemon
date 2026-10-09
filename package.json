@@ -142,6 +142,7 @@
     "verify:plugins": "node scripts/verify-plugin-artifacts.mjs",
     "verify:docs": "node scripts/verify-docs.mjs",
     "e2e:serve": "node scripts/serve-e2e.mjs",
+    "e2e:sync": "node scripts/verify-sync-git.mjs",
     "verify": "pnpm run verify:docs && pnpm run typecheck && pnpm run verify:build && pnpm --workspace-concurrency=4 -r build && pnpm -r typecheck && pnpm -r test && pnpm run test:root && pnpm run verify:headless && pnpm run verify:package",
     "changeset": "changeset",
     "release:intent": "node scripts/check-release-intent.mjs",

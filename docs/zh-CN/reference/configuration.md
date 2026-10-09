@@ -19,7 +19,7 @@ Web profile 的 patch 通常是 `~/.dsh/profiles/web/cordis.patch.yml`。旧宿�
 | 界面位置 | 设置 | 保存为 |
 |---|---|---|
 | 记忆组合 | 主策略；每个记忆来源与增强各一个开关；各组件声明的选项 | `memoryView.strategyTypeId` 与 `memoryView.entries.<entry>.config`；组件的开关状态由 DSH 插件管理器写为对应 Entry 的 `disabled` 行 |
-| 存储 | 存储范围、数据目录、备份与迁移 | `storageScope`、`dataDir` |
+| 存储 | 存储范围、数据目录、备份与迁移；Git 同步开关 | `storageScope`、`dataDir`、`syncEnabled` |
 | 界面 | 记忆系统入口、回合记忆栏、存入记忆按钮 | `displayMode`、`conversationInteraction.turnBar`、`conversationInteraction.saveAction` |
 | 运行时记忆页面 | 用户画像范围 | `runtimeUserScope` |
 | 记忆空间页面 | 记忆 Provider；Mnemon Native 嵌入（自动、Ollama 或 OpenAI 兼容） | `state/memory-providers.json` 中的 Provider 注册表；`embedding` |
@@ -127,6 +127,7 @@ mnemon:
 | `displayMode` | `sidebar` | `sidebar` / `builtin`；兼容旧值 `buildin` | 记忆系统入口：独立 Sidebar 或会话内标签页，共用同一工作台；旧拼写自动迁移为 `builtin` |
 | `tabEnabled` | `true` | boolean | 是否挂载所选入口和工作台；关闭后 Host RPC、命令和 Agent 工具保持注册 |
 | `writeEnabled` | `true` | boolean | 是否暴露语义写工具、写 RPC 和写命令 |
+| `syncEnabled` | `false` | boolean | 本机是否同步到 Git 仓库。默认关闭，关闭时保持沉默：存储页那一行只有标题与开关，不读取状态，也不执行 Git 命令。仓库、分支、目录、提交身份、token 与自动备份间隔保存在 `state/sync-git.json`，不在这里 |
 | `taskAgentModel` | `{ mode: inherit }` | `inherit` / `fixed` | 整理名称与说明、Agent 查询、存入记忆和档案归档使用的独立任务 Agent，以及空闲复盘 worker 的模型路由；`fixed` 必须同时保存 `provider` 与 `model`，并会钉住对应的写入、证据问答、Provider 选择、迁移、压缩、归档和元信息维护 worker。对话中的 Recall 与 Related 是 Host 直接读取，不使用该路由 |
 | `remoteAccess` | `read-only` | `read-only` / `trusted-host` | 非 loopback Mnemon 管理授权，仅启动时读取，由 API Gateway 映射执行 |
 | `conversationInteraction.turnBar` | `true` | boolean | 回复下方的回合记忆栏，立即生效 |

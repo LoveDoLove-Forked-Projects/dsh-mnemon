@@ -764,6 +764,14 @@ export class MnemonLifecycle {
     return this.runTaskAgent('', scope.workspaceId, signal, operation)
   }
 
+  /**
+   * Read the merged memory and let a model propose what a human should review.
+   * It writes nothing: every proposal waits in the ledger until it is accepted.
+   */
+  reconcile(graph: import('./runtime.ts').MnemonRuntimeGraph, scope: import('../core/contracts/index.ts').MemoryOperationScope, signal: AbortSignal, options?: import('./protocol.ts').MnemonReconcileOptions) {
+    return this.coordinator.reconcile(graph, scope, signal, options)
+  }
+
   documents(sessionId: string) {
     return this.coordinator.documentsSnapshot(this.liveAgent(sessionId))
   }
@@ -942,24 +950,34 @@ export class MnemonLifecycle {
   ): Promise<Pick<CreateHostAgentOptions, 'meta' | 'agentOptions' | 'setup'>> {
     const agentOptions = this.taskAgentModelOptions(fallbackSessionId, workspaceRoot)
     if (agentOptions === undefined) throw new Error('no default provider/model is available for a clean task Agent')
-    const cwd = workspaceRoot?.trim()
+    const cwd = this.taskAgentCwd(workspaceRoot)
     const presets = presetService(this.ctx.get('agentPresets'))
-    if (presets === undefined) {
-      return {
-        ...(cwd === undefined || cwd === '' ? {} : { meta: { cwd: resolve(cwd) } }),
-        agentOptions,
-      }
-    }
+    if (presets === undefined) return { meta: { cwd }, agentOptions }
 
     const presetId = (await presets.resolve()).id
     return {
-      meta: {
-        ...(cwd === undefined || cwd === '' ? {} : { cwd: resolve(cwd) }),
-        agentPreset: presetId,
-      },
+      meta: { cwd, agentPreset: presetId },
       agentOptions,
       setup: async agentCtx => { await presets.mount(agentCtx, presetId) },
     }
+  }
+
+  /**
+   * A task Agent runs outside any conversation, so its caller may hold no
+   * workspace at all. DSH's Web persona renders `{{cwd}}`, and an Agent created
+   * without one fails prompt assembly before its first step, so the registry's
+   * default workspace stands in; a profile that mounts no registry keeps the
+   * directory the Host was started in.
+   */
+  private taskAgentCwd(workspaceRoot: string | undefined): string {
+    const requested = workspaceRoot?.trim()
+    if (requested !== undefined && requested !== '') return resolve(requested)
+    const registry = this.ctx.get('workspaceRegistry') as { list?: () => Array<{ path?: unknown }> } | undefined
+    const listed = typeof registry?.list === 'function' ? registry.list() : []
+    for (const workspace of listed) {
+      if (typeof workspace?.path === 'string' && workspace.path.trim() !== '') return resolve(workspace.path)
+    }
+    return process.cwd()
   }
 
   /** Resolve a complete task route for both status admission and actual creation. */

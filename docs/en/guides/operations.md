@@ -109,6 +109,60 @@ Import is governed by `writeEnabled` and is rejected in read-only deployments. A
 
 ![A verified backup preview before Safe import](../../assets/webui-v0.5.19/en/plugin-backup-preview.jpg)
 
+### Git repository sync
+
+**Storage → Git sync** publishes the same payload as ZIP backup to a Git repository, so another machine can pull it. The switch is off by default, and while it is off the row shows only its title and the switch: no status is read and no Git command runs. The remote holds readable files; the storage root is never made a Git work tree.
+
+On the configured branch and remote directory (defaults `mnemon-sync` and `mnemon/`):
+
+```text
+<branch>:<subdir>/
++-- manifest.json       # Mnemon Pack manifest plus the sync extension
++-- checksums.json      # SHA-256 per payload file, as in the ZIP
++-- payload/
+    +-- runtime/{memories.json,USER.md,MEMORY.md}
+    +-- documents/{index.json,active/<id>.md,archived/<id>.md}
+    +-- data/{.dsh-memory-bodies.json,<bodyId>/mnemon.db}
+```
+
+- **Push** exports the complete pack into `<storageRoot>/state/sync/git`, commits it there and pushes the branch. A manual push requires explicit confirmation.
+- **Automatic backup**: the configuration form under **Storage → Git sync** offers an interval (off, or 1, 3, 6 or 12 hours, or 1, 3 or 7 days), saved as soon as it is chosen. While it is on, the Host repeats that push in the background at the saved interval, reading the interval from `state/sync-git.json` on every tick, so a change takes effect at once and no restart is needed; switched off, the channel is manual only. The background run is that same push, so it too reads the remote branch and merges it here before publishing this machine's payload — the timer never writes memory, and the one write that does happen is the merge the push already performs.
+- **Backup size**: Git stores a brand-new blob for every push, and the payload is the whole pack, so the mirror accumulates a complete copy of each generation while a clone downloads the pack. Every successful push therefore folds the mirror's loose objects into one pack (`git repack -adf`) and reports how many objects it collected and how the size changed. The mirror is never part of what syncs, and deleting it costs one fetch; a collection that fails is reported as a warning and never fails a push that already succeeded.
+- **Pull** reads the remote manifest and its SHA-256 inventory, previews what would change and, after confirmation, merges through the same path as Import ZIP. A manifest or checksum mismatch is a hard failure that imports nothing.
+- The payload is the existing Mnemon Pack payload: one collector, one validator, one importer. Packs carry `manifest.json`, the SHA-256 inventory and component summaries, and the sync extension records the channel, branch, directory and push time. A reader that does not know sync still reads a valid Mnemon Pack manifest.
+- The payload carries memory content only: runtime, documents and memory-spaces, with the user profile inside runtime. Configuration belongs to the profile layer and never travels in a payload, so a second machine keeps its own settings instead of inheriting this machine's. A pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional one-off `components` parameter on pull.
+- The mirror under `state/sync/git` is disposable and never a pack component, so it cannot sync itself; deleting it costs one fetch.
+- Both directions require `writeEnabled`; a read-only deployment refuses push and pull with the same message Import ZIP uses.
+
+**Sign in with GitHub** replaces the token field for most setups. Under **Storage → Git sync**, the sign-in button runs GitHub's OAuth device flow: the page shows a one-time code, opens `https://github.com/login/device`, and asks GitHub whether the browser step finished, at the interval GitHub asked for. The Host stores the answer in DSH's credentials store under the key `dsh-mnemon/github`; the access token never reaches the browser and never appears in a response. The requested scope is `repo`, so the grant reaches private repositories. GitHub is reached through the ambient `fetch` first and, when that cannot connect at all, through one retry over a proxy discovered from `HTTPS_PROXY`, `http_proxy`, `all_proxy` or — on Windows — the system proxy settings, so a machine whose launcher carries no proxy policy can still sign in; if no proxy is found the page says so and names `HTTPS_PROXY` instead of showing `fetch failed`.
+
+Once signed in, **Your repositories** lists the repositories the account may push to — private ones are marked, and one without push permission cannot be chosen — and selecting one saves its clone URL as the sync repository. **Create repository** makes a new repository under the account (private by default, with an initial commit) and selects it, so the first push has a branch to publish to. The block is visible before a sign-in as well: it says what a sign-in adds and leaves the repository URL field below as the way through, so the picker is never something a user has to know exists. The grant opens every repository the account can reach, so it is used only for repositories on `https://github.com`; a repository on another host needs its own token. Signing out deletes the stored grant; the manual token field stays available underneath and is the only path on a Host that mounts no credentials provider, which reports the login as unavailable instead of failing.
+
+The form opens with the branch and the remote directory already filled in with the defaults above, and an empty branch or directory falls back to them on save. A blank commit author is a choice rather than a missing value: the commit then uses the `user.name` and `user.email` Git already has on the machine, which is also how a first push succeeds on a Host that never configured a sync identity.
+
+Credentials stay out of the payload, the configuration file and the logs:
+
+- The token is resolved per operation, in this order: the `MNEMON_SYNC_GIT_TOKEN` environment variable, the token in `state/sync-git.json` (mode `0600`), then the grant GitHub sign-in wrote into DSH's credentials store. It is never written into the payload or printed in an error message.
+- Status and configuration responses describe the credential (`hasToken`, `credentialSource`, `credentialLogin`), never its value.
+- An unreachable remote, or a push without credentials, still commits locally and reports that the push was skipped; nothing is lost. Run push again once credentials are available.
+
+### Seeing every machine's backups and differences
+
+**Backups** under **Storage → Git sync** opens a dialog whose upper half walks the branch history newest first and names each backup by the manifest that commit carries: commit, message, time, the machine that published it, the push time and the component summary. The remote is one shared branch, so that history is the list of every machine's backups — which machine pushed what, and when. Opening one shows the components it carried. An empty branch reports an empty history instead of failing, and a commit whose manifest cannot be read is skipped while the rest are still listed. The history is read one page at a time (20 commits); while older ones remain the list ends with **Load older backups**, which appends the next page after what is already listed and disappears at the end of the branch.
+
+The lower half of the dialog is the memory difference from the same reading, and **Check remote** opens that same dialog. The comparison is by entry, not by byte: an entry is identified by its target and its content, so the same memory counts as one entry wherever it was written. It gives both sides' export time, entry count and machine identity, and how many entries they share, and then three kinds of entries:
+
+- **One subject written twice**: two entries in the same target whose text is nearly the same, such as "Prefer concise answers in every reply" and "Prefer concise answers for all replies". Similarity is the overlap of character bigrams, and only `0.6` or more counts as the same subject, so unrelated memories are never called a conflict for sharing a target. This is the only kind that needs reconciling: the dialog shows both wordings side by side with their similarity and points at the **Memory reconciliation** row below. There is one place to reconcile: **Reconcile** reads the difference — both wordings of every conflict included — and stages a pending proposal, so the dialog no longer offers a run of its own.
+- **Only remotely**: entries the branch holds and this installation does not, each naming the machine it came from. With no conflict they can simply be **added**: merging is additive and honors the removals the branch recorded, so nothing has to be decided. Entries this installation deleted earlier, and the branch still holds, are counted and explained separately: adding honors that deletion and leaves them where they are, and **Bring them back** appears to overrule the deletion once, after which the tombstones it overruled leave this installation's state. When the add finishes the dialog reports the entries it **actually wrote** rather than the ones the branch seemed to offer — without that, a merge that wrote nothing at all reads exactly like a successful one.
+- **Only here**: entries this installation holds and the branch does not; a push shares them.
+- **Removals not applied here**: deletions the branch recorded that this installation has not carried out yet. The branch keeps every removal either side ever recorded, so a removal this installation already applied — or has since written over with the same content — is not counted again.
+
+The two sides of a conflict stay in the per-side difference, but the dialog treats them as conflicts: **Add them** and the "only here" count both exclude them, so pressing the button never writes the second wording of a subject in as well. Both lists are bounded, and `truncated` in the answer says a side held more differences than the response lists.
+
+Reconciling reuses the existing review ledger, and the **Reconcile** button on the **Memory reconciliation** row is the one entry to it: the run reads the difference — including both wordings of every conflict — as evidence, and the plan arrives as a pending proposal that is never written on its own; it lists every operation with its reason, and can be **Accepted** and then **Applied**, or annotated with an opinion first. A rejected plan has to be **reopened** before the AI is asked again: a decided proposal is answered by its decision, so the reviewer's words only reach the next run once it is open again — which is why the order is "leave an opinion, reopen, then ask again". The ledger records the positions that ran (`appliedOperations`), so a plan applied in part stays in the list until every one of its operations has run; a plan whose operations all ran leaves the list for the **Applied plans** dialog kept for reading, and reopening one there does not undo what it wrote — it restores the whole plan as a pending decision.
+
+Backups and differences are both reads: nothing is imported and no local memory changes. The only writes are **Add them**, **Bring them back** and **Apply**; `runtime` in the answer reports how many entries the add wrote and how many stayed out because this installation had deleted them.
+
 ### Recovery rehearsal
 
 1. Under **Storage**, set **Data directory** to **Custom**, enter an isolated directory and apply.
@@ -128,7 +182,7 @@ To preserve reserved `state` or take an offline complete snapshot, stop every DS
 <storageRoot>/runtime
 <storageRoot>/documents
 <storageRoot>/data
-<storageRoot>/state    # when present; outside the built-in Pack's three data components
+<storageRoot>/state    # when present; outside the built-in Pack's four data components
 ```
 
 Generate an inventory or checksums and rehearse recovery in isolation. A normal directory copy while writers are running is not a consistent snapshot.

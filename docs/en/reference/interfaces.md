@@ -140,11 +140,15 @@ RPC is an internal Host-to-client bridge, not a stable external HTTP API. Pages 
 | `/dsh-mnemon-activation` | Turning one Memory Space on or off | Allowed |
 | `/dsh-mnemon-write` | Every other mutation | Needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-pack` | Backup export and import | Needs `remoteAccess: trusted-host` |
+| `/dsh-mnemon-sync` | Git repository sync: configuration, push, preview and pull | Needs `remoteAccess: trusted-host` |
+| `/dsh-mnemon-review` | Reconciliation proposals, review opinions and applying an accepted plan | Reads allowed; `reconcile` and `apply` need `remoteAccess: trusted-host` |
 | `/dsh-mnemon-settings` | Host and interface settings | `get` allowed; `mutate` needs `remoteAccess: trusted-host` |
 | `/dsh-mnemon-view` | Memory composition reads | Allowed |
 | `/dsh-mnemon-view-settings` | Saving memory composition, installing a component | Needs `remoteAccess: trusted-host` |
 
-Loopback pages call these channels directly, authenticated by the DSH browser session. Remote pages reach the same handlers through DSH's API Gateway: channel `/api`, endpoints `dshMnemon/read`, `dshMnemon/activation`, `dshMnemon/write`, `dshMnemon/pack`, `dshMnemon/settings`, `dshMnemon/view` and `dshMnemon/viewWrite`. The Gateway owns Host/Origin validation, browser pairing and the response envelope; Mnemon adds only the `remoteAccess` grant shown above, captured at startup. See [Remote management](../guides/operations.md#remote-management).
+Loopback pages call these channels directly, authenticated by the DSH browser session. Remote pages reach the same handlers through DSH's API Gateway: channel `/api`, endpoints `dshMnemon/read`, `dshMnemon/activation`, `dshMnemon/write`, `dshMnemon/pack`, `dshMnemon/settings`, `dshMnemon/view`, `dshMnemon/viewWrite`, `dshMnemon/sync` and `dshMnemon/review`. The Gateway owns Host/Origin validation, browser pairing and the response envelope; Mnemon adds only the `remoteAccess` grant shown above, captured at startup. See [Remote management](../guides/operations.md#remote-management).
+
+The Gateway reaches these handlers through Mnemon's `mnemonRemote` Typert service in the `dshMnemon` namespace; its named remote methods are `read`, `activation`, `write`, `pack`, `settings`, `view`, `viewWrite`, `sync` and `review`. `write`, `pack`, `sync`, `review`, `viewWrite` and the `settings` `mutate` endpoint answer `remote Mnemon management requires remoteAccess: trusted-host` without the grant; `read`, `activation`, `view` and the `settings` `get` endpoint do not need it.
 
 ### Read channel
 
@@ -195,9 +199,47 @@ With `writeEnabled=false`, the activation and write channels stay registered but
 | `target` | Effective root, scope, and the default root a Default location resolves to |
 | `export` | Export a complete ZIP with manifest and SHA-256 checksums |
 | `inspect` | Parse and verify an import ZIP, returning component and occupancy preview |
-| `import` | Safely merge into the effective root; rejected in read-only mode |
+| `import` | Safely merge into the effective root; rejected in read-only mode. Its `runtime` answer reports how many entries the merge added and how many stayed out because this installation had deleted them, and an optional `revive: true` overrules those deletions for this import |
 
 Backups contain private memory, so callers must treat the authenticated DSH browser session as a full Host authority and protect exported archives separately.
+
+### Sync channel
+
+| Endpoint | Behavior |
+|---|---|
+| `status` | Mirror path, configured repository, branch, remote directory, `hasToken`, `credentialSource`, `credentialLogin`, remote reachability and the last commit; read-only |
+| `configure` | Save repository URL, branch, remote directory, token and commit identity; the response replaces the token with `hasToken` and `credentialSource`. An empty `branch` or `subdir` restores that field's default, and an empty author falls back to the Git identity of the machine |
+| `push` | Export the full Mnemon Pack payload into the mirror, commit it and push the branch; requires `confirmed: true` |
+| `preview` | Read the remote manifest and its SHA-256 inventory and report which components differ from local; read-only |
+| `backups` | Walk the branch history newest first and name each commit by the Pack manifest it carries: commit, message, time, the machine that published it, the push time and the component summary. An optional `limit` bounds the page and `truncated` says the branch holds more; a commit whose manifest cannot be read is skipped; read-only |
+| `diff` | Compare the local payload with the branch payload entry by entry: both sides' export time, entry count and machine, the entries only here, the entries only there, how many they share, `heldBack` for the entries the branch holds that this installation's own tombstones keep out, and the removals the branch recorded that this installation has not carried out yet; read-only |
+| `pull` | Merge the remote payload through the same validation and importer Import ZIP uses; requires `confirmed: true` and accepts optional one-off `components` and `revive` parameters, the latter overruling this installation's recorded deletions so the entries they hid are written this time |
+| `github-status` | Whether this Host mounts a credentials store, whether an account is signed in, whether that store is writable, the account login and scopes, and the pending device-flow code; read-only |
+| `github-start` | Ask GitHub for a device code and return the code, the verification URL and the poll interval; requires `writeEnabled: true` |
+| `github-poll` | Ask once whether the browser step finished, at the cadence GitHub asked for; on success it stores the grant; requires `writeEnabled: true` |
+| `github-cancel` | Forget a pending device flow without touching the stored grant; requires `writeEnabled: true` |
+| `github-signout` | Forget the stored grant; requires `writeEnabled: true` |
+| `github-repositories` | List the repositories the signed-in account may push to, most recently updated first; read-only |
+| `github-create` | Create one public or private repository under the signed-in account and read it back; requires `writeEnabled: true` |
+
+The sync payload is always a full Mnemon Pack: a pack manifest's `scope` is either `full` or exactly one component, so a persistent component selection cannot be represented. Component filtering exists only as the optional `pull` parameter. A repository URL is the only configuration value without a default: a blank `branch`, `subdir`, `authorName` or `authorEmail` is answered with the default branch, the default directory, or the commit identity this machine's Git already carries. `configure`, `push`, `pull` and every `github-` endpoint that changes something require `writeEnabled: true` and otherwise answer the same read-only refusal pack import uses.
+
+Tokens never appear in a response or an error message. The channel resolves one credential per network operation, in this order: `MNEMON_SYNC_GIT_TOKEN`, the token stored in `state/sync-git.json` (mode `0600`), then the grant GitHub sign-in wrote into DSH's credentials store under the key `dsh-mnemon/github`. `credentialSource` names the winner — `environment`, `token`, `github` or `none` — and `hasToken` is `true` for the first three, so a signed-in account needs no token field at all. GitHub calls go through the ambient `fetch` first, the same seam the version check uses, so a launcher's proxy policy applies to them. When that request cannot connect at all, the channel retries it once through a proxy discovered from `HTTPS_PROXY`, `http_proxy` or `all_proxy` and, on Windows, from the system proxy settings, over a CONNECT tunnel built from Node's own modules; the proxy that answered is reused and a proxy that stops answering is dropped, so a machine that changes networks recovers without a restart. A failure reports GitHub's error code and the HTTP status only, never a response body; a request that never reached GitHub reports the transport reason and, when no proxy was found, names `HTTPS_PROXY` as what to set.
+
+Configuration, credentials and the failure semantics are described under [Backup and recovery](../guides/operations.md#git-repository-sync).
+
+### Review channel
+
+| Endpoint | Behavior |
+|---|---|
+| `view` | The review ledger: its path, every proposal and the pending count; read-only |
+| `opinion` | Append one opinion to a proposal; the author is `user` unless the caller asks for `agent` |
+| `decide` | Accept or reject a pending proposal |
+| `reopen` | Return a decided proposal to `pending` and clear the record of what ran, so the whole plan is a fresh decision |
+| `reconcile` | Run one reconciliation over the merged local memory and stage the plan as a new pending entry. An optional `guidance` string states what the plan should accomplish, and the evidence then also carries what the sync branch holds and this installation does not, plus the opinions already recorded on pending proposals; requires `writeEnabled` |
+| `apply` | Apply the operations of an accepted proposal, stopping at the first failure. An optional `operations` array of plan positions applies only those, so a reviewer can take part of a plan. Positions the entry already ran are skipped, and an entry with nothing left to run is refused rather than replayed; requires `writeEnabled` |
+
+A reconciliation never writes memory by itself: the model returns a plan, the plan is recorded as a proposal, and only `apply` on an accepted proposal touches a Source. An entry records which plan positions ran in `appliedOperations`, so applying part of a plan is repeatable and the remainder is what a caller still sees offered. `view`, `opinion`, `decide` and `reopen` work on a read-only Host as well, because they only edit the ledger under `state/`. The ledger is not a Pack component, so no proposal ever syncs to another machine.
 
 ### Settings channel
 

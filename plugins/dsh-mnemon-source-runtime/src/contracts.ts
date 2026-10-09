@@ -2,6 +2,13 @@ export type RuntimeMemoryTarget = 'memory' | 'user'
 export type RuntimeMemoryImportance = 'critical' | 'normal' | 'low'
 export type RuntimeMemoryAction = 'add' | 'replace' | 'remove'
 
+/** Provenance a DSH Host stamps when an entry crosses machines; absent for local writes. */
+export interface RuntimeMemoryEntryOrigin {
+  machine: string
+  label: string
+  at: string
+}
+
 export interface RuntimeMemoryEntry {
   content: string
   created_at: string
@@ -10,6 +17,8 @@ export interface RuntimeMemoryEntry {
   importance: RuntimeMemoryImportance
   /** Optional git branch names that limit where this entry is projected. Absent means every branch. */
   branches?: string[]
+  /** Which installation wrote this entry, so a merge can tell two machines apart. */
+  origin?: RuntimeMemoryEntryOrigin
 }
 
 export interface RuntimeMemoryUsage {
@@ -94,4 +103,24 @@ export interface RuntimeMemoryLimits {
 export const RUNTIME_MEMORY_LIMITS: RuntimeMemoryLimits = {
   memory: DEFAULT_RUNTIME_MEMORY_LIMIT_BYTES,
   user: DEFAULT_RUNTIME_USER_LIMIT_BYTES,
+}
+
+/** The longest git branch name a scope may hold. */
+export const RUNTIME_BRANCH_NAME_MAX = 128
+/** The characters a git branch name in a scope may use. */
+export const RUNTIME_BRANCH_NAME_PATTERN = /^[A-Za-z0-9._/-]+$/u
+
+/**
+ * Read a stored branch scope. Absent or malformed data reads as no scope, so an entry that
+ * a hand edit or another installation left malformed is projected on every branch instead
+ * of breaking the projection that reads it.
+ */
+export function parseRuntimeBranches(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const branches: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || item === '' || item.length > RUNTIME_BRANCH_NAME_MAX || !RUNTIME_BRANCH_NAME_PATTERN.test(item)) return undefined
+    branches.push(item)
+  }
+  return branches
 }

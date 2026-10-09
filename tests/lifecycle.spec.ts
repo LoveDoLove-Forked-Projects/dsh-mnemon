@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { assertReleasedPayloadSemantics } from '@deepseek-ai/dsh-session-format-v0-to-v1'
 import { MemoryExecutions } from '../src/host/memory-executions.ts'
 import { resolveConfig } from "../src/host/config.ts"
@@ -33,7 +34,7 @@ function durableCandidate(filler = 97): HostUserMessage {
   return userMessage(`Please remember this durable architecture rationale: ${'x'.repeat(filler)}`)
 }
 
-function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: { taskModelRoute?: boolean } = {}) {
+function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: { taskModelRoute?: boolean; workspaces?: Array<{ path: string }> } = {}) {
   const agentListeners = new Map<string, Listener>()
   const rootListeners = new Map<string, Listener>()
   const agentSections: Array<{ name: string; order: number; text: () => string }> = []
@@ -146,7 +147,9 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
         ? agentPresets
         : name === 'llm'
           ? llm
-          : undefined),
+          : name === 'workspaceRegistry' && options.workspaces !== undefined
+            ? { get: (id: string) => options.workspaces!.find(workspace => workspace.path === id), list: () => options.workspaces! }
+            : undefined),
     on: vi.fn((name: string, listener: Listener) => {
       rootListeners.set(name, listener)
       return () => rootListeners.delete(name)
@@ -435,6 +438,23 @@ describe('Mnemon DSH lifecycle integration', () => {
     else await expect(result).resolves.toBe('maintained')
     expect(value.createTaskAgent).toHaveBeenCalledOnce()
     expect(value.disposedTaskAgents).toHaveLength(1)
+  })
+
+  it('falls back to the workspace registry when a task Agent has no workspace', async () => {
+    const value = fixture(undefined, { workspaces: [{ path: '/tmp/registry-workspace' }] })
+
+    await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'global' }, new AbortController().signal, async agent => agent.session.header?.cwd)
+
+    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: resolve('/tmp/registry-workspace'), agentPreset: 'default' } }))
+  })
+
+  it('falls back to the Host working directory when no workspace is known at all', async () => {
+    const value = fixture()
+
+    const cwd = await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'global' }, new AbortController().signal, async agent => agent.session.header?.cwd)
+
+    expect(cwd).toBe(process.cwd())
+    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: process.cwd(), agentPreset: 'default' } }))
   })
 
   it('uses a fixed Provider and model for independent task Agents when configured', async () => {

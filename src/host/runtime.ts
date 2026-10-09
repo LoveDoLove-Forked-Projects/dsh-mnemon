@@ -1,8 +1,11 @@
-import { isDefaultSourceInstance, isWorkspaceStorageScope } from './protocol.ts'
+import { isDefaultSourceInstance, isWorkspaceStorageScope, type MnemonSyncAutoBackup } from './protocol.ts'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type { HostAgent, HostAgentsService, HostWorkspace, HostWorkspaceRegistry } from './dsh.ts'
 import { MnemonPackManager } from './pack.ts'
+import { MnemonReviewLedger } from './review-ledger.ts'
+import { MnemonGitSync } from './git-sync.ts'
+import type { MnemonGitHubAuth } from './github-auth.ts'
 import { StorageScopeInspector } from './storage-scope.ts'
 import { createStorageRoot } from './storage-root.ts'
 import { canonicalWorkspacePath } from './workspace-storage.ts'
@@ -20,6 +23,9 @@ export interface MnemonRuntimeGraph {
   readonly directory: string
   readonly storage: StorageScopeInspector
   readonly packs: MnemonPackManager
+  readonly sync: MnemonGitSync
+  /** Review proposals for merged memory. Never synced, never Packed. */
+  readonly reviews: MnemonReviewLedger
   readonly memoryComposition: MemoryGenerationHost
   readonly composableTurns: ComposableMemoryTurnManager
   source(typeId: string, scope?: MemoryOperationScope): SourceSession
@@ -78,9 +84,11 @@ export function createRuntimeGraph(config: ResolvedConfig, workspaceRoot: string
     throw new Error(evaluation.diagnostics.map(value => value.message).join('; '))
   }
   const composableTurns = new ComposableMemoryTurnManager(attachment.host)
+  const packs = new MnemonPackManager(root, config, () => {}, () => new Date())
   let disposed = false
   return {
-    config, directory, storage: new StorageScopeInspector(root, config), packs: new MnemonPackManager(root, config),
+    config, directory, storage: new StorageScopeInspector(root, config), packs, sync: new MnemonGitSync(root, config, packs),
+    reviews: new MnemonReviewLedger(root),
     memoryComposition: attachment.host, composableTurns,
     source: (type, scope = { storage: config.storageScope, ...(workspaceRoot === undefined ? {} : { workspaceId: workspaceRoot }) }) => new SourceSession(attachment.host, composableTurns, type, scope),
     retire: () => attachment.release(),
@@ -126,17 +134,51 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
   private readonly workspaceGraphs = new Map<string, MnemonRuntimeGraph>()
   private readonly agentGraphs = new Map<string, { token: symbol; graph: MnemonRuntimeGraph }>()
   private readonly retiredGraphs = new Set<MnemonRuntimeGraph>()
+  private githubAuth: MnemonGitHubAuth | undefined
+  private autoBackupView: (() => MnemonSyncAutoBackup | undefined) | undefined
   private closed = false
 
   readonly config: ResolvedConfig
   readonly storage: StorageScopeInspector
   readonly packs: MnemonPackManager
+  readonly sync: MnemonGitSync
+  readonly reviews: MnemonReviewLedger
 
   constructor(initial: MnemonRuntimeGraph, private readonly workspaceRegistry: HostWorkspaceRegistry | undefined, private readonly agents: Pick<HostAgentsService, 'get'> | undefined, private readonly extensions: MemoryRuntime) {
     this.current = initial
     this.config = liveProxy(() => this.current.config)
     this.storage = liveProxy(() => this.current.storage)
     this.packs = liveProxy(() => this.current.packs)
+    this.sync = liveProxy(() => this.current.sync)
+    this.reviews = liveProxy(() => this.current.reviews)
+  }
+
+  /**
+   * Share one GitHub sign-in with every generation this runtime builds. The
+   * settings page and an Agent's workspace graph then resolve the same grant,
+   * and a later generation cannot silently lose the login.
+   */
+  useGitHubAuth(auth: MnemonGitHubAuth | undefined): void {
+    this.githubAuth = auth
+    this.applyGitHubAuth(this.current)
+  }
+
+  private applyGitHubAuth(graph: MnemonRuntimeGraph): void {
+    if (this.githubAuth !== undefined) graph.sync.useGitHubAuth(this.githubAuth)
+  }
+
+  /**
+   * Let the settings page read the background cadence without owning the timer.
+   * The timer belongs to the plugin root, one instance for the whole Host, so
+   * it is shared with every generation the same way the GitHub grant is.
+   */
+  useAutoBackup(view: (() => MnemonSyncAutoBackup | undefined) | undefined): void {
+    this.autoBackupView = view
+    if (view !== undefined) this.current.sync.useAutoBackup(view)
+  }
+
+  private applyAutoBackup(graph: MnemonRuntimeGraph): void {
+    if (this.autoBackupView !== undefined) graph.sync.useAutoBackup(this.autoBackupView)
   }
 
   swap(next: MnemonRuntimeGraph): void {
@@ -146,6 +188,8 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     }
     const previous = this.current
     this.current = next
+    this.applyGitHubAuth(next)
+    this.applyAutoBackup(next)
     this.retireGraph(previous)
     for (const graph of this.workspaceGraphs.values()) this.retireGraph(graph)
     this.workspaceGraphs.clear()
@@ -251,6 +295,8 @@ export class LiveMnemonRuntime implements MnemonAgentRuntimeSource {
     let graph = this.workspaceGraphs.get(key)
     if (graph === undefined) {
       graph = createRuntimeGraph(this.current.config, key, this.extensions)
+      this.applyGitHubAuth(graph)
+      this.applyAutoBackup(graph)
       this.workspaceGraphs.set(key, graph)
     }
     return graph

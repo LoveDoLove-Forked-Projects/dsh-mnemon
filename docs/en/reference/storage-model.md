@@ -57,10 +57,17 @@ Use `global` for a common local root, `custom` for an explicitly agreed root, or
 |   +-- <memory-space-id>/
 |       +-- mnemon.db
 +-- state/
+    +-- machine.json              # this machine's identity; 0600; excluded from Mnemon Packs
+    +-- tombstones.json           # deletions this machine has already exported; excluded from Mnemon Packs
+    +-- runtime-index.json        # the runtime entries the last export carried; excluded from Mnemon Packs
+    +-- review-ledger.json        # reconciliation proposals awaiting a decision; 0600; excluded from Mnemon Packs
     +-- memory-providers.json     # third-party connection control plane; 0600; excluded from Mnemon Packs
+    +-- sync-git.json             # Git sync configuration; 0600 when it holds a token; excluded from Mnemon Packs
+    +-- sync/
+        +-- git/                  # disposable Git mirror of the sync branch; never a Pack component
 ```
 
-`storageScope` determines the entire root, not just the Mnemon databases. The `workspace` scope resolves an independent `<workspace>/.mnemon` for every registered DSH workspace. The opt-in `runtimeUserScope=global` is the sole split-root exception: Runtime reads USER.md from the global root while MEMORY.md and every other component remain under the selected root. Workbench tasks use the inspected workspace; conversation tools and lifecycle hooks use their owning session's cwd and pinned View. `state/memory-providers.json` stores third-party endpoints, target URIs, identities, and optional credentials. Its mode is `0600`; the Host returns configured field names, never saved credential values.
+`storageScope` determines the entire root, not just the Mnemon databases. The `workspace` scope resolves an independent `<workspace>/.mnemon` for every registered DSH workspace. The opt-in `runtimeUserScope=global` is the sole split-root exception: Runtime reads USER.md from the global root while MEMORY.md and every other component remain under the selected root. Workbench tasks use the inspected workspace; conversation tools and lifecycle hooks use their owning session's cwd and pinned View. `state/memory-providers.json` stores third-party endpoints, target URIs, identities, and optional credentials. Its mode is `0600`; the Host returns configured field names, never saved credential values. `state/sync-git.json` holds the Git sync configuration: repository URL, branch, remote directory, component selection, commit identity, the automatic backup interval in minutes (`0` is off) and an optional token that HTTPS remotes use. It follows the same mode `0600` rule and the same redaction, and it is part of neither Config nor a Mnemon Pack. The mirror under `state/sync/git` is a disposable Git work tree of the sync branch: push and pull work there so the storage root is never made a Git work tree, and deleting the mirror costs one fetch, never data. `state/machine.json` records the identity every export is stamped with: a generated id, a label taken from the hostname unless the user renamed the machine, and the creation time. `state/tombstones.json` records deletions this machine has already exported, and `state/runtime-index.json` records the runtime entries the last export carried; together they let a merge distinguish "this machine deleted it" from "this machine never had it", so an older pack cannot resurrect a deletion. `state/review-ledger.json` holds reconciliation proposals and the opinions left on them, newest first, and is capped at 200 entries. None of these four files is a Pack component, so none of them syncs: a machine's identity and its review history stay on the machine that produced them.
 
 The `workspaces` layout keeps all four areas under `<central-root>/workspaces/<workspace-path-hash>/`; Host path resolution never creates files or changes old roots. Only explicit `runtimeUserScope: global` places USER.md outside that workspace subtree.
 
@@ -220,5 +227,9 @@ Mnemon Native preserves `temporal`, `semantic`, `causal`, and `entity` relations
 | Documents | `documents/index.json` + managed Markdown | excerpts, search ranking, status aggregation |
 | Mnemon Native catalog | `data/.dsh-memory-bodies.json` + on-disk Stores | Web status aggregation |
 | Third-party connections | `state/memory-providers.json` | redacted provider capabilities and status |
+| Git sync configuration | `state/sync-git.json` | `state/sync/git` mirror; the configured remote branch |
+| Machine identity | `state/machine.json` | the `machine` field of an export and of a sync status |
+| Cross-machine deletions | `state/tombstones.json` | `state/runtime-index.json`, which is what a later export diffs against |
+| Reconciliation proposals | `state/review-ledger.json` | the review card; an accepted proposal is applied to the Sources, never to the ledger |
 | Long-term memory | Mnemon `mnemon.db` or remote provider | graph projection and cross-provider rank fusion |
 | Review watermark | Host process memory | status-page snapshot; not yet persisted |

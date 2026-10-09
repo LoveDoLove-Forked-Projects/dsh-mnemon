@@ -11,7 +11,7 @@ describe('Mnemon API Gateway service', () => {
   function fixture(management: boolean) {
     const handlers = {
       read: handler('read'), activation: handler('activation'), write: handler('write'), pack: handler('pack'),
-      settings: handler('settings'), view: handler('view'), viewWrite: handler('view-write'), management,
+      sync: handler('sync'), review: handler('review'), settings: handler('settings'), view: handler('view'), viewWrite: handler('view-write'), management,
     }
     const service = new MnemonRemoteService(new Context(), handlers)
     return { service, handlers, signal: new AbortController().signal }
@@ -27,6 +27,7 @@ describe('Mnemon API Gateway service', () => {
     await expect(service.settings('mutate', {}, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })
     await expect(service.write('remember', {}, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })
     await expect(service.pack('export', {}, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })
+    await expect(service.sync('status', {}, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })
     await expect(service.viewWrite('apply', {}, signal)).resolves.toMatchObject({ ok: false, error: { code: 'bad-request' } })
     expect(handlers.read).toHaveBeenCalledWith('status-summary', { workspaceId: 'workspace' }, signal)
     expect(handlers.view).toHaveBeenCalledWith('dashboard', {}, signal)
@@ -41,7 +42,9 @@ describe('Mnemon API Gateway service', () => {
     await expect(service.pack('export', {}, signal)).resolves.toEqual({ ok: true, value: 'pack:export' })
     await expect(service.viewWrite('apply', {}, signal)).resolves.toEqual({ ok: true, value: 'view-write:apply' })
     await expect(service.settings('mutate', {}, signal)).resolves.toEqual({ ok: true, value: 'settings:mutate' })
+    await expect(service.sync('status', {}, signal)).resolves.toEqual({ ok: true, value: 'sync:status' })
     expect(handlers.write).toHaveBeenCalledWith('remember', {}, signal)
+    expect(handlers.sync).toHaveBeenCalledWith('status', {}, signal)
     expect(handlers.pack).toHaveBeenCalledWith('export', {}, signal)
     expect(handlers.viewWrite).toHaveBeenCalledWith('apply', {}, signal)
     expect(handlers.settings).toHaveBeenCalledWith('mutate', {}, signal)
