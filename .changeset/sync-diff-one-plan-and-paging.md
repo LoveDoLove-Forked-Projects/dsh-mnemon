@@ -1,5 +1,5 @@
 ---
-"dsh-mnemon": minor
+"dsh-mnemon": patch
 ---
 
 The branch's difference no longer runs a plan of its own. **Ask AI to reconcile** lived inside the

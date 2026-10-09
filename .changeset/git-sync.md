@@ -1,5 +1,5 @@
 ---
-"dsh-mnemon": minor
+"dsh-mnemon": patch
 ---
 
 Git repository sync: a new `/dsh-mnemon-sync` channel can publish the Mnemon Pack payload to a repository you own and restore it on another machine. It is off by default: until the switch under **Storage** is turned on, that row shows only its title and the switch and asks the Host nothing, so no status is read and no Git command runs. Sign in with GitHub through the OAuth device flow, pick one of your repositories or create a new one, and push: the access token is stored in DSH's credentials service and never reaches the browser. The token field stays as an optional fallback, in `state/sync-git.json` at mode `0600` or in `MNEMON_SYNC_GIT_TOKEN`, and no credential ever enters the payload or an answer. Push and pull are both confirmed actions and both require `writeEnabled`, and pull merges through the same validation and importer the ZIP backup uses. GitHub is reached through the ambient `fetch` first and, only when that cannot connect, through one retry over a proxy discovered from `HTTPS_PROXY` or the Windows system settings, so a machine whose launcher carries no proxy policy can still sign in; when no proxy is found the answer says which variable to set instead of showing `fetch failed`.

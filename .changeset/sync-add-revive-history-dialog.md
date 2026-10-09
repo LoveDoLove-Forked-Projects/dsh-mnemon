@@ -1,5 +1,5 @@
 ---
-"dsh-mnemon": minor
+"dsh-mnemon": patch
 ---
 
 Adding the branch's memories now says what it actually did. An entry this installation deleted earlier, and the branch still holds, is counted apart (`heldBack` in `diff`) and explained instead of being offered as an add that would write nothing at all; **Bring them back** overrules that deletion once, and the tombstones it overruled leave the state this import commits, so the same merge behaves the same way next time. The answer carries the merge report (`runtime: { added, held }`), and the dialog repeats the real count, because a merge that wrote nothing used to read exactly like a successful one. Plans that already ran leave the review list and move into an **Applied plans** dialog kept for reading, and a control inside a dialog is no longer recoloured by the page shell, so **Add them** is readable again.

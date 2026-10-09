@@ -1,5 +1,5 @@
 ---
-"dsh-mnemon": minor
+"dsh-mnemon": patch
 ---
 
 Merged memory now waits for a human. Every export stamps the machine identity, records the runtime entries it carried and turns what disappeared into tombstones, so importing an older pack cannot resurrect a deletion. Push merges the remote pack before it exports and reports that merge. On top of that, **Memory reconciliation** asks the model to propose a merge of the memory this machine already holds, records the plan as a review entry under `state/review-ledger.json` instead of applying it, and lets you accept, reject, annotate or reopen every proposal; only an accepted entry is applied, operation by operation, and it stops at the first failure.

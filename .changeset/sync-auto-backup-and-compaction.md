@@ -1,5 +1,5 @@
 ---
-"dsh-mnemon": minor
+"dsh-mnemon": patch
 ---
 
 Git sync could only be driven by hand, and every push rewrote the branch as a brand-new set of
