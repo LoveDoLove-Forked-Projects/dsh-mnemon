@@ -162,7 +162,7 @@ Runtime 写入范围回归使用 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm 
 
 `pnpm e2e:serve --profile-compaction` 用于复现 [#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)：USER.md 写满后，再写入会启动压缩用的子 Agent。这个 profile 把 USER.md 上限设为 100 字节，并关闭空闲审查。在 Mnemon E2E 对话中分三条消息发送 `记住：回答尽量简洁，不要冗长的开场白。`、`记住：回答使用简体中文。` 和 `记住：汇报时先列出阻塞项。`。脚本模型用 `mnemon_runtime_memory` 保存每条事实。第三条写入时 USER.md 已满，压缩子 Agent 先合并已保存的两条，再加入新条目。夹具以 `Profile compaction:` 行输出每一步。只有模型决策是脚本化的；工具、子 Agent 及其结果工具和 Runtime 写入都是真实运行。
 
-要在另一个 DSH 版本上启动 WebUI，把 `MNEMON_E2E_DSH` 设为该安装的 `lib/bin.js`，例如先运行 `npm install -g --prefix <目录> @deepseek-ai/dsh@0.2.1-alpha.2`。见[双语复现与证据](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)。
+要在另一个 DSH 版本上启动 WebUI，先用 `npm install -g --prefix <目录> @deepseek-ai/dsh@0.2.1-alpha.2` 安装，再设置 `MNEMON_E2E_DSH=<目录>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js`。见[双语复现与证据](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)。
 
 `pnpm e2e:serve --plugin=<包目录>` 会再把一个测试用插件链接进 profile，可重复使用以链接多个。[issue #340 证据](../../pr-assets/issue-340-settings-outside-slots/README.zh-CN.md)用它加入一个设置分区，像某些外壳那样不经过 DSH 的 slot 渲染器绘制 `dsh-mnemon` 配置页。
 

@@ -162,7 +162,7 @@ Send two substantive user turns (at least 150 characters each), then wait five s
 
 `pnpm e2e:serve --profile-compaction` reproduces [#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356): a write to a full USER.md starts the compaction subagent. The profile caps USER.md at 100 bytes and turns idle review off. In a Mnemon E2E conversation, send `记住：回答尽量简洁，不要冗长的开场白。`, `记住：回答使用简体中文。` and `记住：汇报时先列出阻塞项。` as three messages. The scripted model saves each fact with `mnemon_runtime_memory`. The third finds USER.md full, so the compaction child merges the two saved entries before the new one is added. The fixture prints each step as a `Profile compaction:` line. Only model decisions are scripted; the tool, the child and its result tool, and the Runtime writes are real.
 
-To serve the WebUI on another DSH release, set `MNEMON_E2E_DSH` to that installation's `lib/bin.js`, for example after `npm install -g --prefix <directory> @deepseek-ai/dsh@0.2.1-alpha.2`. See the [bilingual reproduction and evidence](../../pr-assets/issue-356-subagent-activation/README.md).
+To serve the WebUI on another DSH release, install it with `npm install -g --prefix <directory> @deepseek-ai/dsh@0.2.1-alpha.2` and set `MNEMON_E2E_DSH=<directory>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js`. See the [bilingual reproduction and evidence](../../pr-assets/issue-356-subagent-activation/README.md).
 
 `pnpm e2e:serve --plugin=<package directory>` links one more test-only plugin into the profile; repeat it for several. The [issue #340 evidence](../../pr-assets/issue-340-settings-outside-slots/README.md) uses it for a Settings section that draws the `dsh-mnemon` configuration without DSH's slot renderer, as some shells do.
 

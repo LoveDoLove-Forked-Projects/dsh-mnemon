@@ -231,18 +231,19 @@
     }
   },
   "realHostTests": {
-    "how": "tests/{runtime-compaction-host,review-user-turn-host,review-evidence-host,agent-team-review-host,async-subagent-host,subagent-token-usage-host}.spec.ts copied outside the repository with @deepseek-ai/* aliased to each installed DSH; the development baseline stays 0.1.7-rc.2",
+    "how": "node harness/adapt-host-specs.mjs <specs> copies tests/{runtime-compaction-host,review-user-turn-host,review-evidence-host,agent-team-review-host,async-subagent-host,subagent-token-usage-host}.spec.ts outside the repository; harness/installed-dsh.vitest.config.mjs runs them with every @deepseek-ai/* import resolved inside the installed DSH (DSH_HOST_ROOT); the development baseline stays 0.1.7-rc.2",
     "adaptationsForAlpha2": [
       "load @deepseek-ai/dsh-fs-local and @deepseek-ai/dsh-working-directory before SubagentRuntime, which injects workingDirectory (a DSH profile loads both)",
       "tools mode both was removed: Code Mode cases keep the root native and still call presentAs(ptc) on children",
       "Code Mode refuses a filtered tool inside run_code before dispatch, so the Team case expects a failed run_code call instead of a failed spawn_teammate call; the Team tool never runs",
-      "review-evidence-host wraps startActivation the way it wraps start; async-subagent-host starts its own continuable child through startActivation(delivery parent)"
+      "the specs' own calls to removed APIs: review-evidence-host wraps startActivation the way it wraps start, and async-subagent-host starts its own continuable child through startActivation (delivery parent) where startContinuable is gone; Mnemon's start in both is startSubagent"
     ],
     "results": {
       "main on 0.2.1-alpha.2": {
         "passed": 7,
         "failed": 10,
-        "failure": "this.subagents.start is not a function (runtime-compaction-host 1, review-user-turn-host 4, review-evidence-host 4, agent-team-review-host 1)"
+        "failure": "this.subagents.start is not a function (runtime-compaction-host 1, review-user-turn-host 4, review-evidence-host 4, agent-team-review-host 1)",
+        "note": "rerun through the committed harness with origin/main src/host/subagent.ts: 10 failed, 7 passed"
       },
       "fix on 0.2.1-alpha.2": {
         "passed": 17,
@@ -255,10 +256,16 @@
     }
   },
   "unitTests": {
-    "tests/subagent-start.spec.ts": 7,
+    "tests/subagent-start.spec.ts": 10,
     "tests/subagent.spec.ts (#356 cases)": {
       "count": 3,
-      "onMain": "all three fail with this.subagents.start is not a function"
+      "onMain": "all three fail with this.subagents.start is not a function",
+      "timing": "the fake releases the child from the Agent registry before the result settles, as DSH 0.2.1-alpha.2 does"
+    },
+    "tests/review-tools.spec.ts (id lookup)": {
+      "count": 1,
+      "onMain": "fails: no local child with its scoped tool guard"
     }
-  }
+  },
+  "review": "An independent read-only review found the code correct on both releases; its corrections to this record, the compatibility reference and the changeset (the fourth harness adaptation, resumable children and subagent slots on 0.2.1-alpha.2, claims beyond what ran) are applied, with a dispose when a run cannot be handed back and fakes that release the child before the result settles."
 }

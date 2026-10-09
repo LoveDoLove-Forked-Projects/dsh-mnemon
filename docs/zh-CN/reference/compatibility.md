@@ -6,7 +6,7 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 
 | 组件 | 基线 | 已验证的范围 |
 |---|---|---|
-| DSH | `0.2.0-rc.2`（npm `latest` 与 `next`）、`0.1.7-rc.2` | 两个受支持的宿主；`0.2.0-rc.1` 也可安装，记忆子 Agent 另在 `0.2.1-alpha.2`（npm `alpha`）上验证。0.1.7-rc.2 是锁定的开发基线：正式发布的契约、WebUI 与隔离 Headless 激活、profile 设置与旧设置恢复、Session V4 中的生产者专属消息、插件管理器激活以及 Agent Teams 审查矩阵。DSH 0.2 的验证范围见[下文](#dsh-02) |
+| DSH | `0.2.0-rc.2`（npm `latest` 与 `next`）、`0.1.7-rc.2` | 两个受支持的宿主；`0.2.0-rc.1` 也可安装；`0.2.1-alpha.2`（npm `alpha`）可以运行记忆子 Agent，测试范围见[下文](#dsh-02)。0.1.7-rc.2 是锁定的开发基线：正式发布的契约、WebUI 与隔离 Headless 激活、profile 设置与旧设置恢复、Session V4 中的生产者专属消息、插件管理器激活以及 Agent Teams 审查矩阵。DSH 0.2 的验证范围见[下文](#dsh-02) |
 | Node.js | `22.19`、`24` | 分别用于源码 CI 与打包制品 CI；开发要求 `^22.19.0 || >=24.0.0` |
 | Node.js 20 | 仅公开包入口导入 | 不代表 DSH Host 能在 Node 20 运行 |
 | Mnemon Native CLI | `0.2.9` | 显式启用的真实 CLI 与临时数据测试；CLI 需要另外安装 |
@@ -30,7 +30,13 @@ DSH 在安装插件前，以及每次启动 profile 时，都会用自身版本�
 
 **已验证的范围（0.2.0-rc.1）。** 全局安装正式 DSH 0.2.0-rc.1 后，从空白 profile 通过命令行与插件页两种方式安装、界面中“立即启用”无需重启、状态页、运行时记忆写入、真实模型的首轮对话与存入记忆、Headless 任务，以及桌面版窗口与远程页面的读写路由；另将全部 DSH 开发依赖切换到 0.2.0-rc.1：类型检查、构建、全部插件测试与 Headless 验证通过，根测试中只有核对锁定开发基线本身的断言不同。截图见[安装图集](../../assets/install-v0.5.19/README.md)。
 
-**0.2.1-alpha.2 上的记忆子 Agent。** DSH 0.2.1-alpha.2（npm `alpha`）移除了一次性的 `subagents.start`：所有子 Agent 都改由 `startActivation` 启动，spawn 与 fork 两个 provider 把它作为托管 activation 运行。dsh-mnemon 0.5.25 及更早版本用 `start` 启动每个记忆子 Agent，因此在 0.2.1-alpha.2 上，所有委派任务都会报 `this.subagents.start is not a function`，包括 USER.md 压缩、工作记忆归档、空闲审查、存入记忆、项目档案归档等（[#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)）。读取以及不需要维护的写入不受影响。0.5.25 之后的版本改用 `startActivation`，并以 caller 方式交付结果：结果只回到 Mnemon，对话不会收到完成通知。在 DSH 0.2.0 与 0.1.7 上仍使用 `start`。[issue #356 记录](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)包含 0.2.1-alpha.2 与 0.2.0-rc.2 上的 WebUI 运行，以及两个版本上的真实宿主测试。
+**0.2.1-alpha.2 上的记忆子 Agent。** DSH 0.2.1-alpha.2（npm `alpha`）移除了一次性的 `subagents.start`：所有子 Agent 都改由 `startActivation` 启动，spawn 与 fork 两个 provider 把它作为托管 activation 运行。dsh-mnemon 0.5.25 及更早版本用 `start` 启动每个记忆子 Agent，因此在 0.2.1-alpha.2 上，所有委派任务都会报 `this.subagents.start is not a function`（[#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)）。这包括 `mnemon_remember` 等记忆空间写入、USER.md 压缩、工作记忆归档、空闲审查、存入记忆与项目档案归档。读取，以及放得下的运行时记忆写入，不会启动子 Agent，因此不受影响。
+
+0.5.25 之后的版本改用 `startActivation`，并以 caller 方式交付结果，所以结果回到 Mnemon，对话不会收到完成通知。在 DSH 0.2.0 与 0.1.7 上仍使用 `start`。在 0.2.1-alpha.2 上，所有本地子 Agent 都可以续接，由此带来两点不同：
+- 在对话之下启动的子 Agent，例如委派写入或空闲审查，会出现在对话的子 Agent 列表中；之后模型或 WebUI 发来的消息会在 Mnemon 的委派之外续接它；
+- 它运行期间会占用对话的一个子 Agent 名额（`maxActiveSubagents`，默认 8 个）。名额用满时，记忆任务会因 `subagent limit reached` 失败。
+
+[issue #356 记录](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)包含 0.2.1-alpha.2 与 0.2.0-rc.2 上 USER.md 压缩的 WebUI 运行，以及两个版本上压缩、空闲审查与 Team 审查的真实宿主测试。
 
 **首次安装时的宿主行为。**
 
