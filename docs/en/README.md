@@ -39,6 +39,6 @@ dsh-mnemon gives DeepSeek Harness three kinds of memory: **runtime memory** in e
 
 ## What is new
 
-[v0.5.26](./releases/v0.5.26.md) adds Git repository sync across machines, off by default, and starts memory subagents on DSH 0.2.1-alpha.2. [v0.5.25](./releases/v0.5.25.md) keeps memory working when no Memory Space can take an archive, and lets Save to memory choose where the text goes. [All releases](./releases/README.md) · [Roadmap](./roadmap.md) · [Historical evidence](../pr-assets/README.md)
+[v0.5.27](./releases/v0.5.27.md) keeps the memory Sources working beside dshmarket and completes support for DSH 0.2.1-alpha.2. [v0.5.26](./releases/v0.5.26.md) adds Git repository sync across machines, off by default, and starts memory subagents on DSH 0.2.1-alpha.2. [All releases](./releases/README.md) · [Roadmap](./roadmap.md) · [Historical evidence](../pr-assets/README.md)
 
 Guides describe the current release. Screenshots and recordings come from the [v0.5.19 gallery](../assets/webui-v0.5.19/README.md), and the installation steps from the [installation gallery](../assets/install-v0.5.19/README.md); dated PR records establish only their named revisions and environments. Internal Host RPCs are not an external plugin SDK.
