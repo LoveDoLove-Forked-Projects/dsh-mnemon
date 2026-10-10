@@ -127,7 +127,18 @@ export async function installMemorySpaces(
   }
 }
 
+/**
+ * dshmarket's client-only mount of a Memory Spaces package installed on its own
+ * in a profile, `include:dsh-market:mkt-client-<package>`: it is meant to run no
+ * host code, and the Starter's own Entry composes the Source with its Providers (#359).
+ */
+function isMarketClientShim(ctx: Context): boolean {
+  const loader = ctx.get('loader', false) as LoaderLike | undefined
+  return /(?:^|:)mkt-client-[^:]*$/u.test(loader?.locate(ctx.fiber)?.trim() ?? '')
+}
+
 export async function apply(ctx: Context, config: Config = { providers: [] }): Promise<void> {
+  if (isMarketClientShim(ctx)) return
   const { providers, ...sourceConfig } = config
   await installMemorySpaces(ctx, await resolveMemorySpaceProviderEntries(ctx, providers), { config: sourceConfig })
 }

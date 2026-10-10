@@ -161,6 +161,29 @@ describe('Composable Memory extension SDK', () => {
     expect(runtime.contributionSnapshot()).toMatchObject({ revision: 2, sources: [], strategies: [] })
   })
 
+  it('installs nothing inside a dshmarket client-only shim Entry, whatever identity the plugin passes (#359)', async () => {
+    const { ctx, runtime } = await host()
+    const entries = new WeakMap<object, string>()
+    ctx.provide('loader', { locate: (fiber: object) => entries.get(fiber) })
+    const located = (entryId: string, install: (child: Context) => void) => ctx.plugin({ inject: ['mnemonMemory'], apply(child: Context) {
+      entries.set(child.fiber, entryId)
+      install(child)
+    } })
+    const shim = 'include:dsh-market:mkt-client-dsh-mnemon-source-example'
+    const starter = located('include:mnemon-source-example', child => installMemory(child, { sources: [source()] }))
+    const shims = [undefined, ' ', shim, 'example-explicit'].map(instanceId =>
+      located(shim, child => installMemory(child, { sources: [source()] }, instanceId === undefined ? {} : { instanceId })))
+    await Promise.all([starter, ...shims].map(fiber => fiber.await()))
+    expect(runtime.contributionSnapshot().sources.map(item => item.instanceKey)).toEqual(['source:include:mnemon-source-example'])
+
+    // Only the last segment names the mount.
+    const ordinary = located('include:mkt-client-tools:notes', child => installMemory(child, { sources: [source()] }))
+    await ordinary.await()
+    expect(runtime.contributionSnapshot().sources.map(item => item.instanceKey)).toEqual(['source:include:mnemon-source-example', 'source:include:mkt-client-tools:notes'])
+    await Promise.all([starter, ordinary, ...shims].map(fiber => fiber.dispose()))
+    expect(runtime.contributionSnapshot().sources).toEqual([])
+  })
+
   it('notifies generation hosts with complete immutable snapshots', async () => {
     const { ctx, runtime } = await host()
     const listener = vi.fn()
