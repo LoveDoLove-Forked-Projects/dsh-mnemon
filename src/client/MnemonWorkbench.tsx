@@ -758,12 +758,14 @@ function MnemonWorkspace({ connection, settingsScope, sessionId, workspaceId, wo
   const [refreshKey, setRefreshKey] = useState(0)
   const refreshPage = useCallback(() => { setRefreshKey(value => value + 1); refreshAll() }, [refreshAll])
   // The configuration lives on another page: re-read when the Sidebar
-  // reopens the workspace and when a component is switched elsewhere.
+  // reopens the workspace and when a component is switched elsewhere. A
+  // reopened workspace also reloads its open page, which a Provider enabled
+  // under Plugins meanwhile changes (the spaces it can create, for one).
   const shown = useRef(active)
   useEffect(() => {
-    if (active && !shown.current) refreshAll()
+    if (active && !shown.current) refreshPage()
     shown.current = active
-  }, [active, refreshAll])
+  }, [active, refreshPage])
   const seenComponents = useRef(componentRevision)
   useEffect(() => {
     if (componentRevision === seenComponents.current) return

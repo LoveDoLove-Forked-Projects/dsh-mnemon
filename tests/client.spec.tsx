@@ -541,6 +541,7 @@ describe('MnemonWorkbench', () => {
     const { connection, call } = createConnection()
     const components = new MnemonChangeSignal()
     const statusReads = () => call.mock.calls.filter(([, endpoint]) => endpoint === 'status-summary').length
+    const directoryReads = () => call.mock.calls.filter(([, endpoint]) => endpoint === 'body-directory').length
     const { rerender } = render(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} />)
     await screen.findByText('已连接')
     const initial = statusReads()
@@ -551,6 +552,14 @@ describe('MnemonWorkbench', () => {
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active={false} />)
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active />)
     await waitFor(() => expect(statusReads()).toBe(initial + 2))
+
+    // The open page reloads too: a Provider enabled under Plugins meanwhile shows on Memory Spaces.
+    await selectWorkspaceTab('记忆空间')
+    await waitFor(() => expect(directoryReads()).toBeGreaterThan(0))
+    const directory = directoryReads()
+    rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active={false} />)
+    rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active />)
+    await waitFor(() => expect(directoryReads()).toBeGreaterThan(directory))
   })
 
   it('reads the full status for the CLI version a summary does not carry yet', async () => {

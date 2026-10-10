@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type {
@@ -585,6 +586,10 @@ class MnemonAgentLifecycle {
 
 }
 
+function isDirectory(path: string): boolean {
+  try { return statSync(path).isDirectory() } catch { return false }
+}
+
 /** DSH-native owner for per-agent Mnemon lifecycle hooks and UI-triggered LLM work. */
 export class MnemonLifecycle {
   private readonly owners = new Map<HostAgent, { lifecycle: MnemonAgentLifecycle; dispose: () => unknown }>()
@@ -964,18 +969,21 @@ export class MnemonLifecycle {
 
   /**
    * A task Agent runs outside any conversation, so its caller may hold no
-   * workspace at all. DSH's Web persona renders `{{cwd}}`, and an Agent created
-   * without one fails prompt assembly before its first step, so the registry's
-   * default workspace stands in; a profile that mounts no registry keeps the
+   * workspace at all. DSH 0.2.0's Web persona renders `{{cwd}}`, and an Agent
+   * created without one fails prompt assembly before its first step. DSH 0.2.1
+   * checks the directory before every step instead, and fails once it and the
+   * session's original directory are gone, as a deleted project folder is. So
+   * the caller's workspace serves only while it exists, then the registry's
+   * first existing workspace; a profile that mounts no registry keeps the
    * directory the Host was started in.
    */
   private taskAgentCwd(workspaceRoot: string | undefined): string {
     const requested = workspaceRoot?.trim()
-    if (requested !== undefined && requested !== '') return resolve(requested)
+    if (requested !== undefined && requested !== '' && isDirectory(resolve(requested))) return resolve(requested)
     const registry = this.ctx.get('workspaceRegistry') as { list?: () => Array<{ path?: unknown }> } | undefined
     const listed = typeof registry?.list === 'function' ? registry.list() : []
     for (const workspace of listed) {
-      if (typeof workspace?.path === 'string' && workspace.path.trim() !== '') return resolve(workspace.path)
+      if (typeof workspace?.path === 'string' && workspace.path.trim() !== '' && isDirectory(resolve(workspace.path))) return resolve(workspace.path)
     }
     return process.cwd()
   }

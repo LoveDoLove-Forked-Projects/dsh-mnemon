@@ -141,8 +141,12 @@ describe('Mnemon Web client composition', () => {
     const action = slots.find(options => options.name === 'plugins.detail.actions')!
     expect(action).toMatchObject({ id: 'dsh-mnemon/open-workspace', locale: 'mnemon' })
     expect(context.slots.register).toHaveBeenCalledWith(action, MnemonPluginActions)
-    const workspace = (action.inject as () => { workspace: MnemonActionSeat })().workspace
+    const injected = (action.inject as () => { workspace: MnemonActionSeat; componentList: unknown })()
+    const workspace = injected.workspace
     expect(workspace.getSnapshot()).toBeTypeOf('function')
+    // The page's head reports DSH's rows to the configuration that the bundle slot renders.
+    const bundleConfig = slots.find(options => options.name === 'plugins.bundle.config')!
+    expect((bundleConfig.inject as () => { componentList: unknown })().componentList).toBe(injected.componentList)
 
     const shell = slots.find(options => options.name === 'shell.overlay')!
     const configuration = (shell.inject as () => { configuration: MnemonActionSeat })().configuration

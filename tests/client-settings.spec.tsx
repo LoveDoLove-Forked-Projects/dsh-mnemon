@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MnemonSettingsCard } from '../src/client/MnemonSettingsCard.tsx'
+import { MnemonComponentListSeat } from '../src/client/component-list-seat.ts'
 import { MEMORY_SPACES_PACKAGE, MemorySpacesSettings, RUNTIME_PACKAGE, RuntimeSettings, THREE_TIER_PACKAGE, ThreeTierSettings } from '../src/client/component-settings.tsx'
 import { translateEn, translateZh, type MnemonTranslate } from '../src/client/locales.ts'
 import type { ClientConnectionHandle, ClientSettingsScope } from "../src/host/dsh.ts"
@@ -663,6 +664,21 @@ describe('MnemonSettingsCard', () => {
     choose('Storage scope', 'Workspace')
     expect(screen.getByText('Memory moves to the new location; existing data stays where it is')).toBeTruthy()
     expect(apply('Apply')).toBeTruthy()
+  })
+
+  it('explains the grouping row only while DSH lists it below the configuration', () => {
+    const scope = settingsScope({ status: 'ready' as const, value: {}, base: {}, user: {}, revision: 0, writable: true, mode: 'host' as const })
+    const componentList = new MnemonComponentListSeat()
+    const note = () => screen.queryByText(/dsh-mnemon\/bundle is the Starter's grouping entry/u)
+    render(<MnemonSettingsCard scope={scope} t={translateEn} componentList={componentList} />)
+    expect(note()).toBeNull()
+    let withdraw = (): void => {}
+    act(() => { withdraw = componentList.report(true) })
+    expect(note()).toBeTruthy()
+    act(() => { withdraw(); withdraw = componentList.report(false) })
+    expect(note()).toBeNull()
+    act(() => withdraw())
+    expect(note()).toBeNull()
   })
 
   it('accepts and persists a manually entered custom directory', async () => {
