@@ -1,6 +1,6 @@
 {
   "date": "2026-10-10",
-  "revision": "branch claude/dsh-021-alpha2-adaptation on top of the #359 fix (f295dc03); code 5ef0e5ae, tooling f26c2a97",
+  "revision": "PR #361 on main fc61ac7b: 407427ab, ca769db1 and b0639359, then the review fixes in bd97cb63; the installed-host runs and the Provider check ran on bd97cb63",
   "environment": {
     "os": "macOS 15.6 arm64",
     "node": "24.19.0",
@@ -24,8 +24,8 @@
   "tests": {
     "harness": "docs/pr-assets/dsh-021-alpha2/harness/installed-dsh-all.vitest.config.mjs",
     "rootTests": {
-      "0.2.1-alpha.2": "127 files: 1,813 passed, 6 skipped",
-      "0.2.0-rc.2": "127 files: 1,813 passed, 6 skipped",
+      "0.2.1-alpha.2": "127 files: 1,816 passed, 6 skipped",
+      "0.2.0-rc.2": "127 files: 1,816 passed, 6 skipped",
       "excluded": "runtime-compaction-host, review-user-turn-host, review-evidence-host, agent-team-review-host, async-subagent-host, subagent-token-usage-host (run from adapted copies)"
     },
     "realHostSpecs": {
@@ -43,16 +43,17 @@
     },
     "taskAgentProbe": {
       "file": "harness/task-agent-cwd-host.probe.ts",
-      "v0.5.26 on 0.2.1-alpha.2": "cwd = deleted directory; first step fails with working-directory: directory does not exist",
-      "v0.5.26 on 0.2.0-rc.2": "cwd = deleted directory; step runs",
-      "this change on both": "cwd = Host directory; step runs"
+      "v0.5.26 on 0.2.1-alpha.2": "task cwd = deleted workspace; its first step fails with working-directory: directory does not exist, and starting its child fails the same way",
+      "v0.5.26 on 0.2.0-rc.2": "task and child keep the deleted workspace as cwd and run; DSH 0.2.0 does not check the directory",
+      "this change on 0.2.1-alpha.2": "task and child keep the deleted workspace as cwd (Mnemon's memory scope); the task's working directory is set to the Host's directory, its step runs and the child settles",
+      "this change on 0.2.0-rc.2": "unchanged from v0.5.26"
     },
-    "repositoryVerify": "pnpm verify on ca3cceb9 (pinned 0.1.7-rc.2): 1,830 root tests passed, 6 skipped; Headless; package contents 1,856,252 unpacked bytes. verify:plugins: 17 repositories and 18 packed artifacts",
+    "repositoryVerify": "pnpm verify on bd97cb63 (pinned 0.1.7-rc.2): 1,833 root tests passed, 6 skipped; Headless; package contents 1,857,277 unpacked bytes. verify:plugins: 17 repositories and 18 packed artifacts",
     "importExports": "all named value imports from @deepseek-ai packages exist in 0.2.1-alpha.2 and 0.2.0-rc.2 (20 from dsh-client-ui-primitives)"
   },
   "webui_0.2.1-alpha.2": {
     "pluginsPage": "configuration loads; 9 components listed, no grouping row, no note; head button opens the Memory System; component switches apply at once with no restart notice; strategy Layered <-> General persists across reload; every row page opens",
-    "componentNote": "0.2.1-alpha.2: hidden (v0.5.26 showed it); 0.2.0-rc.2: shown with the dsh-mnemon/bundle row",
+    "componentNote": "0.2.1-alpha.2: hidden (v0.5.26 showed it); 0.2.0-rc.2 and the pinned 0.1.7-rc.2: shown with the dsh-mnemon/bundle row",
     "interface": "sidebar <-> conversation tab; turn memory bar and Save to memory switches",
     "checkVersions": "dsh-mnemon, Mnemon CLI and 17 subpackages",
     "docsDemo": "Documents search and two Memory Spaces recalls; working-memory replace; pages show seeded data",
@@ -71,7 +72,7 @@
   },
   "foundOnTheWay": {
     "continuableMemoryTasks": "a resumed memory child runs outside Mnemon's delegation (its write skipped idle review's single-layer check) and each stop wakes the conversation; documented in Compatibility",
-    "memorySpacesAfterProviderEnable": "page kept the old Provider list until Refresh on both hosts; returning to the Memory System now reloads the open page",
+    "memorySpacesAfterProviderEnable": "before: the page kept the old Provider list until Refresh on both hosts. bd97cb63: saving or switching a Provider bumps the component-change signal, which reloads the Memory System's open page; on both hosts, Holographic switched on under Plugins showed 1 / 1 activated and was offered for a new space without Refresh, and switched off showed 0 / 0 and was not",
     "e2eDocumentsFolder": "fixture wrote an empty .mnemon into the real Documents folder when the workspace scope was chosen; documentsDirectory now points inside the fixture",
     "notSpecificTo021": [
       "conversation-tab placement: Open Memory System does nothing on an empty new conversation",

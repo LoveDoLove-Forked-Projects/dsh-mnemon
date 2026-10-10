@@ -16,7 +16,7 @@ Tested revision: the branch `claude/dsh-021-alpha2-adaptation`, on top of the [#
 |---|---|---|
 | `subagents.start` is gone; children start through `startActivation` | Every memory subagent failed | Fixed in v0.5.26 (#357) |
 | The Plugins page no longer lists group rows | The note above DSH's component list explained a `dsh-mnemon/bundle` row that is not there | The note shows only while DSH lists the row |
-| An Agent's directory is checked before every step; a missing one fails the step | Background memory tasks for a workspace whose folder was deleted or moved failed | They run in the first existing workspace, or where DSH started |
+| Before every step an Agent returns to its session's original directory when the current one is gone, and stops when that is gone too | Background memory tasks for a workspace whose folder was deleted or moved stopped | They keep that workspace and run from an existing directory |
 | The plugin manager recomputes package routes from the selected bundles after each enable | None for users: a disabled bundle's dependency route is absent until it is enabled again, then returns to the same directory | The activation test accepts the absence and still requires the same directory |
 | Tools mode `both` is gone; Code Mode refuses a filtered tool before dispatch | None: dsh-mnemon sets no tools mode | Covered by the real-host tests of #356 |
 | The `{{cwd}}` prompt variable is gone | None: no dsh-mnemon prompt uses it | — |
@@ -29,9 +29,11 @@ On DSH 0.2.0 and earlier, the component list on the dsh-mnemon page shows the St
 |---|---|---|
 | ![The note names dsh-mnemon/bundle, but the list starts with the components](./components-alpha-before.jpg) | ![No note; the list starts with the components](./components-alpha.jpg) | ![The note, and the list's dsh-mnemon/bundle row shown as off](./components-020.jpg) |
 
+On the pinned DSH 0.1.7-rc.2 the note and the row show as on 0.2.0-rc.2. A shell that draws the configuration without DSH's Plugins page now shows no note, since no component list follows it there.
+
 ### Background tasks in a missing workspace
 
-A task Agent runs Runtime maintenance, Document archive, placement, metadata and the other background memory tasks outside any conversation, in the caller's workspace. DSH 0.2.1-alpha.2 checks that directory before each step, falls back to the session's original directory, and fails when that is gone too, which for a task Agent is the same directory. The task Agent now takes the caller's workspace only while it exists, then the first workspace in DSH's registry that exists, then the directory DSH started in. Where the directory exists nothing changes.
+A task Agent runs Runtime maintenance, Document archive, placement, metadata and the other background memory tasks outside any conversation. Its `cwd` is the caller's workspace, or the first workspace in DSH's registry when the caller has none, and Mnemon reads from it which workspace's memory the task works on. DSH 0.2.1-alpha.2 checks the working directory before each step, returns to the session's original directory when the current one is gone, and stops the Agent when that is gone too; for a task Agent both are the workspace folder. The task Agent's `cwd` is still chosen as before; only when that folder is missing does Mnemon set DSH's working directory to the first existing workspace in DSH's registry, or the directory DSH started in. Its children inherit both, as DSH's own subagents do. Where the folder exists, and on DSH 0.2.0 and 0.1.7, which have no working-directory service, nothing changes.
 
 ## Running the tests against an installed DSH
 
@@ -55,12 +57,12 @@ DSH_HOST_ROOT=<prefix>/lib/node_modules/@deepseek-ai/dsh DSH_VERSION=<version> M
 
 | Check | DSH 0.2.1-alpha.2 | DSH 0.2.0-rc.2 |
 |---|---|---|
-| Root tests other than the six real-host specs | 1,813 passed, 6 skipped (127 files) | 1,813 passed, 6 skipped (127 files) |
+| Root tests other than the six real-host specs | 1,816 passed, 6 skipped (127 files) | 1,816 passed, 6 skipped (127 files) |
 | The six real-host specs, from the copies `adapt-host-specs.mjs` writes (17 tests) | 17 passed | 17 passed |
 | Starter activation contracts: a cold start with nothing selected, another bundle stopped since startup, component and bundle switches that persist | passed | passed |
 | `--check-declared-rows`: every listed component can be switched | passed | fails on the grouping row, the known listing issue of 0.1.7-rc.2 |
 | Headless, with the default composition and with the three optional Strategies | passed | passed |
-| A task Agent for a deleted workspace folder ([probe](./harness/task-agent-cwd-host.probe.ts)) | v0.5.26: its first step fails with `working-directory: directory does not exist`. This change: it runs in the Host's directory | v0.5.26: runs; DSH 0.2.0 does not check the directory. This change: the Host's directory |
+| A task Agent and its child for a deleted workspace folder ([probe](./harness/task-agent-cwd-host.probe.ts)) | v0.5.26: the task's first step fails with `working-directory: directory does not exist`, and so does starting its child. This change: both keep the deleted workspace as `cwd`; the task runs from the Host's directory and the child settles | Both versions: both keep the deleted workspace and run; DSH 0.2.0 does not check the directory |
 
 `pnpm verify` and `verify:plugins` pass as well; they run on the pinned DSH 0.1.7-rc.2. Every named value import from DSH packages, such as the 20 from `dsh-client-ui-primitives`, exists in both releases.
 
@@ -92,7 +94,7 @@ No run logged a browser console error. Apart from the fixture's expected lines, 
 ### Found on the way
 
 - **Continuable memory tasks.** On 0.2.1-alpha.2 a memory task started under the conversation, such as idle review, stays in the conversation's subagent list as continuable. A message sent to it resumes it outside Mnemon's delegation. In the run its memory write then skipped idle review's single-layer check and was committed, and each time it stopped DSH told the conversation, which replied. DSH offers no way to remove the entry or refuse the resume, so [Compatibility](../../en/reference/compatibility.md#dsh-02) now says to leave these tasks alone.
-- **Memory Spaces after a Provider is enabled.** On both hosts, enabling a Provider under Plugins left the Memory Spaces page with its old Provider list until Refresh, so a new space could not use it. Returning to the Memory System now reloads the open page.
+- **Memory Spaces after a Provider is enabled.** On both hosts, enabling a Provider under Plugins left the Memory Spaces page with its old Provider list until Refresh, so a new space could not use it. Saving or switching a Provider now also reloads the Memory System's open page, as switching a component already re-read its status. Checked on both hosts: once Holographic was switched on under Plugins, Memory Spaces showed its space and offered it for a new one without Refresh, and once it was switched off, did neither.
 - **The e2e fixture's Documents folder.** DSH creates its first-use workspace under the system Documents folder, which on macOS it asks the OS for, whatever `HOME` is. The fixture now sets DSH's `documentsDirectory` inside itself; before, choosing the workspace storage scope in a fixture wrote an empty `.mnemon` into the real Documents folder.
 - Not specific to 0.2.1 and left for later: in the conversation-tab placement, Open Memory System does nothing on an empty new conversation; DSH's composer covers the storage note at the bottom of Status in that tab; Auto Capture's default guidance is English in the Chinese interface; a removal notice on Runtime Memory outlives leaving the page; the error for an ineligible archive destination is untranslated; an archive receipt names the space by its id; with no ready Provider the disabled Native option looks selected; the ZIP manifest records `pluginVersion` 0.1.0.
 

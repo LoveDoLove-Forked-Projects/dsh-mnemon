@@ -40,9 +40,9 @@ The [issue #356 record](../../pr-assets/issue-356-subagent-activation/README.md)
 
 **Verified on 0.2.1-alpha.2.** Releases after 0.5.26 also handle the rest of what 0.2.1-alpha.2 changes:
 - its Plugins page no longer lists the Starter's grouping row, so the note about `dsh-mnemon/bundle` above the component list shows only where DSH lists that row;
-- an Agent whose directory is gone fails its next step, so background memory tasks for a workspace whose folder was deleted or moved run in the first existing workspace, or where DSH started.
+- before each step it returns an Agent to its session's original directory when the current one is gone, and stops it when that is gone too. A background memory task for a workspace whose folder was deleted or moved therefore keeps that workspace, whose memory it works on, and runs from the first existing workspace or where DSH started.
 
-Every root test passes against the installed 0.2.1-alpha.2 and 0.2.0-rc.2, as do the real-host subagent tests, Headless with and without the optional Strategies, and the Starter's activation contracts. On 0.2.1-alpha.2 the WebUI was checked from the Plugins page and its configuration through conversation memory, Save to memory, idle review, USER.md compaction, the Memory System pages, ZIP backup, Git sync and remote management. The [DSH 0.2.1-alpha.2 record](../../pr-assets/dsh-021-alpha2/README.md) has the details and the harness that runs the tests against an installed DSH.
+Against the installed 0.2.1-alpha.2 and 0.2.0-rc.2, the root tests pass, with the six real-host specs run from their adapted copies, as do Headless with and without the optional Strategies and the Starter's activation contracts; only `--check-declared-rows` fails on 0.2.0-rc.2, on its known grouping-row listing. On 0.2.1-alpha.2 the WebUI was checked from the Plugins page and its configuration through conversation memory, Save to memory, idle review, USER.md compaction, the Memory System pages, ZIP backup, Git sync and remote management. The [DSH 0.2.1-alpha.2 record](../../pr-assets/dsh-021-alpha2/README.md) has the details and the harness that runs the tests against an installed DSH.
 
 **Host behavior on a first install.**
 

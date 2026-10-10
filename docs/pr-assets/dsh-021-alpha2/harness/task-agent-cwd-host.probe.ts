@@ -19,6 +19,7 @@ import { MnemonLifecycle } from '../../../../src/host/lifecycle.ts'
 import { MnemonSubagentCoordinator } from '../../../../src/host/subagent.ts'
 import { registerTools } from '../../../../src/host/tools.ts'
 import { compositionFixture } from '../../../../tests/fixtures/composition.ts'
+import { startSubagent } from '../../../../src/host/subagent-start.ts'
 
 const requireDsh = createRequire(realpathSync((process.env.DSH_HOST_ROOT + '/package.json')))
 const spawn = await import(requireDsh.resolve('@deepseek-ai/dsh-subagent-spawn-in-process'))
@@ -88,10 +89,28 @@ it('runs a background task Agent step for a workspace whose folder is gone', asy
       agent.followup(createUserMessage({ content: [{ type: 'text', text: 'Run the maintenance step.' }], source: { kind: 'user' } }))
       await agent.whenIdle()
       const events = JSON.stringify(agent.session.snapshotEvents?.() ?? [])
-      return { cwd: agent.session.header.cwd, gone: agent.session.header.cwd === gone, error: events.match(/working-directory: [^"\\]+/u)?.[0], replied: events.includes('Maintenance step done.') }
+      const workingDirectory = (ctx as unknown as { workingDirectory?: { get(session: unknown): string } }).workingDirectory?.get(agent.session)
+      // A maintenance child, as Mnemon starts one under the task Agent.
+      const children: Array<{ id: string; session: { header: { cwd?: string } } }> = []
+      const stopWatching = ctx.on('agent/created', ({ agent: created }: { agent: { id: string; session: { header: { cwd?: string; origin?: string } } } }) => {
+        if (created.session.header.origin === 'subagent') children.push(created)
+      })
+      let child: Record<string, unknown> = {}
+      try {
+        const run = await startSubagent(host.subagents as never, host.agents as never, 'spawn', {
+          label: 'Mnemon probe child', prompt: [{ type: 'text', text: 'Run the child step.' }], parent: agent as never, signal: new AbortController().signal,
+        })
+        const result = await run.result.then(value => ({ ok: true, value }), error => ({ ok: false, error: String(error?.message ?? error).slice(0, 200) }))
+        const created = children.find(candidate => candidate.id === run.id)
+        child = { cwd: created?.session.header.cwd, gone: created?.session.header.cwd === gone, settled: result.ok, ...(result.ok ? {} : { error: (result as { error: string }).error }) }
+      } catch (error) {
+        child = { thrown: String((error as Error)?.message ?? error).slice(0, 200) }
+      } finally { stopWatching() }
+      return { cwd: agent.session.header.cwd, gone: agent.session.header.cwd === gone, workingDirectory, error: events.match(/working-directory: [^"\\]+/u)?.[0], replied: events.includes('Maintenance step done.'), child }
     }).catch(error => ({ thrown: String(error?.message ?? error).slice(0, 200) }))
     console.log('TASK-AGENT-CWD ' + JSON.stringify({ dsh: process.env.DSH_VERSION, ...outcome }))
-    expect(outcome).toMatchObject({ gone: false, replied: true })
+    // The task keeps the workspace whose memory it works on, and still runs its step.
+    expect(outcome).toMatchObject({ gone: true, replied: true, child: { gone: true, settled: true } })
   } finally {
     stop?.()
     await ctx.fiber.dispose()
