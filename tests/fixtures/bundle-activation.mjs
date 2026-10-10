@@ -12,6 +12,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const require = createRequire(join(process.argv[2] ?? root, 'package.json'))
 const installAnchor = require.resolve('@deepseek-ai/dsh/package.json')
+const dsh = JSON.parse(await readFile(installAnchor, 'utf8')).version
+const [major, minor, patch] = dsh.split(/[.-]/u).map(Number)
+// From 0.2.1 the plugin manager recomputes package routes after each enable.
+const recomputesRoutes = major > 0 || minor > 2 || (minor === 2 && patch >= 1)
 const runtimeRequire = createRequire(installAnchor)
 const load = name => import(pathToFileURL(runtimeRequire.resolve(name)).href)
 const app = await load('@deepseek-ai/dsh-app-boot')
@@ -133,9 +137,14 @@ export async function apply(ctx, config) {
     const result = await ctx.pluginManager.setBundleEnabled('dsh-mnemon', true)
     assert.equal(result.application, 'applied', JSON.stringify(result))
     if (otherBundle) {
-      assert.equal(ctx.pluginPackages.packageOf('fixture-leaf', parentUrl)?.dir, previousPackage.dir)
+      // A host that recomputes the routes from the selected bundles can drop a
+      // stopped bundle's route until it is enabled again. It must never point
+      // anywhere else, then or afterwards.
+      const retained = ctx.pluginPackages.packageOf('fixture-leaf', parentUrl)?.dir
+      if (retained !== undefined || !recomputesRoutes) assert.equal(retained, previousPackage.dir)
       assert.equal((await ctx.pluginManager.setBundleEnabled('fixture-other', true)).application, 'applied')
       assert(ctx.get('otherFixture'))
+      assert.equal(ctx.pluginPackages.packageOf('fixture-leaf', parentUrl)?.dir, previousPackage.dir)
     }
   }
   assertEnabled()
@@ -209,7 +218,7 @@ export async function apply(ctx, config) {
   assert.equal(bundle?.name, 'dsh-mnemon/bundle')
   assert.deepEqual(schema.diagnostics.filter(item => item.level === 'error'), [{ level: 'error', path: bundle.path,
     message: 'unrecognized Loader tree carrier; use cordis:group or cordis:include for native child collection' }])
-  console.log(JSON.stringify({ dsh: JSON.parse(await readFile(installAnchor, 'utf8')).version, packages: names.length,
+  console.log(JSON.stringify({ dsh, packages: names.length,
     components: 9, manager: Boolean(Manager), result: 'passed' }))
 } finally {
   await ctx?.fiber.dispose()

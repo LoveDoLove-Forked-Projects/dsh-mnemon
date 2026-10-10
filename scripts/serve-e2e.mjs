@@ -103,7 +103,10 @@ const fixture = await mkdtemp(join(tmpdir(), 'mnemon-web-e2e-'))
 const dshHome = join(fixture, 'dsh-home')
 const dataDir = join(fixture, 'data')
 const workspace = join(fixture, 'workspace')
-await Promise.all([dshHome, dataDir, workspace].map(path => mkdir(path)))
+// DSH creates its first-use workspace under the system Documents folder, which on
+// macOS it asks the OS for, whatever HOME is; keep that inside the fixture too.
+const documents = join(fixture, 'documents')
+await Promise.all([dshHome, dataDir, workspace, documents].map(path => mkdir(path)))
 let modelRequests = 0
 let archiveWrites = 0
 const archiveProvider = runtimeArchive ? createServer(async (request, response) => {
@@ -311,6 +314,7 @@ try {
   const reviewFixture = join(fixture, 'review-evidence-plugin.mjs')
   if (reviewModel !== undefined) await writeFile(reviewFixture, scopedOverviewPlugin)
   await writeFile(join(dshHome, 'profiles/web/cordis.patch.yml'), disabled.map(id => `- id: ${id}\n  disabled: true\n`).join('') + browsePicker
+    + '- id: workspace-controller\n  config:\n    documentsDirectory: ' + JSON.stringify(documents) + '\n'
     + (protectionModel === undefined && reviewModel === undefined && !reviewFailure ? '' : '- id: mnemon\n  config:\n    idleReviewMs: 5000\n')
     + (runtimeArchive ? '- id: mnemon\n  config:\n    persistenceStrategy:\n      mode: manual\n    runtimeMemory:\n      memoryLimitBytes: 300\n' : '')
     + (flags.has('--idle-review') || flags.has('--review-layers') || flags.has('--strict-template') ? '- id: mnemon\n  config:\n    idleReviewMs: 5000\n    idleReview:\n      minIntervalMs: 5000\n      maxPerSession: 1\n' : '')
