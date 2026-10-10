@@ -6,7 +6,7 @@ The Starter pins a tested combination of official plugins. The table records ver
 
 | Component | Baseline | What is verified |
 |---|---|---|
-| DSH | `0.2.0-rc.2` (npm `latest` and `next`), `0.1.7-rc.2` | The two supported hosts; `0.2.0-rc.1` also installs, and `0.2.1-alpha.2` (npm `alpha`) runs memory subagents as tested [below](#dsh-02). 0.1.7-rc.2 is the pinned development baseline: published contracts, WebUI and isolated Headless activation, profile settings and retained-settings recovery, producer-owned Session V4 messages, plugin manager activation and the Agent Teams review matrix. For DSH 0.2 see [below](#dsh-02) |
+| DSH | `0.2.0-rc.2` (npm `latest` and `next`), `0.1.7-rc.2` | The two supported hosts; `0.2.0-rc.1` also installs, and `0.2.1-alpha.2` (npm `alpha`) passes the checks [below](#dsh-02). 0.1.7-rc.2 is the pinned development baseline: published contracts, WebUI and isolated Headless activation, profile settings and retained-settings recovery, producer-owned Session V4 messages, plugin manager activation and the Agent Teams review matrix. For DSH 0.2 see [below](#dsh-02) |
 | Node.js | `22.19` and `24` | Source CI and packed-artifact CI respectively; development requires `^22.19.0 || >=24.0.0` |
 | Node.js 20 | Public package imports only | Does not establish that the DSH Host runs on Node 20 |
 | Mnemon Native CLI | `0.2.9` | Opt-in tests against a real CLI and disposable data; install the CLI separately |
@@ -33,10 +33,16 @@ Before DSH installs a plugin, and each time a profile starts, it checks every `@
 **Memory subagents on 0.2.1-alpha.2.** DSH 0.2.1-alpha.2 (npm `alpha`) removed the one-shot `subagents.start`: every child now starts through `startActivation`, and the spawn and fork providers run it as a managed activation. dsh-mnemon 0.5.25 and earlier start each memory subagent with `start`, so on 0.2.1-alpha.2 every delegated task fails with `this.subagents.start is not a function` ([#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)). That includes Memory Space writes such as `mnemon_remember`, USER.md compaction, working-memory archiving, idle review, Save to memory and Document archive. Reads, and runtime-memory writes that fit, start no child and are unaffected.
 
 Releases after 0.5.25 start them through `startActivation` with caller delivery, so the result returns to Mnemon and the conversation gets no completion notice. On DSH 0.2.0 and 0.1.7 they still use `start`. On 0.2.1-alpha.2 every local child is continuable, which brings two differences:
-- a child started under the conversation, such as a delegated write or an idle review, is listed among its subagents, and a later message from the model or the WebUI resumes it outside Mnemon's delegation;
+- a child started under the conversation, such as a delegated write or an idle review, is listed among its subagents as continuable. A later message from the model, or one you send it from that list, resumes it outside Mnemon's delegation: its memory writes skip the checks its task had, such as idle review's single write layer, and each time it stops DSH tells the conversation, which then replies. Mnemon cannot remove these entries, so leave them and ask in the conversation instead;
 - while it runs, it takes one of the conversation's subagent slots (`maxActiveSubagents`, 8 by default). With all of them taken, a memory task fails with `subagent limit reached`.
 
 The [issue #356 record](../../pr-assets/issue-356-subagent-activation/README.md) has WebUI runs of USER.md compaction on 0.2.1-alpha.2 and 0.2.0-rc.2, and real-host tests of compaction, idle review and the Team review on both.
+
+**Verified on 0.2.1-alpha.2.** Releases after 0.5.26 also handle the rest of what 0.2.1-alpha.2 changes:
+- its Plugins page no longer lists the Starter's grouping row, so the note about `dsh-mnemon/bundle` above the component list shows only where DSH lists that row;
+- before each step it returns an Agent to its session's original directory when the current one is gone, and stops it when that is gone too. A background memory task for a workspace whose folder was deleted or moved therefore keeps that workspace, whose memory it works on, and runs from the first existing workspace or where DSH started.
+
+Against the installed 0.2.1-alpha.2 and 0.2.0-rc.2, the root tests pass, with the six real-host specs run from their adapted copies, as do Headless with and without the optional Strategies and the Starter's activation contracts; only `--check-declared-rows` fails on 0.2.0-rc.2, on its known grouping-row listing. On 0.2.1-alpha.2 the WebUI was checked from the Plugins page and its configuration through conversation memory, Save to memory, idle review, USER.md compaction, the Memory System pages, ZIP backup, Git sync and remote management. The [DSH 0.2.1-alpha.2 record](../../pr-assets/dsh-021-alpha2/README.md) has the details and the harness that runs the tests against an installed DSH.
 
 **Host behavior on a first install.**
 

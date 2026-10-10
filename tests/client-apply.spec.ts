@@ -13,6 +13,7 @@ import { apply, inject } from '../src/client/index.ts'
 import { en, zh } from '../src/client/locales.ts'
 import type { MnemonActionSeat } from '../src/client/action-seat.ts'
 import { MnemonPluginActions } from '../src/client/MnemonPluginActions.tsx'
+import { MnemonComponentListSeat } from '../src/client/component-list-seat.ts'
 import { MnemonComponentRowHost, MnemonSettingsHost } from '../src/client/MnemonSettingsHost.tsx'
 import { MnemonSettingsScope } from '../src/client/settings.ts'
 import { MnemonBuiltinWorkspaceHost } from '../src/client/workspace-mount.tsx'
@@ -141,8 +142,13 @@ describe('Mnemon Web client composition', () => {
     const action = slots.find(options => options.name === 'plugins.detail.actions')!
     expect(action).toMatchObject({ id: 'dsh-mnemon/open-workspace', locale: 'mnemon' })
     expect(context.slots.register).toHaveBeenCalledWith(action, MnemonPluginActions)
-    const workspace = (action.inject as () => { workspace: MnemonActionSeat })().workspace
+    const injected = (action.inject as () => { workspace: MnemonActionSeat; componentList: unknown })()
+    const workspace = injected.workspace
     expect(workspace.getSnapshot()).toBeTypeOf('function')
+    // The page's head reports DSH's rows to the configuration that the bundle slot renders.
+    const bundleConfig = slots.find(options => options.name === 'plugins.bundle.config')!
+    expect(injected.componentList).toBeInstanceOf(MnemonComponentListSeat)
+    expect((bundleConfig.inject as () => { componentList: unknown })().componentList).toBe(injected.componentList)
 
     const shell = slots.find(options => options.name === 'shell.overlay')!
     const configuration = (shell.inject as () => { configuration: MnemonActionSeat })().configuration

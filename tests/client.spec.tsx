@@ -541,6 +541,7 @@ describe('MnemonWorkbench', () => {
     const { connection, call } = createConnection()
     const components = new MnemonChangeSignal()
     const statusReads = () => call.mock.calls.filter(([, endpoint]) => endpoint === 'status-summary').length
+    const directoryReads = () => call.mock.calls.filter(([, endpoint]) => endpoint === 'body-directory').length
     const { rerender } = render(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} />)
     await screen.findByText('已连接')
     const initial = statusReads()
@@ -551,6 +552,18 @@ describe('MnemonWorkbench', () => {
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active={false} />)
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active />)
     await waitFor(() => expect(statusReads()).toBe(initial + 2))
+
+    // A change elsewhere, such as a Provider saved under Plugins, reloads the open page too;
+    // only returning to it does not, since that would query every Provider again.
+    await selectWorkspaceTab('记忆空间')
+    await waitFor(() => expect(directoryReads()).toBeGreaterThan(0))
+    const directory = directoryReads()
+    rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active={false} />)
+    rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active />)
+    await waitFor(() => expect(statusReads()).toBeGreaterThan(initial + 2))
+    expect(directoryReads()).toBe(directory)
+    act(() => components.bump())
+    await waitFor(() => expect(directoryReads()).toBeGreaterThan(directory))
   })
 
   it('reads the full status for the CLI version a summary does not carry yet', async () => {

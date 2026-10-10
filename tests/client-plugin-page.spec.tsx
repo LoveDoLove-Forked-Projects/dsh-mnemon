@@ -19,6 +19,7 @@ vi.mock('../src/client/MnemonSettingsCard.tsx', () => ({
 }))
 
 import { MnemonActionSeat } from '../src/client/action-seat.ts'
+import { MnemonComponentListSeat } from '../src/client/component-list-seat.ts'
 import { MnemonPluginActions } from '../src/client/MnemonPluginActions.tsx'
 import { MnemonSettingsHost } from '../src/client/MnemonSettingsHost.tsx'
 import { translateEn } from '../src/client/locales.ts'
@@ -102,6 +103,42 @@ describe('dsh-mnemon page under DSH Plugins', () => {
     rerender(<MnemonPluginActions subject={bundle()} workspace={workspace} t={translateEn} />)
     act(() => withdraw())
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('reports whether DSH lists the Starter\'s grouping row below the configuration', () => {
+    const workspace = new MnemonActionSeat()
+    const componentList = new MnemonComponentListSeat()
+    const listener = vi.fn()
+    componentList.subscribe(listener)
+    const groupRows = [{ rowId: 'mnemon-bundle', moduleName: 'dsh-mnemon/bundle', enabled: false }, ...pkg.rows]
+    const grouped = bundle({ rows: groupRows })
+    // DSH 0.2.0 lists the grouping row, always off; DSH 0.2.1 lists only the components.
+    const { rerender, unmount } = render(<MnemonPluginActions subject={grouped} workspace={workspace} componentList={componentList} t={translateEn} />)
+    expect(componentList.getSnapshot()).toBe(true)
+    rerender(<MnemonPluginActions subject={bundle()} workspace={workspace} componentList={componentList} t={translateEn} />)
+    expect(componentList.getSnapshot()).toBe(false)
+    // A disabled bundle still lists its rows; another page reports nothing.
+    rerender(<MnemonPluginActions subject={bundle({ rows: groupRows, enabled: false })} workspace={workspace} componentList={componentList} t={translateEn} />)
+    expect(componentList.getSnapshot()).toBe(true)
+    rerender(<MnemonPluginActions subject={{ kind: 'item', id: 'web-search' }} workspace={workspace} componentList={componentList} t={translateEn} />)
+    expect(componentList.getSnapshot()).toBeUndefined()
+    rerender(<MnemonPluginActions subject={grouped} workspace={workspace} componentList={componentList} t={translateEn} />)
+    unmount()
+    expect(componentList.getSnapshot()).toBeUndefined()
+    expect(listener.mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('keeps the newest component list report when an older page withdraws late', () => {
+    const seat = new MnemonComponentListSeat()
+    const listener = vi.fn()
+    seat.subscribe(listener)
+    const older = seat.report(true)
+    const newer = seat.report(false)
+    older()
+    expect(seat.getSnapshot()).toBe(false)
+    newer()
+    expect(seat.getSnapshot()).toBeUndefined()
+    expect(listener).toHaveBeenCalledTimes(3)
   })
 
   it('keeps the newest offer when an older owner withdraws late', () => {

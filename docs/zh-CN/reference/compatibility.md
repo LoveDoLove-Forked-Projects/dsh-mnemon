@@ -6,7 +6,7 @@ Starter 固定经过测试的官方插件组合。下表记录验证范围，不
 
 | 组件 | 基线 | 已验证的范围 |
 |---|---|---|
-| DSH | `0.2.0-rc.2`（npm `latest` 与 `next`）、`0.1.7-rc.2` | 两个受支持的宿主；`0.2.0-rc.1` 也可安装；`0.2.1-alpha.2`（npm `alpha`）可以运行记忆子 Agent，测试范围见[下文](#dsh-02)。0.1.7-rc.2 是锁定的开发基线：正式发布的契约、WebUI 与隔离 Headless 激活、profile 设置与旧设置恢复、Session V4 中的生产者专属消息、插件管理器激活以及 Agent Teams 审查矩阵。DSH 0.2 的验证范围见[下文](#dsh-02) |
+| DSH | `0.2.0-rc.2`（npm `latest` 与 `next`）、`0.1.7-rc.2` | 两个受支持的宿主；`0.2.0-rc.1` 也可安装；`0.2.1-alpha.2`（npm `alpha`）通过了[下文](#dsh-02)所列的检查。0.1.7-rc.2 是锁定的开发基线：正式发布的契约、WebUI 与隔离 Headless 激活、profile 设置与旧设置恢复、Session V4 中的生产者专属消息、插件管理器激活以及 Agent Teams 审查矩阵。DSH 0.2 的验证范围见[下文](#dsh-02) |
 | Node.js | `22.19`、`24` | 分别用于源码 CI 与打包制品 CI；开发要求 `^22.19.0 || >=24.0.0` |
 | Node.js 20 | 仅公开包入口导入 | 不代表 DSH Host 能在 Node 20 运行 |
 | Mnemon Native CLI | `0.2.9` | 显式启用的真实 CLI 与临时数据测试；CLI 需要另外安装 |
@@ -33,10 +33,16 @@ DSH 在安装插件前，以及每次启动 profile 时，都会用自身版本�
 **0.2.1-alpha.2 上的记忆子 Agent。** DSH 0.2.1-alpha.2（npm `alpha`）移除了一次性的 `subagents.start`：所有子 Agent 都改由 `startActivation` 启动，spawn 与 fork 两个 provider 把它作为托管 activation 运行。dsh-mnemon 0.5.25 及更早版本用 `start` 启动每个记忆子 Agent，因此在 0.2.1-alpha.2 上，所有委派任务都会报 `this.subagents.start is not a function`（[#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)）。这包括 `mnemon_remember` 等记忆空间写入、USER.md 压缩、工作记忆归档、空闲审查、存入记忆与项目档案归档。读取，以及放得下的运行时记忆写入，不会启动子 Agent，因此不受影响。
 
 0.5.25 之后的版本改用 `startActivation`，并以 caller 方式交付结果，所以结果回到 Mnemon，对话不会收到完成通知。在 DSH 0.2.0 与 0.1.7 上仍使用 `start`。在 0.2.1-alpha.2 上，所有本地子 Agent 都可以续接，由此带来两点不同：
-- 在对话之下启动的子 Agent，例如委派写入或空闲审查，会出现在对话的子 Agent 列表中；之后模型或 WebUI 发来的消息会在 Mnemon 的委派之外续接它；
+- 在对话之下启动的子 Agent，例如委派写入或空闲审查，会以“可继续”出现在对话的子 Agent 列表中。之后模型发来的消息，或你在该列表中发给它的消息，会在 Mnemon 的委派之外续接它：它的记忆写入不再经过原任务的检查（例如空闲审查只写一层的限制），并且每次停止时 DSH 都会通知对话，对话随之回复。Mnemon 无法移除这些条目，请不要续接它们，有需要时直接在对话中提出；
 - 它运行期间会占用对话的一个子 Agent 名额（`maxActiveSubagents`，默认 8 个）。名额用满时，记忆任务会因 `subagent limit reached` 失败。
 
 [issue #356 记录](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)包含 0.2.1-alpha.2 与 0.2.0-rc.2 上 USER.md 压缩的 WebUI 运行，以及两个版本上压缩、空闲审查与 Team 审查的真实宿主测试。
+
+**已验证的范围（0.2.1-alpha.2）。** 0.5.26 之后的版本也处理了 0.2.1-alpha.2 的其余变化：
+- 它的插件页不再列出 Starter 的分组行，因此组件列表上方关于 `dsh-mnemon/bundle` 的说明只在 DSH 列出该行时显示；
+- 每一步之前，如果当前目录已不存在，它会把 Agent 退回会话的原始目录；原始目录也不存在时就停止该 Agent。因此工作区文件夹被删除或移动后，该工作区的后台记忆任务仍然以这个工作区为准（它操作的正是这个工作区的记忆），并在第一个仍存在的工作区或 DSH 的启动目录中运行。
+
+在已安装的 0.2.1-alpha.2 与 0.2.0-rc.2 上，根测试全部通过（六个真实宿主测试使用适配后的副本运行），启用与不启用可选策略的 Headless 以及 Starter 的激活契约也都通过；只有 `--check-declared-rows` 在 0.2.0-rc.2 上因已知的分组行列表问题失败。在 0.2.1-alpha.2 上还检查了 WebUI：从插件页及其配置，到对话记忆、存入记忆、空闲审查、USER.md 压缩、记忆系统各页面、ZIP 备份、Git 同步与远程管理。详情以及在已安装 DSH 上运行测试的配置见 [DSH 0.2.1-alpha.2 记录](../../pr-assets/dsh-021-alpha2/README.zh-CN.md)。
 
 **首次安装时的宿主行为。**
 

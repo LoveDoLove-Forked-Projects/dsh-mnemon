@@ -121,7 +121,7 @@ pnpm --workspace-concurrency=1 -r build
 pnpm e2e:serve
 ```
 
-夹具输出临时工作区及 loopback URL，隔离 `DSH_HOME`、`MNEMON_DATA_DIR`、工作区和模型端点。会话选择 **Mnemon E2E**：该测试自有 preset 去除 Shell 依赖，保留 Host 记忆工具。模型固定回复，因此这里只检查 UI/传输，不评价真实模型沉淀质量。Ctrl-C 停止并清理合成测试数据。
+夹具输出临时工作区及 loopback URL，隔离 `DSH_HOME`、`MNEMON_DATA_DIR`、工作区和模型端点，并把 DSH 创建首个工作区所在的“文稿”目录也指向夹具内部。会话选择 **Mnemon E2E**：该测试自有 preset 去除 Shell 依赖，保留 Host 记忆工具。模型固定回复，因此这里只检查 UI/传输，不评价真实模型沉淀质量。Ctrl-C 停止并清理合成测试数据。
 
 `pnpm e2e:serve --review-evidence --strategy-extensions` 添加按 Agent 注册的合成概览工具及固定的父会话 / 审查调用，检查五个完整分块的继承，并在修复前后尝试相同的外部工具读取；见 [Issue #211 验证记录](../../pr-assets/issue-211-20260911/README.zh-CN.md)。`tests/review-evidence-host.spec.ts` 还覆盖真实 DSH native 与 Code Mode 中，在 Provider 的 start Promise 返回前发生的工具执行。
 
@@ -162,13 +162,13 @@ Runtime 写入范围回归使用 `MNEMON_CLI_PATH=/absolute/path/to/mnemon pnpm 
 
 `pnpm e2e:serve --profile-compaction` 用于复现 [#356](https://github.com/omdsh-dev/dsh-mnemon/issues/356)：USER.md 写满后，再写入会启动压缩用的子 Agent。这个 profile 把 USER.md 上限设为 100 字节，并关闭空闲审查。在 Mnemon E2E 对话中分三条消息发送 `记住：回答尽量简洁，不要冗长的开场白。`、`记住：回答使用简体中文。` 和 `记住：汇报时先列出阻塞项。`。脚本模型用 `mnemon_runtime_memory` 保存每条事实。第三条写入时 USER.md 已满，压缩子 Agent 先合并已保存的两条，再加入新条目。夹具以 `Profile compaction:` 行输出每一步。只有模型决策是脚本化的；工具、子 Agent 及其结果工具和 Runtime 写入都是真实运行。
 
-要在另一个 DSH 版本上启动 WebUI，先用 `npm install -g --prefix <目录> @deepseek-ai/dsh@0.2.1-alpha.2` 安装，再设置 `MNEMON_E2E_DSH=<目录>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js`。见[双语复现与证据](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)。
+要在另一个 DSH 版本上启动 WebUI，先用 `npm install -g --prefix <目录> @deepseek-ai/dsh@0.2.1-alpha.2` 安装，再设置 `MNEMON_E2E_DSH=<目录>/lib/node_modules/@deepseek-ai/dsh/lib/bin.js`。见[双语复现与证据](../../pr-assets/issue-356-subagent-activation/README.zh-CN.md)。同一个变量也让 `node scripts/verify-headless-profile.mjs` 与 `node scripts/verify-sync-git.mjs` 改用该版本；请用 `node` 而不是 `pnpm` 运行，以免继承 `NODE_PATH`。要在该安装上运行根测试，使用 [DSH 0.2.1-alpha.2 测试配置](../../pr-assets/dsh-021-alpha2/README.zh-CN.md#在已安装的-dsh-上运行测试)。
 
 `pnpm e2e:serve --plugin=<包目录>` 会再把一个测试用插件链接进 profile，可重复使用以链接多个。[issue #340 证据](../../pr-assets/issue-340-settings-outside-slots/README.zh-CN.md)用它加入一个设置分区，像某些外壳那样不经过 DSH 的 slot 渲染器绘制 `dsh-mnemon` 配置页。
 
 `pnpm e2e:serve --without-mnemon-cli` 把 `cliPath` 指向不存在的文件，即使 PATH 中有 Mnemon CLI，Host 也按未安装处理。用它确认：状态页不显示 Mnemon Native 卡片，版本对话框把 CLI 列为可选，插件页停用向量测试，新建记忆空间从已就绪的 Provider 开始。先连接一个 Provider，例如在“插件 → 可组合记忆”页面中连接 Provider Lab 的服务。
 
-`pnpm e2e:serve --docs-demo`（中文）或 `--docs-demo=en` 会预置[文档截图集](../../assets/webui-v0.5.19/README.md)使用的虚构项目 Lumen：用户画像与工作记忆、六份项目档案和三个记忆空间，都在宿主启动前通过各 Source 自己的管理操作写入。包含“结账”的消息会经真实 View 工具完成一次档案检索与两次记忆空间召回后作答；随后包含“记住”的消息（例如新的 LCP 目标）会替换对应的工作记忆条目。脚本只决定模型调用哪些工具，不涉及任何个人数据。加上 `--live-model` 则改由 DeepSeek API 作答，密钥从 `DEEPSEEK_API_KEY` 读取；此时提问会经过真实的模型、任务 Agent 与 Agent 查询，图集即以这种方式采集。界面变化后应使用该夹具重新采集截图集。
+`pnpm e2e:serve --docs-demo`（中文）或 `--docs-demo=en` 会预置[文档截图集](../../assets/webui-v0.5.19/README.md)使用的虚构项目 Lumen：用户画像与工作记忆、六份项目档案和三个记忆空间，都在宿主启动前通过各 Source 自己的管理操作写入。包含“结账”（英文演示为 “checkout”）的消息会经真实 View 工具完成一次档案检索与两次记忆空间召回后作答；随后包含“记住”（英文演示为 “remember”）的消息（例如新的 LCP 目标）会替换对应的工作记忆条目。脚本只决定模型调用哪些工具，不涉及任何个人数据。加上 `--live-model` 则改由 DeepSeek API 作答，密钥从 `DEEPSEEK_API_KEY` 读取；此时提问会经过真实的模型、任务 Agent 与 Agent 查询，图集即以这种方式采集。界面变化后应使用该夹具重新采集截图集。
 
 `pnpm e2e:serve --trusted-host=memory.test:4331` 把该授权主机加入 DSH 的浏览器信任边界，用于以远程页面身份检查 WebUI；再加 `--remote-management` 即设置 `remoteAccess: trusted-host`。同时设置 `MNEMON_E2E_PORT=4331` 使端口一致，在测试浏览器中把该名称解析到 127.0.0.1（Chrome 可用 `--host-resolver-rules="MAP memory.test 127.0.0.1"` 并加 `--no-proxy-server`），再把打印出的启动 URL 中的回环地址换成 `memory.test:4331` 打开。未授权时“插件 → 可组合记忆”页面为只读；授权后，保存会经 API Gateway 持久化。
 

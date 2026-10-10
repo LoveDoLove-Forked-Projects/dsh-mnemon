@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.ts'
 import type {
@@ -585,6 +586,15 @@ class MnemonAgentLifecycle {
 
 }
 
+function isDirectory(path: string): Promise<boolean> {
+  return stat(path).then(info => info.isDirectory(), () => false)
+}
+
+/** DSH 0.2.1's per-session working directory; earlier hosts have none. */
+interface WorkingDirectoryService {
+  set(agent: HostAgent, path: string, signal?: AbortSignal): Promise<string>
+}
+
 /** DSH-native owner for per-agent Mnemon lifecycle hooks and UI-triggered LLM work. */
 export class MnemonLifecycle {
   private readonly owners = new Map<HostAgent, { lifecycle: MnemonAgentLifecycle; dispose: () => unknown }>()
@@ -925,7 +935,7 @@ export class MnemonLifecycle {
     let handle: HostAgentHandle | undefined
     let failure: unknown
     try {
-      const creation = await this.taskAgentCreation(fallbackSessionId, workspaceRoot)
+      const creation = await this.taskAgentCreation(fallbackSessionId, workspaceRoot, signal)
       handle = await this.ctx.agents.create({
         sessionId,
         ...creation,
@@ -947,37 +957,55 @@ export class MnemonLifecycle {
   private async taskAgentCreation(
     fallbackSessionId: string,
     workspaceRoot: string | undefined,
+    signal: AbortSignal,
   ): Promise<Pick<CreateHostAgentOptions, 'meta' | 'agentOptions' | 'setup'>> {
     const agentOptions = this.taskAgentModelOptions(fallbackSessionId, workspaceRoot)
     if (agentOptions === undefined) throw new Error('no default provider/model is available for a clean task Agent')
-    const cwd = this.taskAgentCwd(workspaceRoot)
+    const { cwd, workFrom } = await this.taskAgentDirectories(workspaceRoot)
     const presets = presetService(this.ctx.get('agentPresets'))
-    if (presets === undefined) return { meta: { cwd }, agentOptions }
-
-    const presetId = (await presets.resolve()).id
+    const presetId = presets === undefined ? undefined : (await presets.resolve()).id
+    const workingDirectory = workFrom === undefined ? undefined : this.ctx.get('workingDirectory') as WorkingDirectoryService | undefined
+    if (presets === undefined && typeof workingDirectory?.set !== 'function') return { meta: { cwd }, agentOptions }
     return {
-      meta: { cwd, agentPreset: presetId },
+      meta: { cwd, ...(presetId === undefined ? {} : { agentPreset: presetId }) },
       agentOptions,
-      setup: async agentCtx => { await presets.mount(agentCtx, presetId) },
+      setup: async (agentCtx, agent) => {
+        if (presets !== undefined && presetId !== undefined) await presets.mount(agentCtx, presetId)
+        if (workFrom !== undefined && agent !== undefined && typeof workingDirectory?.set === 'function') await workingDirectory.set(agent, workFrom, signal)
+      },
     }
   }
 
   /**
    * A task Agent runs outside any conversation, so its caller may hold no
-   * workspace at all. DSH's Web persona renders `{{cwd}}`, and an Agent created
-   * without one fails prompt assembly before its first step, so the registry's
-   * default workspace stands in; a profile that mounts no registry keeps the
-   * directory the Host was started in.
+   * workspace at all. DSH 0.2.0's Web persona renders `{{cwd}}`, and an Agent
+   * created without one fails prompt assembly before its first step, so the
+   * registry's first workspace stands in; a profile that mounts no registry
+   * keeps the directory the Host was started in.
+   *
+   * The `cwd` is also the workspace whose memory Mnemon reads, so it stays
+   * even when its folder is gone. DSH 0.2.1 checks the working directory
+   * before every step and fails once it and the session's original directory
+   * are gone, so the task then works from the first existing workspace, or the
+   * Host's directory, as DSH's own subagents do; its children inherit both.
    */
-  private taskAgentCwd(workspaceRoot: string | undefined): string {
+  private async taskAgentDirectories(workspaceRoot: string | undefined): Promise<{ cwd: string; workFrom?: string }> {
     const requested = workspaceRoot?.trim()
-    if (requested !== undefined && requested !== '') return resolve(requested)
-    const registry = this.ctx.get('workspaceRegistry') as { list?: () => Array<{ path?: unknown }> } | undefined
-    const listed = typeof registry?.list === 'function' ? registry.list() : []
-    for (const workspace of listed) {
-      if (typeof workspace?.path === 'string' && workspace.path.trim() !== '') return resolve(workspace.path)
+    const cwd = requested !== undefined && requested !== '' ? resolve(requested) : this.registeredWorkspaces()[0] ?? process.cwd()
+    return await isDirectory(cwd) ? { cwd } : { cwd, workFrom: await this.existingWorkspace() }
+  }
+
+  private async existingWorkspace(): Promise<string> {
+    for (const workspace of this.registeredWorkspaces()) {
+      if (await isDirectory(workspace)) return workspace
     }
     return process.cwd()
+  }
+
+  private registeredWorkspaces(): string[] {
+    const registry = this.ctx.get('workspaceRegistry') as { list?: () => Array<{ path?: unknown }> } | undefined
+    const listed = typeof registry?.list === 'function' ? registry.list() : []
+    return listed.flatMap(workspace => typeof workspace?.path === 'string' && workspace.path.trim() !== '' ? [resolve(workspace.path)] : [])
   }
 
   /** Resolve a complete task route for both status admission and actual creation. */

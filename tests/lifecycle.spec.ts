@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { realpathSync } from 'node:fs'
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { assertReleasedPayloadSemantics } from '@deepseek-ai/dsh-session-format-v0-to-v1'
 import { MemoryExecutions } from '../src/host/memory-executions.ts'
 import { resolveConfig } from "../src/host/config.ts"
@@ -21,6 +22,12 @@ import { sessionLog } from './fixtures/session-log.ts'
 
 type Listener = (...args: unknown[]) => unknown
 
+// A task Agent's directory must exist: DSH 0.2.1 checks it before every step.
+const directories = mkdtempSync(join(tmpdir(), 'mnemon-lifecycle-'))
+const workspaceTwo = mkdtempSync(join(directories, 'workspace-two-'))
+const registryWorkspace = mkdtempSync(join(directories, 'registry-workspace-'))
+afterAll(() => rmSync(directories, { recursive: true, force: true }))
+
 function userMessage(text = 'Continue the project'): HostUserMessage {
   return {
     id: crypto.randomUUID(),
@@ -34,7 +41,7 @@ function durableCandidate(filler = 97): HostUserMessage {
   return userMessage(`Please remember this durable architecture rationale: ${'x'.repeat(filler)}`)
 }
 
-function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: { taskModelRoute?: boolean; workspaces?: Array<{ path: string }> } = {}) {
+function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: { taskModelRoute?: boolean; workspaces?: Array<{ path: string }>; workingDirectory?: { set: (agent: HostAgent, path: string, signal?: AbortSignal) => Promise<string> } } = {}) {
   const agentListeners = new Map<string, Listener>()
   const rootListeners = new Map<string, Listener>()
   const agentSections: Array<{ name: string; order: number; text: () => string }> = []
@@ -117,7 +124,6 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
         return () => cleanup?.()
       }),
     } as unknown as HostAgentContext
-    await options.setup?.(taskCtx)
     const taskAgent = {
       id: options.sessionId,
       status: 'idle' as const,
@@ -128,6 +134,8 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
       steer: vi.fn(),
       inject: vi.fn(),
     } satisfies HostAgent
+    // DSH runs setup on the unpublished Agent, as setup(agent.ctx, agent).
+    await options.setup?.(taskCtx, taskAgent)
     taskAgents.push(taskAgent)
     rootListeners.get('agent/created')?.({ agent: taskAgent })
     return {
@@ -149,7 +157,9 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
           ? llm
           : name === 'workspaceRegistry' && options.workspaces !== undefined
             ? { get: (id: string) => options.workspaces!.find(workspace => workspace.path === id), list: () => options.workspaces! }
-            : undefined),
+            : name === 'workingDirectory'
+              ? options.workingDirectory
+              : undefined),
     on: vi.fn((name: string, listener: Listener) => {
       rootListeners.set(name, listener)
       return () => rootListeners.delete(name)
@@ -395,28 +405,28 @@ describe('Mnemon DSH lifecycle integration', () => {
     const value = fixture(resolveConfig({ cliPath: '/fake/mnemon' }), { taskModelRoute: false })
 
     expect(value.lifecycle.snapshot()).toMatchObject({ sessionAvailable: true, taskAgentAvailable: false })
-    await expect(value.lifecycle.maintainMetadata('', ['project'], '/tmp/workspace-two')).rejects.toThrow('no default provider/model')
+    await expect(value.lifecycle.maintainMetadata('', ['project'], workspaceTwo)).rejects.toThrow('no default provider/model')
     expect(value.createTaskAgent).not.toHaveBeenCalled()
   })
 
   it('runs standalone maintenance under a disposable clean root Agent scoped to the selected workspace', async () => {
     const value = fixture()
 
-    await value.lifecycle.maintainMetadata('', ['project'], '/tmp/workspace-two')
-    await value.lifecycle.archiveDocument('', 'doc-1', '/tmp/workspace-two')
+    await value.lifecycle.maintainMetadata('', ['project'], workspaceTwo)
+    await value.lifecycle.archiveDocument('', 'doc-1', workspaceTwo)
 
     expect(value.createTaskAgent).toHaveBeenCalledTimes(2)
     expect(value.createTaskAgent).toHaveBeenNthCalledWith(1, expect.objectContaining({
       sessionId: expect.any(String),
-      meta: { cwd: '/tmp/workspace-two', agentPreset: 'default' },
+      meta: { cwd: workspaceTwo, agentPreset: 'default' },
       agentOptions: { provider: 'deepseek', model: 'deepseek-chat' },
       setup: expect.any(Function),
       signal: expect.any(AbortSignal),
     }))
     const metadataAgent = vi.mocked(value.coordinator.maintainMetadata).mock.calls[0]?.[0] as HostAgent
     expect(metadataAgent).not.toBe(value.agent)
-    expect(metadataAgent.session.header?.cwd).toBe('/tmp/workspace-two')
-    expect(value.coordinator.archiveDocument).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: '/tmp/workspace-two', agentPreset: 'default' } }) }), 'doc-1', expect.any(AbortSignal))
+    expect(metadataAgent.session.header?.cwd).toBe(workspaceTwo)
+    expect(value.coordinator.archiveDocument).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: workspaceTwo, agentPreset: 'default' } }) }), 'doc-1', expect.any(AbortSignal))
     expect(value.defaultModel.currentSelection).toHaveBeenCalledTimes(2)
     expect(value.agentPresets.resolve).toHaveBeenCalledTimes(2)
     expect(value.agentPresets.mount).toHaveBeenCalledTimes(2)
@@ -428,12 +438,12 @@ describe('Mnemon DSH lifecycle integration', () => {
     const value = fixture()
     const operation = vi.fn(async (agent: HostAgent) => {
       expect(agent).not.toBe(value.agent)
-      expect(agent.session.header?.cwd).toBe('/tmp/workspace-two')
+      expect(agent.session.header?.cwd).toBe(workspaceTwo)
       expect(agent.session.snapshotEvents()).toEqual([])
       if (failed) throw new Error('model unavailable')
       return 'maintained'
     })
-    const result = value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: '/tmp/workspace-two', sessionId: 'unrelated-session' }, new AbortController().signal, operation)
+    const result = value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: workspaceTwo, sessionId: 'unrelated-session' }, new AbortController().signal, operation)
     if (failed) await expect(result).rejects.toThrow('model unavailable')
     else await expect(result).resolves.toBe('maintained')
     expect(value.createTaskAgent).toHaveBeenCalledOnce()
@@ -441,11 +451,57 @@ describe('Mnemon DSH lifecycle integration', () => {
   })
 
   it('falls back to the workspace registry when a task Agent has no workspace', async () => {
-    const value = fixture(undefined, { workspaces: [{ path: '/tmp/registry-workspace' }] })
+    const value = fixture(undefined, { workspaces: [{ path: registryWorkspace }] })
 
     await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'global' }, new AbortController().signal, async agent => agent.session.header?.cwd)
 
-    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: resolve('/tmp/registry-workspace'), agentPreset: 'default' } }))
+    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: registryWorkspace, agentPreset: 'default' } }))
+  })
+
+  it('keeps a workspace whose folder is gone as the task cwd, and works from an existing one where DSH checks', async () => {
+    const gone = join(directories, 'deleted-project')
+    const workingDirectory = { set: vi.fn(async (_agent: HostAgent, path: string) => path) }
+    const value = fixture(undefined, { workspaces: [{ path: join(directories, 'also-deleted') }, { path: registryWorkspace }], workingDirectory })
+
+    // Mnemon reads the workspace's memory from the cwd, so it stays the requested one.
+    const cwd = await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: gone }, new AbortController().signal, async agent => agent.session.header?.cwd)
+
+    expect(cwd).toBe(gone)
+    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: gone, agentPreset: 'default' } }))
+    expect(workingDirectory.set).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: gone, agentPreset: 'default' } }) }), registryWorkspace, expect.any(AbortSignal))
+    await value.lifecycle.archiveDocument('', 'doc-1', gone)
+    expect(workingDirectory.set).toHaveBeenLastCalledWith(expect.anything(), registryWorkspace, expect.any(AbortSignal))
+    expect(value.coordinator.archiveDocument).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: gone, agentPreset: 'default' } }) }), 'doc-1', expect.any(AbortSignal))
+  })
+
+  it('works from the Host directory when no workspace folder exists, and leaves an existing workspace alone', async () => {
+    const gone = join(directories, 'deleted-project')
+    const workingDirectory = { set: vi.fn(async (_agent: HostAgent, path: string) => path) }
+    const value = fixture(undefined, { workspaces: [{ path: join(directories, 'deleted-registry') }], workingDirectory })
+
+    expect(await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: gone }, new AbortController().signal, async agent => agent.session.header?.cwd)).toBe(gone)
+    expect(workingDirectory.set).toHaveBeenCalledWith(expect.anything(), process.cwd(), expect.any(AbortSignal))
+    workingDirectory.set.mockClear()
+    expect(await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: workspaceTwo }, new AbortController().signal, async agent => agent.session.header?.cwd)).toBe(workspaceTwo)
+    expect(workingDirectory.set).not.toHaveBeenCalled()
+  })
+
+  it('keeps a missing workspace as the task cwd on a DSH without the working-directory service', async () => {
+    const gone = join(directories, 'deleted-project')
+    const value = fixture(undefined, { workspaces: [{ path: registryWorkspace }] })
+
+    expect(await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: gone }, new AbortController().signal, async agent => agent.session.header?.cwd)).toBe(gone)
+  })
+
+  it('keeps the first registered workspace for a task without one, and works from an existing folder when it is gone', async () => {
+    const firstRegistered = join(directories, 'deleted-registry')
+    const workingDirectory = { set: vi.fn(async (_agent: HostAgent, path: string) => path) }
+    const value = fixture(undefined, { workspaces: [{ path: firstRegistered }, { path: registryWorkspace }], workingDirectory })
+
+    const cwd = await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'global' }, new AbortController().signal, async agent => agent.session.header?.cwd)
+
+    expect(cwd).toBe(firstRegistered)
+    expect(workingDirectory.set).toHaveBeenCalledWith(expect.anything(), registryWorkspace, expect.any(AbortSignal))
   })
 
   it('falls back to the Host working directory when no workspace is known at all', async () => {
@@ -463,7 +519,7 @@ describe('Mnemon DSH lifecycle integration', () => {
       taskAgentModel: { mode: 'fixed', provider: 'openai', model: 'gpt-5' },
     }))
 
-    await value.lifecycle.maintainMetadata('', ['project'], '/tmp/workspace-two')
+    await value.lifecycle.maintainMetadata('', ['project'], workspaceTwo)
 
     expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({
       agentOptions: { provider: 'openai', model: 'gpt-5', maxTokens: undefined },
@@ -538,15 +594,15 @@ describe('Mnemon DSH lifecycle integration', () => {
   it('runs Agent Query synthesis under a disposable clean root Agent', async () => {
     const value = fixture()
 
-    await value.lifecycle.answerTask('', 'Which database?', [], '/tmp/workspace-two')
+    await value.lifecycle.answerTask('', 'Which database?', [], workspaceTwo)
 
     expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({
-      meta: { cwd: '/tmp/workspace-two', agentPreset: 'default' },
+      meta: { cwd: workspaceTwo, agentPreset: 'default' },
       agentOptions: { provider: 'deepseek', model: 'deepseek-chat' },
     }))
     expect(value.coordinator.answer).toHaveBeenCalledWith(expect.objectContaining({
       options: { provider: 'deepseek', model: 'deepseek-chat' },
-      session: expect.objectContaining({ header: expect.objectContaining({ cwd: '/tmp/workspace-two' }) }),
+      session: expect.objectContaining({ header: expect.objectContaining({ cwd: workspaceTwo }) }),
     }), 'Which database?', [], expect.any(AbortSignal))
     expect(value.disposedTaskAgents).toHaveLength(1)
   })
@@ -1140,11 +1196,11 @@ describe('Mnemon DSH lifecycle integration', () => {
   it('runs workspace-only memory-tab candidates in a disposable top-level task Agent', async () => {
     const value = fixture()
 
-    const result = await value.lifecycle.superviseTask('', 'Keep workspace release decisions durable.', undefined, '/tmp/workspace-two')
+    const result = await value.lifecycle.superviseTask('', 'Keep workspace release decisions durable.', undefined, workspaceTwo)
 
     expect(result).toMatchObject({ delegated: true, runId: 'write-child' })
-    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: '/tmp/workspace-two', agentPreset: 'default' } }))
-    expect(value.coordinator.write).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: expect.objectContaining({ cwd: '/tmp/workspace-two' }) }) }), 'supervised-writeback', {
+    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: workspaceTwo, agentPreset: 'default' } }))
+    expect(value.coordinator.write).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: expect.objectContaining({ cwd: workspaceTwo }) }) }), 'supervised-writeback', {
       content: 'Keep workspace release decisions durable.',
       source: 'explicit Mnemon tab submission',
     }, expect.anything())
@@ -1194,10 +1250,10 @@ describe('Mnemon DSH lifecycle integration', () => {
   it('replays and takes edits per message for the dialog in a disposable task Agent', async () => {
     const value = fixture()
     // The Save to memory dialog sends its message id through superviseTask, scoped to the workspace.
-    const first = await value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', '/tmp/workspace-two')
-    await expect(value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', '/tmp/workspace-two')).resolves.toEqual(first)
+    const first = await value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', workspaceTwo)
+    await expect(value.lifecycle.superviseTask('session-1', 'Keep the release checklist durable.', 'message-1', workspaceTwo)).resolves.toEqual(first)
     expect(value.coordinator.write).toHaveBeenCalledTimes(1)
-    await value.lifecycle.superviseTask('session-1', 'Keep the release checklist and its owner durable.', 'message-1', '/tmp/workspace-two')
+    await value.lifecycle.superviseTask('session-1', 'Keep the release checklist and its owner durable.', 'message-1', workspaceTwo)
     expect(value.coordinator.write).toHaveBeenCalledTimes(2)
     expect(value.createTaskAgent).toHaveBeenCalledTimes(2)
   })

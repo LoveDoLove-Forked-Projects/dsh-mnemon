@@ -16,6 +16,7 @@ import {
   type TaskAgentModelCatalog,
 } from '../host/protocol.ts'
 import { MnemonClient } from './api.ts'
+import type { MnemonChangeSignal } from './change-signal.ts'
 import { Callout } from './feedback.tsx'
 import { installMemoryComponentUI, type MemoryComponentSettingsProps, type MemoryComponentUIContext } from './component-ui.tsx'
 import type { MnemonTranslate } from './locales.ts'
@@ -37,6 +38,8 @@ export interface ShippedSettingsServices {
   scope: ClientSettingsScope<Config>
   connection?: ClientConnectionHandle
   t: MnemonTranslate
+  /** Moved when a Provider is saved or switched, so the Memory System re-reads its Memory Spaces page. */
+  componentChanges?: Pick<MnemonChangeSignal, 'bump'>
 }
 
 /**
@@ -200,6 +203,7 @@ export function MemorySpacesSettings(props: ShippedSettingsServices & { page: Me
       refreshKey={snapshot.revision ?? 0}
       disabled={disabled || readOnly}
       scopeChanging={false}
+      {...(props.componentChanges === undefined ? {} : { onChanged: props.componentChanges.bump })}
       {...(readOnly ? { notice: <Callout tone="warning" className={css.groupCallout} title={t('config.providersReadOnlyTitle')}>{t('config.providersReadOnlyDetail')}</Callout> } : {})}
       t={t}
       leading={<NativeProviderCard activeScope={activeScope} cliMissing={cliMissing} t={t}>

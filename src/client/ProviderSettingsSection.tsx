@@ -41,6 +41,8 @@ interface ProviderSettingsSectionProps {
   pending?: boolean
   /** Why the listed Providers cannot be switched; rendered above them. */
   notice?: ReactNode
+  /** A Provider was saved or switched, so pages that list Providers re-read them. */
+  onChanged?: () => void
 }
 
 interface ServiceDraft {
@@ -408,12 +410,14 @@ export function ProviderSettingsSection(props: ProviderSettingsSectionProps): JS
     if (client === null) throw new Error(props.t('config.providerUnavailable'))
     const settings = Object.fromEntries(Object.entries(draft.settings).filter(([key, value]) => serviceFields(provider).find(field => field.key === key)?.input !== 'secret' || String(value).trim() !== ''))
     acceptService(await client.updateProviderService({ providerId: provider.id, settings, enabled: true }))
+    props.onChanged?.()
   }
 
   const toggle = async (provider: MemoryProviderDescriptor, enabled: boolean): Promise<MemoryProviderServiceView> => {
     if (client === null) throw new Error(props.t('config.providerUnavailable'))
     const updated = await client.updateProviderService({ providerId: provider.id, settings: {}, enabled })
     acceptService(updated)
+    props.onChanged?.()
     return updated
   }
 

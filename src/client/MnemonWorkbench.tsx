@@ -758,7 +758,9 @@ function MnemonWorkspace({ connection, settingsScope, sessionId, workspaceId, wo
   const [refreshKey, setRefreshKey] = useState(0)
   const refreshPage = useCallback(() => { setRefreshKey(value => value + 1); refreshAll() }, [refreshAll])
   // The configuration lives on another page: re-read when the Sidebar
-  // reopens the workspace and when a component is switched elsewhere.
+  // reopens the workspace and when a component is switched elsewhere. A
+  // component switch or a Provider saved under Plugins also reloads the open
+  // page, so Memory Spaces lists the Providers a new space can use.
   const shown = useRef(active)
   useEffect(() => {
     if (active && !shown.current) refreshAll()
@@ -768,8 +770,8 @@ function MnemonWorkspace({ connection, settingsScope, sessionId, workspaceId, wo
   useEffect(() => {
     if (componentRevision === seenComponents.current) return
     seenComponents.current = componentRevision
-    refreshAll()
-  }, [componentRevision, refreshAll])
+    refreshPage()
+  }, [componentRevision, refreshPage])
   // A save that keeps the storage re-reads in place; one that changes it
   // moves the context key, which reloads everything by itself.
   const seenSettings = useRef({ revision: settingsSnapshot.revision, context: viewContextKey })

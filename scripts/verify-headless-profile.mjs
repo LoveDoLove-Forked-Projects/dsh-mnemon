@@ -7,7 +7,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const dshBin = join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
+// Set MNEMON_E2E_DSH to another DSH installation's lib/bin.js to verify Headless on that release.
+const dshBin = process.env.MNEMON_E2E_DSH ? resolve(process.env.MNEMON_E2E_DSH) : join(root, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
 const marker = 'HEADLESS_MNEMON_READY'
 const arguments_ = process.argv.slice(2)
 const options = new Map()
