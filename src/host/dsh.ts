@@ -193,7 +193,8 @@ export interface CreateHostAgentOptions {
   meta?: { cwd?: string; agentPreset?: string }
   agentOptions?: { provider?: string; model?: string; maxTokens?: number }
   signal?: AbortSignal
-  setup?: (agentCtx: HostAgentContext) => unknown | Promise<unknown>
+  /** DSH calls it with the unpublished Agent's context and the Agent itself. */
+  setup?: (agentCtx: HostAgentContext, agent?: HostAgent) => unknown | Promise<unknown>
 }
 
 export interface HostAgentsService {

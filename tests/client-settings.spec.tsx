@@ -44,8 +44,8 @@ function page(packageName: string, options: { enabled?: boolean; writable?: bool
 }
 type PageOptions = Parameters<typeof page>[1]
 /** Memory Spaces' own settings: its Providers and the Native embedding runtime. */
-const spaces = (scope: ClientSettingsScope<Config>, connection?: ClientConnectionHandle, options: PageOptions = {}, t: MnemonTranslate = translateZh) =>
-  <MemorySpacesSettings scope={scope} {...(connection === undefined ? {} : { connection })} t={t} page={page(MEMORY_SPACES_PACKAGE, options)} />
+const spaces = (scope: ClientSettingsScope<Config>, connection?: ClientConnectionHandle, options: PageOptions = {}, t: MnemonTranslate = translateZh, componentChanges?: { bump: () => void }) =>
+  <MemorySpacesSettings scope={scope} {...(connection === undefined ? {} : { connection })} t={t} page={page(MEMORY_SPACES_PACKAGE, options)} {...(componentChanges === undefined ? {} : { componentChanges })} />
 /** The Layered strategy's own settings: the background tasks it drives. */
 const threeTier = (scope: ClientSettingsScope<Config>, connection?: ClientConnectionHandle, options: PageOptions = {}, t: MnemonTranslate = translateZh) =>
   <ThreeTierSettings scope={scope} {...(connection === undefined ? {} : { connection })} t={t} page={page(THREE_TIER_PACKAGE, options)} />
@@ -81,7 +81,9 @@ describe('MnemonSettingsCard', () => {
       if (channel === '/dsh-mnemon-pack' && endpoint === 'target') return { ok: true as const, value: { root: '/fixture/.mnemon', scope: 'global' } }
       throw new Error(`unexpected ${channel} ${endpoint}`)
     })
-    render(spaces(scope, { rpc: { call }, isLoopback: true } as ClientConnectionHandle))
+    // A saved Provider tells the Memory System, so its Memory Spaces page re-reads the Providers.
+    const componentChanges = { bump: vi.fn() }
+    render(spaces(scope, { rpc: { call }, isLoopback: true } as ClientConnectionHandle, {}, translateZh, componentChanges))
     const card = await screen.findByRole('group', { name: 'work-cloud 服务配置' })
     await waitFor(() => expect((within(card).getByRole('button') as HTMLButtonElement).disabled).toBe(false))
     fireEvent.click(within(card).getByRole('button'))
@@ -93,6 +95,7 @@ describe('MnemonSettingsCard', () => {
     }))
     await within(card).findByText(rejected ? /Synthetic user key cannot access/ : '服务配置已保存，记忆空间目录已同步')
     expect(call.mock.calls.filter(([, endpoint]) => endpoint === 'provider-service-update')).toHaveLength(1)
+    expect(componentChanges.bump).toHaveBeenCalledTimes(rejected ? 0 : 1)
     expect(within(screen.getByRole('group', { name: 'personal-cloud 服务配置' })).queryByRole('textbox')).toBeNull()
   })
 

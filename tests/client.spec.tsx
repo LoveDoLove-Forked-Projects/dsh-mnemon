@@ -553,12 +553,16 @@ describe('MnemonWorkbench', () => {
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active />)
     await waitFor(() => expect(statusReads()).toBe(initial + 2))
 
-    // The open page reloads too: a Provider enabled under Plugins meanwhile shows on Memory Spaces.
+    // A change elsewhere, such as a Provider saved under Plugins, reloads the open page too;
+    // only returning to it does not, since that would query every Provider again.
     await selectWorkspaceTab('记忆空间')
     await waitFor(() => expect(directoryReads()).toBeGreaterThan(0))
     const directory = directoryReads()
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active={false} />)
     rerender(<MnemonWorkbench connection={connection} settingsScope={settingsScope} sessionId="session-1" componentChanges={components} active />)
+    await waitFor(() => expect(statusReads()).toBeGreaterThan(initial + 2))
+    expect(directoryReads()).toBe(directory)
+    act(() => components.bump())
     await waitFor(() => expect(directoryReads()).toBeGreaterThan(directory))
   })
 

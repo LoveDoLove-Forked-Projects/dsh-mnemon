@@ -128,6 +128,19 @@ describe('dsh-mnemon page under DSH Plugins', () => {
     expect(listener.mock.calls.length).toBeGreaterThan(0)
   })
 
+  it('keeps the newest component list report when an older page withdraws late', () => {
+    const seat = new MnemonComponentListSeat()
+    const listener = vi.fn()
+    seat.subscribe(listener)
+    const older = seat.report(true)
+    const newer = seat.report(false)
+    older()
+    expect(seat.getSnapshot()).toBe(false)
+    newer()
+    expect(seat.getSnapshot()).toBeUndefined()
+    expect(listener).toHaveBeenCalledTimes(3)
+  })
+
   it('keeps the newest offer when an older owner withdraws late', () => {
     const seat = new MnemonActionSeat()
     const listener = vi.fn()

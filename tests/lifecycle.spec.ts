@@ -41,7 +41,7 @@ function durableCandidate(filler = 97): HostUserMessage {
   return userMessage(`Please remember this durable architecture rationale: ${'x'.repeat(filler)}`)
 }
 
-function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: { taskModelRoute?: boolean; workspaces?: Array<{ path: string }> } = {}) {
+function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: { taskModelRoute?: boolean; workspaces?: Array<{ path: string }>; workingDirectory?: { set: (agent: HostAgent, path: string, signal?: AbortSignal) => Promise<string> } } = {}) {
   const agentListeners = new Map<string, Listener>()
   const rootListeners = new Map<string, Listener>()
   const agentSections: Array<{ name: string; order: number; text: () => string }> = []
@@ -124,7 +124,6 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
         return () => cleanup?.()
       }),
     } as unknown as HostAgentContext
-    await options.setup?.(taskCtx)
     const taskAgent = {
       id: options.sessionId,
       status: 'idle' as const,
@@ -135,6 +134,8 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
       steer: vi.fn(),
       inject: vi.fn(),
     } satisfies HostAgent
+    // DSH runs setup on the unpublished Agent, as setup(agent.ctx, agent).
+    await options.setup?.(taskCtx, taskAgent)
     taskAgents.push(taskAgent)
     rootListeners.get('agent/created')?.({ agent: taskAgent })
     return {
@@ -156,7 +157,9 @@ function fixture(config = resolveConfig({ cliPath: '/fake/mnemon' }), options: {
           ? llm
           : name === 'workspaceRegistry' && options.workspaces !== undefined
             ? { get: (id: string) => options.workspaces!.find(workspace => workspace.path === id), list: () => options.workspaces! }
-            : undefined),
+            : name === 'workingDirectory'
+              ? options.workingDirectory
+              : undefined),
     on: vi.fn((name: string, listener: Listener) => {
       rootListeners.set(name, listener)
       return () => rootListeners.delete(name)
@@ -455,24 +458,50 @@ describe('Mnemon DSH lifecycle integration', () => {
     expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: registryWorkspace, agentPreset: 'default' } }))
   })
 
-  it('skips a workspace whose directory is gone for the first registered one that exists', async () => {
+  it('keeps a workspace whose folder is gone as the task cwd, and works from an existing one where DSH checks', async () => {
     const gone = join(directories, 'deleted-project')
-    const value = fixture(undefined, { workspaces: [{ path: join(directories, 'also-deleted') }, { path: registryWorkspace }] })
+    const workingDirectory = { set: vi.fn(async (_agent: HostAgent, path: string) => path) }
+    const value = fixture(undefined, { workspaces: [{ path: join(directories, 'also-deleted') }, { path: registryWorkspace }], workingDirectory })
 
+    // Mnemon reads the workspace's memory from the cwd, so it stays the requested one.
     const cwd = await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: gone }, new AbortController().signal, async agent => agent.session.header?.cwd)
 
-    expect(cwd).toBe(registryWorkspace)
-    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: registryWorkspace, agentPreset: 'default' } }))
+    expect(cwd).toBe(gone)
+    expect(value.createTaskAgent).toHaveBeenCalledWith(expect.objectContaining({ meta: { cwd: gone, agentPreset: 'default' } }))
+    expect(workingDirectory.set).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: gone, agentPreset: 'default' } }) }), registryWorkspace, expect.any(AbortSignal))
     await value.lifecycle.archiveDocument('', 'doc-1', gone)
-    expect(value.coordinator.archiveDocument).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: registryWorkspace, agentPreset: 'default' } }) }), 'doc-1', expect.any(AbortSignal))
+    expect(workingDirectory.set).toHaveBeenLastCalledWith(expect.anything(), registryWorkspace, expect.any(AbortSignal))
+    expect(value.coordinator.archiveDocument).toHaveBeenCalledWith(expect.objectContaining({ session: expect.objectContaining({ header: { cwd: gone, agentPreset: 'default' } }) }), 'doc-1', expect.any(AbortSignal))
   })
 
-  it('falls back to the Host working directory when no workspace directory exists', async () => {
-    const value = fixture(undefined, { workspaces: [{ path: join(directories, 'deleted-registry') }] })
+  it('works from the Host directory when no workspace folder exists, and leaves an existing workspace alone', async () => {
+    const gone = join(directories, 'deleted-project')
+    const workingDirectory = { set: vi.fn(async (_agent: HostAgent, path: string) => path) }
+    const value = fixture(undefined, { workspaces: [{ path: join(directories, 'deleted-registry') }], workingDirectory })
 
-    const cwd = await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: join(directories, 'deleted-project') }, new AbortController().signal, async agent => agent.session.header?.cwd)
+    expect(await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: gone }, new AbortController().signal, async agent => agent.session.header?.cwd)).toBe(gone)
+    expect(workingDirectory.set).toHaveBeenCalledWith(expect.anything(), process.cwd(), expect.any(AbortSignal))
+    workingDirectory.set.mockClear()
+    expect(await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: workspaceTwo }, new AbortController().signal, async agent => agent.session.header?.cwd)).toBe(workspaceTwo)
+    expect(workingDirectory.set).not.toHaveBeenCalled()
+  })
 
-    expect(cwd).toBe(process.cwd())
+  it('keeps a missing workspace as the task cwd on a DSH without the working-directory service', async () => {
+    const gone = join(directories, 'deleted-project')
+    const value = fixture(undefined, { workspaces: [{ path: registryWorkspace }] })
+
+    expect(await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'workspace', workspaceId: gone }, new AbortController().signal, async agent => agent.session.header?.cwd)).toBe(gone)
+  })
+
+  it('keeps the first registered workspace for a task without one, and works from an existing folder when it is gone', async () => {
+    const firstRegistered = join(directories, 'deleted-registry')
+    const workingDirectory = { set: vi.fn(async (_agent: HostAgent, path: string) => path) }
+    const value = fixture(undefined, { workspaces: [{ path: firstRegistered }, { path: registryWorkspace }], workingDirectory })
+
+    const cwd = await value.lifecycle.runRuntimeMaintenanceTask({ storage: 'global' }, new AbortController().signal, async agent => agent.session.header?.cwd)
+
+    expect(cwd).toBe(firstRegistered)
+    expect(workingDirectory.set).toHaveBeenCalledWith(expect.anything(), registryWorkspace, expect.any(AbortSignal))
   })
 
   it('falls back to the Host working directory when no workspace is known at all', async () => {
