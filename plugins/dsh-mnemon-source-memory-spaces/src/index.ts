@@ -134,7 +134,7 @@ export async function installMemorySpaces(
  */
 function isMarketClientShim(ctx: Context): boolean {
   const loader = ctx.get('loader', false) as LoaderLike | undefined
-  return /(?:^|:)mkt-client-[^:]*$/u.test(loader?.locate(ctx.fiber) ?? '')
+  return /(?:^|:)mkt-client-[^:]*$/u.test(loader?.locate(ctx.fiber)?.trim() ?? '')
 }
 
 export async function apply(ctx: Context, config: Config = { providers: [] }): Promise<void> {
